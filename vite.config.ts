@@ -6,6 +6,11 @@ const backendTarget = process.env.PULSECUT_API_URL || 'http://127.0.0.1:8756';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Keep the dependency scanner on our own app. Local reference clones under
+  // research/ contain whole other frontends that would otherwise get bundled
+  // and produce a second React copy ("Invalid hook call").
+  resolve: { dedupe: ['react', 'react-dom'] },
+  optimizeDeps: { entries: ['index.html', 'src/**/*.{ts,tsx}'] },
   server: {
     port: 3000,
     host: '0.0.0.0',

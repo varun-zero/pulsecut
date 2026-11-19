@@ -35,15 +35,26 @@ pub async fn download(url: &str, dir: &Path) -> Result<PathBuf> {
     let mut extractor_error = String::new();
     if let Some(bin) = resolve_binary("", "PULSECUT_YTDLP", &["yt-dlp", "yt-dlp.exe"]) {
         let pattern = dir.join("source.%(ext)s");
-        // YouTube frequently rejects one player client while accepting
-        // another. Try a short list rather than giving up on the first 403.
-        for client in ["tv", "web_safari", "android_vr", "web"] {
-            let output = Command::new(&bin)
-                .args(["-f", "best[height<=1080]/best", "--no-playlist", "--no-update",
-                       "--extractor-args", &format!("youtube:player_client={client}"), "-o"])
-                .arg(&pattern)
-                .arg(url)
-                .output()
+        let section_secs = std::env::var("PULSECUT_MAX_SOURCE_SECONDS")
+            .ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(180);
+        // Use the default player client. Forcing alternate clients makes
+        // YouTube report "Requested format is not available" even when the
+        // default client lists every format correctly.
+        let mut attempts: Vec<Vec<String>> = vec![vec![
+            "-f".into(), "worst[ext=mp4][height>=360]/worst".into(),
+            "--no-playlist".into(), "--no-update".into(),
+            "--download-sections".into(), format!("*0-{section_secs}"),
+            "--force-keyframes-at-cuts".into(), "-o".into(), pattern.to_string_lossy().into_owned(),
+            url.to_string(),
+        ]];
+        // Fallback for sites where section download is unsupported.
+        attempts.push(vec![
+            "-f".into(), "best[height<=1080]/best".into(),
+            "--no-playlist".into(), "--no-update".into(),
+            "-o".into(), pattern.to_string_lossy().into_owned(), url.to_string(),
+        ]);
+        for args in attempts {
+            let output = Command::new(&bin).args(&args).output()
                 .map_err(|e| PulseError::Process(format!("yt-dlp failed to start: {e}")))?;
             if output.status.success() {
                 if let Some(p) = std::fs::read_dir(dir)?
@@ -58,7 +69,7 @@ pub async fn download(url: &str, dir: &Path) -> Result<PathBuf> {
             if !detail.is_empty() {
                 extractor_error = detail.lines().last().unwrap_or(&detail).to_string();
             }
-            tracing::warn!(client, "yt-dlp attempt failed: {extractor_error}");
+            tracing::warn!("yt-dlp attempt failed: {extractor_error}");
         }
     }
 
