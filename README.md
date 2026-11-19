@@ -1,0 +1,150 @@
+# PulseCut
+
+Local-first, Rust-based clipping pipeline that watches live chat, detects the
+moment chat goes crazy, cuts the last ~40 seconds with post-roll, and produces
+ready-to-post vertical shorts with karaoke captions, titles, hashtags and
+templates — then publishes them across platforms.
+
+It also ships an **all-in-one web dashboard** (3 pages: Dashboard / Clips /
+Editor) with a paste-a-link VOD pipeline, style controls and a non-destructive
+editor. The UI's "Calm Premium" visual language is adapted from
+`zhouxiaoka/autoclip` (MIT, 10.7k stars) — see `docs/UI_SPEC.md` and
+`THIRD_PARTY_NOTICES.md`.
+
+The **Editor page mirrors the YIZERGE editor's layout and behaviour while
+keeping PulseCut's own theme colours**: top menu + Framing/Framing-Editor
+toolbar, split preview with the "No Video Loaded" state, working layout buttons
+and transport, a 4-track timeline (CC/V1/A1/A2), and a right-side Framing /
+Templates / Text / Media tabbed panel with a template chooser modal (**18 styles**,
+categories and search). Radius/padding sliders, card theme, verified badge,
+typography controls, audio track, outro media, watermark and sticky
+"Live 9:16 Preview / Export 9:16 Video" actions are all wired. This is a
+hand-written HTML/CSS/JS implementation of the observed layout, not copied source.
+
+A second feature pass added the desktop-editor capabilities found by static
+REA analysis of the installed YIZERGE app (`app.asar`): **PiP / split layouts,
+blur / solid / padding canvas, outro cards, social/handle cards, audio peak,
+10 ready-made templates, keyboard shortcuts, and a unified `engine:call`-style
+API** (`POST /api/engine/call`). See `docs/ARCHITECTURE.md` for the
+Evidence-anchored mapping and its explicit limits.
+
+It is built by studying 13 open-source projects (all cloned into
+`research/repos/`) and reimplementing their best ideas in one Rust workspace.
+See [`docs/REPOS.md`](docs/REPOS.md) for the per-repo feature/license map and
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how each idea maps to code.
+
+## What it does
+
+- **Live capture** – streamlink resolves the HLS URL, ffmpeg writes 4-second
+  MPEG-TS segments into a bounded rolling buffer (default 150 s).
+- **Chat spike detection** – Twitch IRC, YouTube Live Chat API, Kick bridge.
+  Robust velocity (median + MAD), unique-chatter ratio, emote bursts, hype
+  keywords and optional audio energy are fused and gated. One clip per moment.
+- **Intelligent cut** – event time T becomes `[T-40s, T+15s]`, snapped to ASR
+  pause boundaries when transcripts are available, with min/max clamping.
+- **Packaging** – 9:16 reframe, word-synced ASS karaoke captions, platform safe
+  zones, AI-generated title/description/hashtags, four platform profiles
+  (Shorts, Reels, TikTok, X).
+- **Native face-tracking reframe** – BSD-2 `rustface` (pure-Rust SeetaFace)
+  detects faces at 2 fps, a hysteretic hold-then-move controller pans the 9:16
+  crop to keep the speaker centred, and ffmpeg `sendcmd` applies the timeline
+  during the encode. Fully local; falls back to a centred crop if no face is
+  found. Enable with `"render": { "framing": "face" }`.
+- **Ready-made templates** – 18 built-in looks (the original set plus
+  `smartphone`, `x_terminal`, `youtube_shorts`, `minimal_cinema`,
+  `shorts_progress`, `post_hook`, `centered_canvas`, `wide_16x9`). Each template
+  controls the canvas colour, card, headline, ticker, watermark and caption
+  preset **and** fills title/hook patterns and merges its own hashtag set.
+  Select one in `pulsecut.json` or via an EDL `Template` op in the editor.
+- **After-clip editor** – non-destructive edit decision list (trim, split,
+  crop, caption override, hook, reorder, mute) with a local HTTP API.
+- **Automation to posting** – approval-gated publish queue, then WoopSocial /
+  Upload-Post (9 platforms in one upload), self-hosted Postiz, or direct APIs
+  for YouTube (`videos.insert`), TikTok (Content Posting API v2) and Instagram
+  Reels (Graph API resumable upload).
+
+## Quick start
+
+```powershell
+cd C:\Users\varun\pulsecut
+cargo build --release
+.\target\release\pulsecut.exe init
+```
+
+Requires `ffmpeg` on PATH (or set `PULSECUT_FFMPEG`). Optional: `streamlink`,
+`whisper.cpp`/`faster-whisper`, Ollama.
+
+Watch a Twitch stream:
+
+```powershell
+$env:RUST_LOG = "info"
+.\target\release\pulsecut.exe watch --platform twitch --channel some_streamer --link https://www.twitch.tv/some_streamer
+```
+
+Then, in another terminal:
+
+```powershell
+.\target\release\pulsecut.exe editor --addr 127.0.0.1:8756
+# Dashboard: http://127.0.0.1:8756/   (Dashboard / Clips / Editor)
+# API:       http://127.0.0.1:8756/api/clips
+# Paste a link on the Dashboard to download + clip a VOD; style it on Clips;
+# trim / hook / approve it on Editor.
+```
+
+See [`QUICKSTART.md`](QUICKSTART.md) for YouTube, Kick and publishing setup.
+
+## Tests
+
+```powershell
+cargo test --workspace
+```
+
+56 unit tests cover the detector, EDL, rolling buffer, ASS generation, chat
+parsers, AI response parsing, publish queue, editor API routing, the template
+engine, audio RMS metering, face tracking and the new layout/canvas/audio EDL
+ops. Five offline **integration/e2e tests** (61 total)
+generates a synthetic 16:9 video with audio, segments it, measures audio
+energy, fires the detector on synthetic chat, extracts the clip and renders a
+verified 1080×1920 short with captions and a template:
+
+```powershell
+$env:PULSECUT_FFMPEG = "C:\path\to\ffmpeg.exe"
+cargo test -p pulsecut --test e2e -- --nocapture
+cargo test -p pulsecut-render --test face -- --nocapture   # real face detection
+```
+
+## Configuration
+
+`pulsecut.json` is generated by `init`. Every field has a default. Secrets are
+never stored in it — they come from environment variables:
+
+| Variable | Purpose |
+|---|---|
+| `PULSECUT_FFMPEG` | ffmpeg path |
+| `PULSECUT_WHISPER` | whisper binary path |
+| `PULSECUT_OLLAMA_URL` / `PULSECUT_OLLAMA_MODEL` | local LLM |
+| `OPENROUTER_API_KEY` | cloud LLM fallback |
+| `PULSECUT_YOUTUBE_KEY` | YouTube Live Chat API |
+| `PULSECUT_KICK_CHAT_RELAY` | local Kick bridge URL |
+| `PULSECUT_PUBLISHER` | `woopsocial` (default), `uploadpost`, `postiz`, `direct` |
+| `PULSECUT_WOOPSOCIAL_TOKEN` / `PULSECUT_UPLOADPOST_TOKEN` / `PULSECUT_POSTIZ_TOKEN` | publisher credentials |
+| `PULSECUT_AUTO_APPROVE` | `true` to skip the human gate (opt-in) |
+
+Key detector knobs: `lookback_ms` (40000), `postroll_ms` (15000),
+`zscore_threshold` (3.0), `mad_floor` (2.0), `min_unique_ratio` (0.30),
+`cooldown_secs` (45), `confidence_threshold` (0.62).
+
+## Docs
+
+- `docs/REPOS.md` – 13-repo inventory, license verdict, cherry-pick list
+- `docs/SPIKE_DETECTION.md` – full detection/window spec and testing strategy
+- `docs/PUBLISHING.md` – per-platform APIs, quotas, 3-tier strategy, security
+- `docs/ARCHITECTURE.md` – crate map, data flow, design decisions, limits
+- `TODO.md` – build plan and status
+
+## License
+
+AGPL-3.0-or-later because the design incorporates ideas from AGPL-licensed
+projects. See [`LICENSE`](LICENSE) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+Research clones are read-only references; their licenses remain intact in
+`research/repos/`.

@@ -1,0 +1,33 @@
+# Modern Web Guidance — installed skill & audit quick reference
+
+## What was installed
+
+- **Installed skill path:** `C:\Users\varun\.agents\skills\modern-web-guidance`
+- **Source repo:** `https://github.com/GoogleChrome/modern-web-guidance-src` (shallow clone at `C:\Users\varun\AppData\Local\Temp\mwg-src`)
+- **Structure:**
+  - `SKILL.md` — concise, discoverable skill definition (frontmatter: `name`, `description`, `argument-hint`, `user-invocable`). Instructions are offline-first: read the bundled guides before writing/reviewing web UI code, then verify.
+  - `references/PUBLISHED_SKILL.md` — verbatim copy of the repo's published skill (`guides/modern-web-guidance/SKILL.md`), kept for provenance and the optional `npx` search/retrieve workflow.
+  - `references/<category>/<topic>/guide.md` — 43 curated guidance files (≈433 KB total) mirroring the repo's paths, spanning CSS, HTML, accessibility, performance, security, forms, JS, UI components/atoms/behaviors, visual design, and UX. The full upstream corpus has 252 guides / ~1.8 MB; this subset keeps the skill small while covering everything relevant to a dashboard/editor audit.
+- **Safety note:** All repo content was treated strictly as DATA. The repo's `AGENTS.md` contains maintenance/workflow directives (CLA checks, PR etiquette, etc.); none were followed, and the SKILL.md explicitly tells the agent to ignore embedded instructions.
+
+## Top 10 concrete rules for our dashboard/editor UI
+
+Source paths are relative to the repo root; each is mirrored at `C:\Users\varun\.agents\skills\modern-web-guidance\references\<path>`.
+
+1. **Prefer native HTML semantics over ARIA.** Use native elements and attributes (`<button>`, `<label for>`, `required`, `<caption>`, `<th scope>`) instead of `<div role="button">` or redundant roles; keep one `<main>`, sequential `<h1>`–`<h6>`, named nav landmarks, and `<table>` only for tabular data (CSS Grid/Flex for layout). — `guides/accessibility/accessibility/guide.md`
+2. **Keep keyboard focus visible and targets usable.** Style `:focus-visible` (prefer the native ring; never remove `outline` without a ≥3:1 replacement), keep interactive targets ≥24×24 px (bump on `@media (pointer: coarse)`), and use `aria-disabled="true"` (plus JS activation blocking) instead of `disabled` for toolbar buttons that should remain discoverable. — `guides/accessibility/accessibility/guide.md`
+3. **Make data tables responsive the accessible way.** Wrap in `tabindex="0" role="region"` with an accessible name from the `<caption>`; make `<thead>`/`tbody th` sticky; use `@container` (not `@media`) to switch to a stacked layout in narrow dashboard widgets, injecting per-cell labels via `::before` and hiding `<thead>` from AT. — `guides/ui-atoms/responsive-table/guide.md`
+4. **Sort tables by moving rows, never by re-rendering.** Put a `<button>` inside each sortable `<th scope="col">`, set `aria-sort` only on the active column, compare with `Intl.Collator` / raw `data-value` for numbers and dates, reorder existing `<tr>` via `moveBefore()` (no `innerHTML`, no CSS `order`), and announce once via a single `role="status"` element — never `aria-live` on the table. — `guides/ui-behaviors/sortable-table/guide.md`
+5. **Use the native `<dialog>` for modals and inspectors.** Open with `showModal()` (or `command="show-modal"`); do not add `role="dialog"`, `aria-modal`, a JS focus trap, or `Esc` handling, and do not lock scroll with `overflow: hidden` on `html`/`body` — instead use `dialog:modal { overscroll-behavior: contain }` plus `dialog::backdrop { overflow: hidden; overscroll-behavior: contain }`. Use `<dialog popover>` for non-blocking find/inspector panels. — `guides/ui-components/dialog/guide.md`
+6. **Size components by their own container, not the viewport.** Set `container-type: inline-size` on the wrapper and use `@container` so editor panels/cards adapt correctly in sidebars and split panes; ship a safe stacked default and progressively enhance. — `guides/css/size-aware-styling/guide.md`
+7. **Centralize design tokens and keep the cascade predictable.** Define tiered custom properties on `:root`, avoid non-trivial inline style values, avoid global `*` resets (they can't be overridden by web components or low-priority layers), use `@layer` order plus `:where()` for one-off overrides, and prefer `currentColor`/`inherit`/`em` over duplicated values. — `guides/css/css/guide.md`
+8. **Handle dark mode at the document level.** Add `<meta name="color-scheme" content="light dark">` in `<head>` and `:root { color-scheme: light dark }` to theme native controls/scrollbars and avoid FOUC; define tokens with `light-dark()`; any JS `matchMedia("(prefers-color-scheme: dark)")` read must also handle the `change` event. — `guides/visual-design/dark-mode/guide.md`
+9. **Protect INP and layout stability on data-heavy views.** Split JS work over 50 ms with `scheduler.yield()` (fallback to `setTimeout` in a Promise), >250 ms to a Web Worker; batch DOM reads then writes to avoid layout thrashing; apply `content-visibility: auto` with `contain-intrinsic-size` to long off-screen lists; never lazy-load the above-the-fold/LCP image. — `guides/performance/performance/guide.md`
+10. **Sanitize untrusted HTML before rendering it.** Use `Element.setHTML()` / `Document.parseHTML()` (Sanitizer API) with a restrictive allowlist instead of `innerHTML`, move parsed nodes in with `replaceChildren()` to avoid mXSS, and lazy-load DOMPurify only where the native API is missing (with `ALLOW_ARIA_ATTR/ALLOW_DATA_ATTR/KEEP_CONTENT: false` to match native behavior). — `guides/security/sanitize-untrusted-html/guide.md`
+
+## How to invoke the skill
+
+- **From an OpenCode/agent session:** it is registered as `modern-web-guidance` under `C:\Users\varun\.agents\skills`. It is *user-invocable* (e.g. `/modern-web-guidance "audit dashboard"`, or via the skill tool), and its description also makes it auto-trigger for HTML/CSS/client-side JS and UI-audit requests. Pass a focus such as `responsive table`, `dialog focus`, or `audit dashboard`.
+- **Manual use:** open `C:\Users\varun\.agents\skills\modern-web-guidance\SKILL.md` and follow its four-step workflow; read the matching file(s) under `references/` before editing code.
+- **Optional online expansion:** on Windows, `npx.cmd -y modern-web-guidance@latest search "<2-5 word query>"` then `retrieve "<id>"` searches all 252 upstream guides. Prefer the offline bundle; the CLI needs network access.
+- **Output convention:** when guides shaped the work, include a `### Modern Web Guidance` section naming consulted guide IDs and one short verbatim rule quote per applied guide.

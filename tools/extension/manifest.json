@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "PulseCut - Live Chat Hype Clipper",
+  "version": "1.0.0",
+  "description": "Monitors live chat on Twitch, YouTube Live, and Kick in real-time. Detects hype spikes and triggers 30s lookback clips to your local PulseCut editor.",
+  "permissions": [
+    "storage",
+    "notifications",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "*://*.twitch.tv/*",
+    "*://*.youtube.com/*",
+    "*://*.kick.com/*",
+    "http://127.0.0.1:8756/*",
+    "http://localhost:8756/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PulseCut Hype Clipper Settings"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.twitch.tv/*",
+        "https://*.youtube.com/watch*",
+        "https://*.youtube.com/live*",
+        "https://*.kick.com/*"
+      ],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["content.css"],
+      "matches": [
+        "https://*.twitch.tv/*",
+        "https://*.youtube.com/*",
+        "https://*.kick.com/*"
+      ]
+    }
+  ]
+}

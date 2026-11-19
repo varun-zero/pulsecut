@@ -1,0 +1,49 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/capture",
+    "crates/chat",
+    "crates/detect",
+    "crates/render",
+    "crates/ai",
+    "crates/publish",
+    "crates/editor",
+    "crates/app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+authors = ["PulseCut contributors"]
+repository = "https://github.com/local/pulsecut"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
+tokio = { version = "1", features = ["full"] }
+regex = "1"
+clap = { version = "4", features = ["derive", "env"] }
+futures = "0.3"
+uuid = { version = "1", features = ["v4", "serde"] }
+pulsecut-core = { path = "crates/core" }
+pulsecut-capture = { path = "crates/capture" }
+pulsecut-chat = { path = "crates/chat" }
+pulsecut-detect = { path = "crates/detect" }
+pulsecut-render = { path = "crates/render" }
+pulsecut-ai = { path = "crates/ai" }
+pulsecut-publish = { path = "crates/publish" }
+pulsecut-editor = { path = "crates/editor" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+strip = true
+panic = "abort"

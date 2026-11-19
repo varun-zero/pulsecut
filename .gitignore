@@ -1,0 +1,19 @@
+# Build artifacts and generated media
+/target/
+/out/
+*.log
+*.tmp
+
+# Reference clones and research payloads (excluded from publishing)
+/research/
+research/
+
+# Local tooling / editor state
+.vscode/
+.idea/
+.DS_Store
+__pycache__/
+*.pyc
+node_modules/
+.env
+*.local

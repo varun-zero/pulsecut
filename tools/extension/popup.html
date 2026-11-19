@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PulseCut Hype Clipper</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 16px;
+      font-size: 13px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 15px;
+      color: #fff;
+    }
+    .logo svg {
+      width: 18px;
+      height: 18px;
+      fill: #6366f1;
+    }
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .status-badge.offline {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border-color: rgba(239, 68, 68, 0.3);
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .form-group {
+      margin-bottom: 14px;
+    }
+    label {
+      display: block;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #94a3b8;
+      margin-bottom: 6px;
+    }
+    select, input[type="text"] {
+      width: 100%;
+      padding: 7px 10px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 12px;
+      outline: none;
+    }
+    select:focus, input[type="text"]:focus {
+      border-color: #6366f1;
+    }
+    .range-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    input[type="range"] {
+      flex: 1;
+      accent-color: #6366f1;
+    }
+    .range-val {
+      font-weight: 600;
+      font-size: 12px;
+      min-width: 35px;
+      text-align: right;
+    }
+    .btn-editor {
+      width: 100%;
+      padding: 9px;
+      background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+      color: #fff;
+      border: none;
+      border-radius: 7px;
+      font-weight: 600;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      text-decoration: none;
+      margin-top: 10px;
+      transition: opacity 0.15s;
+    }
+    .btn-editor:hover {
+      opacity: 0.9;
+    }
+    .stats-card {
+      background: #1e293b;
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 8px;
+      padding: 10px;
+      display: flex;
+      justify-content: space-around;
+      margin-bottom: 12px;
+      text-align: center;
+    }
+    .stat-num {
+      font-size: 16px;
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+    .stat-label {
+      font-size: 10px;
+      color: #64748b;
+    }
+    .footer-note {
+      font-size: 10px;
+      color: #64748b;
+      text-align: center;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">
+      <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      PulseCut
+    </div>
+    <div id="status-badge" class="status-badge">
+      <span class="status-dot"></span>
+      <span id="status-text">Connected</span>
+    </div>
+  </div>
+
+  <div class="stats-card">
+    <div>
+      <div class="stat-num" id="stat-clips">0</div>
+      <div class="stat-label">CLIPS SAVED</div>
+    </div>
+    <div>
+      <div class="stat-num" id="stat-jobs">0</div>
+      <div class="stat-label">ACTIVE JOBS</div>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label for="autoClipMode">Hype Reaction Mode</label>
+    <select id="autoClipMode">
+      <option value="ask">Ask Confirmation (Popup Toast)</option>
+      <option value="auto">Auto-Clip Instantly</option>
+      <option value="manual">Manual Button Only</option>
+    </select>
+  </div>
+
+  <div class="form-group">
+    <label for="lookbackSecs">Lookback Window (Seconds Before Reaction)</label>
+    <select id="lookbackSecs">
+      <option value="15">15 Seconds</option>
+      <option value="30" selected>30 Seconds (Default)</option>
+      <option value="45">45 Seconds</option>
+      <option value="60">60 Seconds</option>
+    </select>
+  </div>
+
+  <div class="form-group">
+    <label for="sensitivityThreshold">Hype Sensitivity</label>
+    <div class="range-wrap">
+      <input type="range" id="sensitivityThreshold" min="30" max="95" step="5" value="70">
+      <span class="range-val" id="sensitivityVal">70%</span>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label for="serverUrl">PulseCut Local Server</label>
+    <input type="text" id="serverUrl" value="http://127.0.0.1:8756">
+  </div>
+
+  <a href="http://127.0.0.1:8756" target="_blank" class="btn-editor">
+    Open PulseCut Editor &rarr;
+  </a>
+
+  <div class="footer-note">
+    Works on Twitch, YouTube Live & Kick
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

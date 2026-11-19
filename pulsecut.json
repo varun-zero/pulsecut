@@ -1,0 +1,108 @@
+{
+  "capture": {
+    "ffmpeg_path": "",
+    "streamlink_path": "",
+    "segment_seconds": 4,
+    "buffer_seconds": 150,
+    "output_dir": "out",
+    "lookback_ms": 40000,
+    "postroll_ms": 15000,
+    "poll_ms": 500
+  },
+  "detection": {
+    "baseline_window_secs": 300,
+    "ewma_alpha": 0.12,
+    "zscore_threshold": 3.0,
+    "mad_floor": 2.0,
+    "min_messages": 8,
+    "min_unique_ratio": 0.3,
+    "emote_repeat_threshold": 4,
+    "keyword_weight": 0.12,
+    "hype_keywords": [
+      "lol",
+      "lmao",
+      "pog",
+      "poggers",
+      "clap",
+      "hype",
+      "omg",
+      "w",
+      "goat",
+      "insane",
+      "lets go",
+      "let's go",
+      "crazy",
+      "wild",
+      "fire",
+      "actual"
+    ],
+    "cooldown_secs": 45,
+    "lookback_ms": 40000,
+    "postroll_ms": 15000,
+    "clip_min_secs": 15,
+    "clip_max_secs": 60,
+    "confidence_threshold": 0.62,
+    "audio_weight": 0.2,
+    "chat_weight": 0.8
+  },
+  "render": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "encoder": "auto",
+    "burn_captions": true,
+    "caption_style": "karaoke",
+    "subtitle_font": "Inter",
+    "font_file": "",
+    "framing": "static",
+    "face_model": "models/seeta_fd_frontal_v1.0.bin",
+    "template": "default",
+    "watermark": "",
+    "subtitle_size": 64,
+    "safe_zone_top": 180,
+    "safe_zone_bottom": 320,
+    "max_duration_secs": 60,
+    "crf": 20
+  },
+  "ai": {
+    "backend": "ollama",
+    "ollama_url": "http://127.0.0.1:11434",
+    "ollama_model": "gemma3:4b",
+    "openrouter_url": "https://openrouter.ai/api/v1/chat/completions",
+    "openrouter_model": "google/gemma-3-27b-it:free",
+    "api_key_env": "OPENROUTER_API_KEY",
+    "whisper_binary": "",
+    "whisper_model": "large-v3-turbo",
+    "temperature": 0.3,
+    "max_tokens": 512
+  },
+  "publishing": {
+    "auto_approve": false,
+    "publish_on_ready": true,
+    "spacing_secs": 300,
+    "targets": [
+      {
+        "id": "youtube_shorts",
+        "via": "aggregator",
+        "token_env": "PULSECUT_WOOPSOCIAL_TOKEN",
+        "enabled": true
+      },
+      {
+        "id": "tiktok",
+        "via": "aggregator",
+        "token_env": "PULSECUT_WOOPSOCIAL_TOKEN",
+        "enabled": true
+      },
+      {
+        "id": "instagram_reels",
+        "via": "aggregator",
+        "token_env": "PULSECUT_WOOPSOCIAL_TOKEN",
+        "enabled": true
+      }
+    ],
+    "woopsocial_base_url": "https://api.woopsocial.com/v1",
+    "uploadpost_base_url": "https://api.upload-post.com/api",
+    "postiz_base_url": "http://127.0.0.1:3000"
+  },
+  "log_level": "info"
+}

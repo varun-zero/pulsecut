@@ -1,0 +1,18 @@
+{
+  "name": "pulsecut",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first, Rust-based live-chat clipper with an all-in-one web dashboard",
+  "main": "index.html",
+  "scripts": {
+    "start": "cargo run --release --manifest-path crates/app/Cargo.toml -- editor --addr 0.0.0.0:3000",
+    "dev": "cargo run --manifest-path crates/app/Cargo.toml -- editor --addr 127.0.0.1:8756",
+    "build": "cargo build --release --workspace",
+    "test": "cargo test --workspace"
+  },
+  "keywords": ["clipping", "rust", "ffmpeg", "shorts", "automation"],
+  "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=18"
+  }
+}
