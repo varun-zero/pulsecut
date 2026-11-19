@@ -4,15 +4,32 @@
   "private": true,
   "description": "Local-first, Rust-based live-chat clipper with an all-in-one web dashboard",
   "main": "index.html",
+  "type": "module",
   "scripts": {
-    "start": "cargo run --release --manifest-path crates/app/Cargo.toml -- editor --addr 0.0.0.0:3000",
-    "dev": "cargo run --manifest-path crates/app/Cargo.toml -- editor --addr 127.0.0.1:8756",
-    "build": "cargo build --release --workspace",
-    "test": "cargo test --workspace"
+    "start": "vite preview --port 3000 --host 0.0.0.0",
+    "dev": "vite --port 3000 --host 0.0.0.0",
+    "build": "vite build",
+    "lint": "tsc --noEmit",
+    "test": "tsx --test src/lib/studioLogic.test.ts",
+    "cargo:dev": "cargo run --manifest-path crates/app/Cargo.toml -- editor --addr 127.0.0.1:8756",
+    "cargo:build": "cargo build --release --workspace"
   },
   "keywords": ["clipping", "rust", "ffmpeg", "shorts", "automation"],
   "license": "AGPL-3.0-or-later",
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "lucide-react": "^1.76.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwindcss": "^4.3.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
   }
 }

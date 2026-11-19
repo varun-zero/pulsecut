@@ -265,10 +265,11 @@ fn extension_clip(state: Arc<Shared>, body: &str) -> (u16, &'static str, Vec<u8>
         let _ = jobs.update(&job.id, JobStatus::Downloading, 15, &msg);
     }
 
+    let template = v["template"].as_str().unwrap_or("default").to_string();
     let shared = Arc::clone(&state);
     let job_clone = job.clone();
     tokio::spawn(async move {
-        run_job(shared, job_clone, 1, "default".to_string()).await;
+        run_job(shared, job_clone, 1, template).await;
     });
 
     json_out(202, json!({

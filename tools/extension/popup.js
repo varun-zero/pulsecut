@@ -1,77 +1,185 @@
-// PulseCut Popup Logic
-document.addEventListener('DOMContentLoaded', async () => {
-  const statusBadge = document.getElementById('status-badge');
-  const statusText = document.getElementById('status-text');
-  const statClips = document.getElementById('stat-clips');
-  const statJobs = document.getElementById('stat-jobs');
+/**
+ * PulseCut Auto-Clipper — Popup Controller
+ */
+(function initPulseCutPopup() {
+  'use strict';
 
-  const autoClipMode = document.getElementById('autoClipMode');
-  const lookbackSecs = document.getElementById('lookbackSecs');
-  const sensitivityThreshold = document.getElementById('sensitivityThreshold');
-  const sensitivityVal = document.getElementById('sensitivityVal');
-  const serverUrl = document.getElementById('serverUrl');
-
-  const DEFAULT_CONFIG = {
+  const engine = globalThis.PulseCutHypeEngine;
+  const DEFAULTS = engine ? engine.DEFAULT_CONFIG : {
     serverUrl: 'http://127.0.0.1:8756',
+    mode: 'auto',
+    threshold: 55,
     lookbackSecs: 30,
-    sensitivityThreshold: 70,
-    autoClipMode: 'ask'
+    cooldownSecs: 45,
   };
 
-  // Load saved settings
-  if (chrome && chrome.storage && chrome.storage.sync) {
-    chrome.storage.sync.get(DEFAULT_CONFIG, (items) => {
-      serverUrl.value = items.serverUrl || DEFAULT_CONFIG.serverUrl;
-      lookbackSecs.value = items.lookbackSecs || DEFAULT_CONFIG.lookbackSecs;
-      sensitivityThreshold.value = items.sensitivityThreshold || DEFAULT_CONFIG.sensitivityThreshold;
-      sensitivityVal.innerText = `${sensitivityThreshold.value}%`;
-      autoClipMode.value = items.autoClipMode || DEFAULT_CONFIG.autoClipMode;
-      checkServer(serverUrl.value);
-    });
-  } else {
-    checkServer(serverUrl.value);
+  const els = {
+    statusDot: document.getElementById('statusDot'),
+    statusText: document.getElementById('statusText'),
+    tabPlatform: document.getElementById('tabPlatform'),
+    tabChannel: document.getElementById('tabChannel'),
+    clipNowBtn: document.getElementById('clipNowBtn'),
+    actionHint: document.getElementById('actionHint'),
+    mode: document.getElementById('mode'),
+    threshold: document.getElementById('threshold'),
+    thresholdVal: document.getElementById('thresholdVal'),
+    lookbackSecs: document.getElementById('lookbackSecs'),
+    lookbackVal: document.getElementById('lookbackVal'),
+    cooldownSecs: document.getElementById('cooldownSecs'),
+    cooldownVal: document.getElementById('cooldownVal'),
+    serverUrl: document.getElementById('serverUrl'),
+    openEditorLink: document.getElementById('openEditorLink'),
+    saveStatus: document.getElementById('saveStatus'),
+  };
+
+  let activeTab = null;
+  let activeContext = null;
+  let saveTimer = null;
+
+  function normalizeUrl(raw) {
+    return engine ? engine.normalizeServerUrl(raw) : String(raw || DEFAULTS.serverUrl).replace(/\/+$/, '');
   }
 
-  // Update slider label
-  sensitivityThreshold.addEventListener('input', () => {
-    sensitivityVal.innerText = `${sensitivityThreshold.value}%`;
-    saveSettings();
-  });
+  function setHint(text, kind = '') {
+    els.actionHint.textContent = text;
+    els.actionHint.className = `hint ${kind}`.trim();
+  }
 
-  autoClipMode.addEventListener('change', saveSettings);
-  lookbackSecs.addEventListener('change', saveSettings);
-  serverUrl.addEventListener('change', () => {
-    saveSettings();
-    checkServer(serverUrl.value);
-  });
+  function syncLabels() {
+    els.thresholdVal.textContent = `${els.threshold.value}%`;
+    els.lookbackVal.textContent = `${els.lookbackSecs.value}s`;
+    els.cooldownVal.textContent = `${els.cooldownSecs.value}s`;
+    els.openEditorLink.href = normalizeUrl(els.serverUrl.value);
+  }
+
+  function pingServer(serverUrl) {
+    els.statusText.textContent = 'Checking…';
+    chrome.runtime.sendMessage(
+      { type: 'PING_SERVER', serverUrl: normalizeUrl(serverUrl) },
+      (res) => {
+        const ok = Boolean(res && res.ok);
+        els.statusDot.className = `dot ${ok ? 'ok' : ''}`.trim();
+        els.statusText.textContent = ok
+          ? `Online${res.clips !== null ? ` · ${res.clips} clips` : ''}`
+          : 'Offline';
+      }
+    );
+  }
+
+  function inspectActiveTab() {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      activeTab = tabs && tabs[0] ? tabs[0] : null;
+      if (!activeTab || !activeTab.url) {
+        els.tabPlatform.textContent = '—';
+        els.tabChannel.textContent = 'No active stream tab';
+        els.clipNowBtn.disabled = true;
+        return;
+      }
+
+      const fallbackCtx = engine
+        ? engine.detectStreamContext(activeTab.url)
+        : { platform: 'unknown', channel: 'unknown', template: 'default', supported: false };
+
+      const applyContext = (ctx) => {
+        activeContext = ctx;
+        if (ctx.supported) {
+          els.tabPlatform.textContent = `${ctx.platform.toUpperCase()} · ${ctx.template}`;
+          els.tabChannel.textContent = ctx.channel;
+          els.clipNowBtn.disabled = false;
+        } else {
+          els.tabPlatform.textContent = 'UNSUPPORTED';
+          els.tabChannel.textContent = 'Open Kick, Twitch, YouTube, or Instagram';
+          els.clipNowBtn.disabled = true;
+        }
+      };
+
+      // Ask the content script first so YouTube / Instagram DOM-extracted handles are accurate
+      chrome.tabs.sendMessage(
+        activeTab.id,
+        { type: 'GET_PAGE_CONTEXT' },
+        { frameId: 0 },
+        (res) => {
+          if (chrome.runtime.lastError || !res || !res.context) {
+            applyContext(fallbackCtx);
+            return;
+          }
+          applyContext(res.context);
+        }
+      );
+    });
+  }
 
   function saveSettings() {
-    const data = {
-      serverUrl: serverUrl.value.trim() || 'http://127.0.0.1:8756',
-      lookbackSecs: parseInt(lookbackSecs.value, 10) || 30,
-      sensitivityThreshold: parseInt(sensitivityThreshold.value, 10) || 70,
-      autoClipMode: autoClipMode.value
+    syncLabels();
+    const payload = {
+      mode: els.mode.value,
+      threshold: Number(els.threshold.value),
+      lookbackSecs: Number(els.lookbackSecs.value),
+      cooldownSecs: Number(els.cooldownSecs.value),
+      serverUrl: normalizeUrl(els.serverUrl.value),
     };
-    if (chrome && chrome.storage && chrome.storage.sync) {
-      chrome.storage.sync.set(data);
-    }
+
+    chrome.storage.sync.set(payload, () => {
+      els.saveStatus.textContent = 'Saved';
+      els.saveStatus.className = 'hint ok';
+      window.clearTimeout(saveTimer);
+      saveTimer = window.setTimeout(() => {
+        els.saveStatus.textContent = '';
+      }, 1500);
+    });
   }
 
-  async function checkServer(url) {
-    try {
-      const res = await fetch(`${url}/api/extension/status`, { cache: 'no-cache' });
-      if (res.ok) {
-        const data = await res.json();
-        statusBadge.className = 'status-badge';
-        statusText.innerText = 'Connected';
-        statClips.innerText = data.clips ?? 0;
-        statJobs.innerText = data.jobs ?? 0;
-      } else {
-        throw new Error('bad response');
+  els.clipNowBtn.addEventListener('click', () => {
+    if (!activeTab || !activeContext || !activeContext.supported) return;
+    els.clipNowBtn.disabled = true;
+    els.clipNowBtn.textContent = 'Sending clip…';
+    setHint('Contacting PulseCut server…');
+
+    chrome.runtime.sendMessage(
+      {
+        type: 'TRIGGER_CLIP',
+        serverUrl: normalizeUrl(els.serverUrl.value),
+        url: activeTab.url,
+        channel: activeContext.channel,
+        platform: activeContext.platform,
+        template: activeContext.template,
+        lookback_secs: Number(els.lookbackSecs.value) || 30,
+        hype_score: 100,
+        reasons: ['popup'],
+      },
+      (res) => {
+        els.clipNowBtn.disabled = false;
+        els.clipNowBtn.textContent = 'Clip Active Tab Now';
+        if (res && res.ok) {
+          setHint(`Queued ${activeContext.channel} (${els.lookbackSecs.value}s)`, 'ok');
+          pingServer(els.serverUrl.value);
+        } else {
+          setHint((res && res.error) || 'Could not reach PulseCut server', 'err');
+        }
       }
-    } catch (_) {
-      statusBadge.className = 'status-badge offline';
-      statusText.innerText = 'Offline';
-    }
-  }
-});
+    );
+  });
+
+  [els.mode, els.threshold, els.lookbackSecs, els.cooldownSecs].forEach((input) => {
+    input.addEventListener('input', saveSettings);
+    input.addEventListener('change', saveSettings);
+  });
+
+  els.serverUrl.addEventListener('change', () => {
+    saveSettings();
+    pingServer(els.serverUrl.value);
+  });
+
+  // Load initial settings
+  chrome.storage.sync.get(DEFAULTS, (items) => {
+    const cfg = { ...DEFAULTS, ...(items || {}) };
+    els.mode.value = cfg.mode;
+    els.threshold.value = String(cfg.threshold);
+    els.lookbackSecs.value = String(cfg.lookbackSecs);
+    els.cooldownSecs.value = String(cfg.cooldownSecs);
+    els.serverUrl.value = normalizeUrl(cfg.serverUrl);
+    syncLabels();
+    pingServer(cfg.serverUrl);
+    inspectActiveTab();
+  });
+})();

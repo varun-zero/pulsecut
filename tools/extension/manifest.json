@@ -1,49 +1,49 @@
 {
   "manifest_version": 3,
-  "name": "PulseCut - Live Chat Hype Clipper",
-  "version": "1.0.0",
-  "description": "Monitors live chat on Twitch, YouTube Live, and Kick in real-time. Detects hype spikes and triggers 30s lookback clips to your local PulseCut editor.",
+  "name": "PulseCut Auto-Clipper",
+  "version": "1.1.0",
+  "description": "Monitors Kick, Twitch, YouTube Live, YouTube Shorts, and Instagram Reels to detect chat hype spikes and trigger instant PulseCut clips.",
   "permissions": [
     "storage",
     "notifications",
-    "activeTab"
+    "tabs"
   ],
   "host_permissions": [
-    "*://*.twitch.tv/*",
-    "*://*.youtube.com/*",
-    "*://*.kick.com/*",
-    "http://127.0.0.1:8756/*",
-    "http://localhost:8756/*"
+    "https://*.kick.com/*",
+    "https://*.twitch.tv/*",
+    "https://*.youtube.com/*",
+    "https://*.instagram.com/*",
+    "http://127.0.0.1:*/*",
+    "http://localhost:*/*"
   ],
-  "action": {
-    "default_popup": "popup.html",
-    "default_title": "PulseCut Hype Clipper Settings"
-  },
   "background": {
     "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PulseCut Auto-Clipper"
   },
   "content_scripts": [
     {
       "matches": [
+        "https://*.kick.com/*",
         "https://*.twitch.tv/*",
         "https://*.youtube.com/watch*",
-        "https://*.youtube.com/live*",
-        "https://*.kick.com/*"
+        "https://*.youtube.com/live/*",
+        "https://*.youtube.com/live_chat*",
+        "https://*.youtube.com/live_chat_replay*",
+        "https://*.youtube.com/shorts/*",
+        "https://*.instagram.com/*"
       ],
-      "js": ["content.js"],
-      "css": ["content.css"],
+      "js": [
+        "hypeEngine.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_idle",
       "all_frames": true
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["content.css"],
-      "matches": [
-        "https://*.twitch.tv/*",
-        "https://*.youtube.com/*",
-        "https://*.kick.com/*"
-      ]
     }
   ]
 }

@@ -1,0 +1,148 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --pc-bg: #F7F7F5;
+    --pc-surface: #FFFFFF;
+    --pc-surface-2: #F0EFEA;
+    --pc-surface-hover: #EAE8E2;
+    --pc-border: #E4E2DC;
+    --pc-border-subtle: #EEEDE8;
+    --pc-ink: #121214;
+    --pc-sub: #5E5E66;
+    --pc-muted: #86868F;
+    --pc-accent: #2563EB;
+    --pc-accent-soft: rgba(37, 99, 235, 0.12);
+    --pc-cta-bg: #121214;
+    --pc-cta-fg: #FFFFFF;
+    --pc-ok: #16A34A;
+    --pc-warn: #D97706;
+    --pc-error: #DC2626;
+    --pc-font-sans: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+    --pc-font-serif: "Fraunces", Georgia, serif;
+    --pc-font-mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+
+  .dark {
+    color-scheme: dark;
+    --pc-bg: #0C0C0E;
+    --pc-surface: #131316;
+    --pc-surface-2: #1A1A1F;
+    --pc-surface-hover: #222228;
+    --pc-border: #26262B;
+    --pc-border-subtle: #1D1D22;
+    --pc-ink: #F4F4F6;
+    --pc-sub: #A1A1AA;
+    --pc-muted: #71717A;
+    --pc-accent: #60A5FA;
+    --pc-accent-soft: rgba(96, 165, 250, 0.14);
+    --pc-cta-bg: #F4F4F6;
+    --pc-cta-fg: #0C0C0E;
+    --pc-ok: #22C55E;
+    --pc-warn: #F59E0B;
+    --pc-error: #EF4444;
+  }
+
+  * {
+    box-sizing: border-box;
+    border-color: var(--pc-border);
+  }
+
+  html {
+    margin: 0;
+    padding: 0;
+    background-color: var(--pc-bg);
+    color: var(--pc-ink);
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: var(--pc-font-sans);
+    background-color: var(--pc-bg);
+    color: var(--pc-ink);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .font-brand {
+    font-family: var(--pc-font-serif);
+  }
+
+  .font-mono-tabular {
+    font-family: var(--pc-font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--pc-accent);
+    outline-offset: 2px;
+  }
+}
+
+/* Refined thin studio scrollbars */
+.studio-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.studio-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.studio-scroll::-webkit-scrollbar-thumb {
+  background: var(--pc-border);
+  border-radius: 999px;
+}
+
+.studio-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--pc-muted);
+}
+
+/* Viral short-form caption animations (compositor-only transform & opacity) */
+@keyframes pc-caption-pop {
+  0% {
+    opacity: 0.72;
+    transform: scale(0.86);
+  }
+  65% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pc-caption-slide {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-caption-pop {
+  animation: pc-caption-pop 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-caption-slide {
+  animation: pc-caption-slide 190ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

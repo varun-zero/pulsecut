@@ -1,281 +1,286 @@
-/* PulseCut Live Chat Hype Monitor - HUD Overlay */
+/* PulseCut Auto-Clipper — Minimal Studio Dark HUD & Alert Toasts */
 
 #pulsecut-hud {
   position: fixed;
-  bottom: 84px;
-  right: 24px;
-  z-index: 9999999;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  font-size: 13px;
-  color: #f1f5f9;
-  background: rgba(15, 23, 42, 0.92);
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483640;
+  width: 224px;
+  background: rgba(14, 14, 17, 0.94);
+  color: #f4f4f6;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-radius: 14px;
-  padding: 12px 14px;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 250px;
-  max-width: 310px;
-  transition: all 0.25s ease;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(10px);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow: hidden;
   user-select: none;
 }
 
-#pulsecut-hud.pulsecut-minimized {
-  min-width: unset;
-  padding: 8px 12px;
-  border-radius: 30px;
-  cursor: pointer;
+#pulsecut-hud * {
+  box-sizing: border-box;
 }
 
-#pulsecut-hud.pulsecut-minimized .pulsecut-body {
-  display: none;
-}
-
-.pulsecut-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.pulsecut-brand {
+.pc-hud-row {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-weight: 700;
-  font-size: 13px;
-  letter-spacing: -0.2px;
-  color: #fff;
+  padding: 9px 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
 }
 
-.pulsecut-brand svg {
-  width: 16px;
-  height: 16px;
-  fill: #6366f1;
-}
-
-.pulsecut-status-dot {
+.pc-hud-dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
-  background: #10b981;
-  display: inline-block;
-  box-shadow: 0 0 8px #10b981;
-}
-
-.pulsecut-status-dot.offline {
+  border-radius: 999px;
+  flex-shrink: 0;
   background: #ef4444;
-  box-shadow: 0 0 8px #ef4444;
 }
 
-.pulsecut-controls-top {
+.pc-hud-dot.pc-online {
+  background: #53fc18;
+  box-shadow: 0 0 8px rgba(83, 252, 24, 0.7);
+}
+
+.pc-hud-dot.pc-offline {
+  background: #ef4444;
+}
+
+.pc-hud-brand {
+  font-weight: 700;
+  font-size: 11.5px;
+  letter-spacing: -0.01em;
+  color: #ffffff;
+}
+
+.pc-hud-channel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #a1a1aa;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.pc-hud-min {
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #a1a1aa;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.pc-hud-min:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+.pc-hud-body {
+  padding: 10px 11px 11px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.pc-hud-body.pc-collapsed {
+  display: none;
+}
+
+.pc-hud-meter-wrap {
+  display: flex;
+  flex-direction: column;
   gap: 4px;
 }
 
-.pulsecut-icon-btn {
-  background: transparent;
-  border: none;
-  color: #94a3b8;
-  cursor: pointer;
-  padding: 2px 5px;
-  border-radius: 4px;
-  font-size: 12px;
-  line-height: 1;
-  transition: color 0.15s, background 0.15s;
-}
-
-.pulsecut-icon-btn:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.pulsecut-body {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.pulsecut-gauge-row {
+.pc-hud-meter-label {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 12px;
-  color: #94a3b8;
+  font-size: 10.5px;
+  color: #a1a1aa;
+  font-weight: 600;
 }
 
-.pulsecut-gauge-val {
-  font-weight: 700;
-  font-size: 13px;
-  color: #f8fafc;
+#pc-hud-score {
+  color: #ffffff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.pulsecut-bar-track {
+.pc-hud-bar-bg {
   width: 100%;
-  height: 8px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
   overflow: hidden;
-  position: relative;
 }
 
-.pulsecut-bar-fill {
+.pc-hud-bar-fill {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, #10b981 0%, #f59e0b 60%, #ef4444 100%);
-  border-radius: 6px;
-  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 999px;
+  background: #3b82f6;
+  transition: width 220ms ease, background-color 220ms ease;
 }
 
-.pulsecut-bar-fill.fire {
-  box-shadow: 0 0 12px #ef4444;
-  animation: pulsecut-flame 1s infinite alternate;
+.pc-hud-bar-fill.pc-warm {
+  background: #facc15;
 }
 
-@keyframes pulsecut-flame {
-  0% { opacity: 0.85; filter: drop-shadow(0 0 4px #f59e0b); }
-  100% { opacity: 1; filter: drop-shadow(0 0 12px #ef4444); }
+.pc-hud-bar-fill.pc-hot {
+  background: #53fc18;
 }
 
-.pulsecut-stats-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  background: rgba(0, 0, 0, 0.25);
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.pulsecut-stat-item {
-  display: flex;
-  flex-direction: column;
-}
-
-.pulsecut-stat-label {
+.pc-hud-meta {
   font-size: 10px;
-  color: #64748b;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  color: #71717a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.pulsecut-stat-value {
-  font-weight: 600;
-  font-size: 12px;
-  color: #e2e8f0;
-}
-
-.pulsecut-action-btn {
-  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
-  color: #ffffff;
-  border: none;
+.pc-hud-clip-btn {
+  width: 100%;
+  height: 32px;
+  border: 0;
   border-radius: 8px;
-  padding: 8px 12px;
-  font-weight: 600;
-  font-size: 12px;
+  background: #ffffff;
+  color: #09090b;
+  font-weight: 700;
+  font-size: 11.5px;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+  transition: opacity 150ms ease, transform 120ms ease;
 }
 
-.pulsecut-action-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.45);
+.pc-hud-clip-btn:hover:not(:disabled) {
+  opacity: 0.92;
 }
 
-.pulsecut-action-btn:active {
-  transform: translateY(1px);
+.pc-hud-clip-btn:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
-.pulsecut-action-btn.clipping {
-  background: #334155;
-  cursor: not-allowed;
-  opacity: 0.7;
+.pc-hud-clip-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
 }
 
-/* Prompt Banner / Toast when hype spikes */
+/* Hype Alert Toast Modal */
 .pulsecut-alert-toast {
   position: fixed;
-  top: 70px;
-  right: 24px;
-  z-index: 10000000;
-  background: rgba(15, 23, 42, 0.96);
-  border: 1px solid #f59e0b;
-  box-shadow: 0 12px 30px rgba(245, 158, 11, 0.25), 0 4px 12px rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(14px);
+  top: 20px;
+  right: 20px;
+  z-index: 2147483645;
+  width: 288px;
+  padding: 13px 14px;
   border-radius: 12px;
-  padding: 14px 16px;
-  color: #fff;
-  font-family: inherit;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-width: 340px;
-  animation: pulsecut-slide-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  background: rgba(14, 14, 17, 0.96);
+  border: 1px solid rgba(83, 252, 24, 0.45);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.65);
+  color: #f4f4f6;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
-@keyframes pulsecut-slide-in {
-  from { transform: translateX(50px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+.pulsecut-alert-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.pulsecut-alert-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #09090b;
+  background: #53fc18;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+
+.pulsecut-alert-close {
+  border: 0;
+  background: transparent;
+  color: #a1a1aa;
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
 }
 
 .pulsecut-alert-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  font-size: 13px;
   font-weight: 700;
-  font-size: 14px;
-  color: #fbbf24;
+  color: #ffffff;
 }
 
-.pulsecut-alert-desc {
-  font-size: 12px;
-  color: #cbd5e1;
-  line-height: 1.4;
+.pulsecut-alert-sub {
+  font-size: 11px;
+  color: #a1a1aa;
+  margin-top: 2px;
 }
 
 .pulsecut-alert-actions {
   display: flex;
   gap: 8px;
+  margin-top: 10px;
 }
 
-.pulsecut-btn-clip-now {
+.pulsecut-btn-clip {
   flex: 1;
-  background: #e11d48;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  padding: 7px 10px;
-  font-weight: 600;
-  font-size: 12px;
+  height: 30px;
+  border: 0;
+  border-radius: 7px;
+  background: #53fc18;
+  color: #09090b;
+  font-weight: 800;
+  font-size: 11.5px;
   cursor: pointer;
-  transition: background 0.15s;
-}
-
-.pulsecut-btn-clip-now:hover {
-  background: #f43f5e;
 }
 
 .pulsecut-btn-dismiss {
-  background: rgba(255, 255, 255, 0.1);
-  color: #94a3b8;
-  border: none;
-  border-radius: 6px;
-  padding: 7px 10px;
-  font-size: 12px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 7px;
+  background: transparent;
+  color: #d4d4d8;
+  font-size: 11.5px;
   cursor: pointer;
-  transition: background 0.15s;
 }
 
-.pulsecut-btn-dismiss:hover {
-  background: rgba(255, 255, 255, 0.18);
-  color: #fff;
+/* Status feedback toast */
+.pulsecut-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 152px;
+  z-index: 2147483646;
+  max-width: 300px;
+  padding: 9px 13px;
+  border-radius: 9px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #ffffff;
+  background: #18181b;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
+}
+
+.pulsecut-toast-success {
+  border-color: rgba(83, 252, 24, 0.55);
+}
+
+.pulsecut-toast-error {
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #fecaca;
 }

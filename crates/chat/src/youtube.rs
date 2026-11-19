@@ -21,7 +21,31 @@ pub struct YouTubeChat {
 }
 
 impl YouTubeChat {
-    pub async fn from_video(channel: &str, video_id: &str, api_key: &str) -> Result<Self> {
+    /// Extracts the 11-character YouTube video ID from a full URL (`watch?v=`, `/live/`,
+    /// `/shorts/`, `youtu.be/`) or returns the trimmed ID if already bare.
+    pub fn extract_video_id(input: &str) -> String {
+        let trimmed = input.trim();
+        if let Some(pos) = trimmed.find("v=") {
+            let rest = &trimmed[pos + 2..];
+            let id = rest.split(['&', '#', '/']).next().unwrap_or("");
+            if !id.is_empty() {
+                return id.to_string();
+            }
+        }
+        for marker in ["/live/", "/shorts/", "youtu.be/"] {
+            if let Some(pos) = trimmed.find(marker) {
+                let rest = &trimmed[pos + marker.len()..];
+                let id = rest.split(['?', '&', '#', '/']).next().unwrap_or("");
+                if !id.is_empty() {
+                    return id.to_string();
+                }
+            }
+        }
+        trimmed.to_string()
+    }
+
+    pub async fn from_video(channel: &str, video_id_or_url: &str, api_key: &str) -> Result<Self> {
+        let video_id = Self::extract_video_id(video_id_or_url);
         let client = Client::new();
         let url = format!(
             "https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id={video_id}&key={api_key}"
@@ -34,9 +58,12 @@ impl YouTubeChat {
             .json()
             .await
             .map_err(|e| PulseError::Chat(e.to_string()))?;
+        if let Some(err) = body["error"]["message"].as_str() {
+            return Err(PulseError::Chat(format!("youtube videos.list API error: {err}")));
+        }
         let id = body["items"][0]["liveStreamingDetails"]["activeLiveChatId"]
             .as_str()
-            .ok_or_else(|| PulseError::Chat("video has no active live chat".into()))?
+            .ok_or_else(|| PulseError::Chat(format!("video '{video_id}' has no active live chat")))?
             .to_string();
         Ok(Self::new(channel, &id, api_key))
     }

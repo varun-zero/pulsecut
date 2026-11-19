@@ -1,45 +1,16 @@
-# PulseCut Live Chat Hype Extension ⚡🔥
+# PulseCut Auto-Clipper (Chrome / Brave / Edge Extension)
 
-A browser extension for Chrome, Brave, and Edge that monitors live chat on **Twitch**, **YouTube Live**, and **Kick** in real-time. When chat goes crazy (high velocity, emote bursts, ALL CAPS / hype keywords), it detects the spike and triggers a **30-second lookback clip** sent directly to your local PulseCut editor.
+Monitors live chat velocity & reaction spikes on **Kick**, **Twitch**, and **YouTube Live** (including YouTube's `/live_chat` iframe) and supports one-click viral capture on **YouTube Shorts** and **Instagram Reels**.
 
----
+## What Was Fixed & Upgraded in v1.1.0
+- **Zero Mixed-Content / CORS Failures**: All requests to `http://127.0.0.1:8756` (or your custom `serverUrl`) are proxied through the MV3 background service worker (`background.js`), so HTTPS stream tabs never block localhost fetches.
+- **YouTube Live Chat Iframe Relay**: Observes `youtube.com/live_chat` inside its iframe without duplicating the HUD, relaying chat bursts to the top-frame HUD via `chrome.tabs.sendMessage(..., { frameId: 0 })`.
+- **SPA Navigation & Real Streamer Handle Detection**: Automatically updates channel username & viral template (`kick-stream`, `yt-short`, `insta-short`, `split-stream`) when switching streams without a page reload.
+- **Live Settings Sync**: Changing lookback window, mode, threshold, or server URL in the popup immediately updates open stream tabs and the "Open PulseCut Editor" link.
+- **Responsive Manual Clipping**: Manual HUD clicks, popup **"Clip Active Tab Now"**, and the `Alt+Shift+C` keyboard shortcut use a 2s debounce and are never blocked by the 45s auto-clip cooldown.
 
-## Features
-
-- **Real-Time Hype Meter HUD**: Floating dark-glass widget on Twitch, YouTube Live, and Kick showing live chat velocity (`msg/s`) and a 0–100% Hype Meter.
-- **Smart 30s Lookback Clipping**: Captures the action *before* chat reacted—the clip starts 30–40 seconds before the hype spike so you never miss the punchline or clutch play.
-- **Auto-Clip or Prompt Modes**:
-  - **Ask Mode (Default)**: Pops up an on-screen prompt: *"🔥 Chat is going crazy! (85% hype). Clip the last 30s? [Clip Now] [Dismiss]"*.
-  - **Auto-Clip Mode**: Automatically clips immediately when chat exceeds your threshold.
-  - **Manual HUD Mode**: Click "🔥 Clip Last 30s" anytime you want on the floating HUD.
-- **Zero Configuration**: Connects automatically to your local PulseCut server running at `http://127.0.0.1:8756`.
-
----
-
-## How to Install in Chrome / Brave / Edge
-
-1. Ensure the PulseCut local server is running:
-   ```bash
-   pulsecut editor --addr 127.0.0.1:8756
-   ```
-2. Open your browser's extension settings:
-   - **Chrome**: Navigate to `chrome://extensions/`
-   - **Brave**: Navigate to `brave://extensions/`
-   - **Edge**: Navigate to `edge://extensions/`
-3. Toggle on **Developer mode** (top-right corner).
-4. Click **Load unpacked** (top-left).
-5. Select the folder:
-   ```
-   C:\Users\varun\pulsecut\tools\extension
-   ```
-6. Open any live stream on **Twitch**, **YouTube Live**, or **Kick**. You will see the floating **PulseCut Hype HUD** appear at the bottom right!
-
----
-
-## Settings & Sensitivity
-
-Click the PulseCut extension icon in your browser toolbar to:
-- Adjust **Sensitivity** (Low 50%, Normal 70%, High 85%).
-- Change **Lookback Window** (15s, 30s, 45s, 60s).
-- Switch between **Ask Confirmation** and **Automatic Instant Clip**.
-- Open the PulseCut Editor dashboard (`http://127.0.0.1:8756`).
+## Install Unpacked
+1. Start the PulseCut local server (default `http://127.0.0.1:8756`).
+2. Open `chrome://extensions` and enable **Developer mode**.
+3. Click **Load unpacked** and select this `tools/extension` directory.
+4. Open any Kick, Twitch, YouTube Live, YouTube Shorts, or Instagram Reels tab — the PulseCut HUD will appear in the bottom-right corner with a green status dot when connected.

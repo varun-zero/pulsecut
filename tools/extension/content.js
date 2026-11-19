@@ -1,452 +1,612 @@
-// PulseCut Live Chat Hype Monitor - Content Script
-(function () {
+/**
+ * PulseCut Auto-Clipper — Content Script
+ *
+ * Works cleanly across:
+ * - Kick (live channels & chatroom)
+ * - Twitch (live channels & chat)
+ * - YouTube Live (top-frame HUD + /live_chat iframe observer relayed via background.js)
+ * - YouTube Shorts & Instagram Reels (one-click capture + auto-detected creator handle)
+ *
+ * All localhost server requests are proxied through background.js so HTTPS pages
+ * never hit Mixed Content or CORS blocks.
+ */
+
+(function startPulseCutContentScript() {
   'use strict';
 
-  // Prevent multiple injections
-  if (window.__PULSECUT_INJECTED__) return;
-  window.__PULSECUT_INJECTED__ = true;
+  const engine = globalThis.PulseCutHypeEngine;
+  if (!engine) return;
 
-  const DEFAULT_CONFIG = {
-    serverUrl: 'http://127.0.0.1:8756',
-    lookbackSecs: 30,
-    sensitivityThreshold: 70, // Hype score out of 100 to trigger
-    autoClipMode: 'ask',       // 'ask' | 'auto' | 'manual'
-    cooldownSecs: 45
-  };
+  const IS_TOP_FRAME = window === window.top;
+  const CHAT_WINDOW_MS = 6000;
+  const BASELINE_WINDOW_MS = 60000;
+  const TICK_INTERVAL_MS = 500;
 
-  let cfg = { ...DEFAULT_CONFIG };
-  try {
-    if (chrome && chrome.storage && chrome.storage.sync) {
-      chrome.storage.sync.get(DEFAULT_CONFIG, (items) => {
-        cfg = { ...DEFAULT_CONFIG, ...items };
-      });
-    }
-  } catch (_) {}
-
-  // State
-  let platform = 'unknown';
-  let channel = '';
-  let messageTimestamps = []; // Timestamps of recent messages (ms)
-  let keywordHits = 0;
-  let emoteHits = 0;
-  let lastTriggerTime = 0;
-  let isServerOnline = false;
+  let config = { ...engine.DEFAULT_CONFIG };
+  let context = readPageContext();
+  let messageTimestamps = []; // [{ ts, text }]
+  let baselineCount = []; // [ts]
+  let lastAutoTriggerMs = 0;
+  let lastManualTriggerMs = 0;
+  let lastAlertMs = 0;
+  let serverConnected = false;
   let hudEl = null;
+  let currentUrl = window.location.href;
+  let chatObserver = null;
+  let observedContainer = null;
 
-  const HYPE_KEYWORDS = [
-    'pog', 'poggers', 'kekw', 'lmao', 'lol', 'omg', 'wtf', 'w', 'goat',
-    'insane', 'clip it', 'clipped', 'sheesh', 'holy', 'no way', 'fire', 'gg'
-  ];
+  // Iframe batch buffer for relaying YouTube live_chat messages to top frame
+  let iframeRelayBuffer = [];
+  let iframeRelayTimer = null;
 
-  // 1. Detect platform and channel
-  function detectPlatform() {
-    const host = window.location.hostname;
-    const path = window.location.pathname;
+  function readDomHints() {
+    const hints = { channelName: '', channelHandle: '' };
+    const host = window.location.hostname.toLowerCase();
 
-    if (host.includes('twitch.tv')) {
-      platform = 'twitch';
-      const parts = path.split('/').filter(Boolean);
-      channel = parts[0] || 'twitch_stream';
-    } else if (host.includes('youtube.com')) {
-      platform = 'youtube';
-      const params = new URLSearchParams(window.location.search);
-      channel = params.get('v') || path.split('/').filter(Boolean).pop() || 'youtube_live';
+    if (host.includes('youtube.com')) {
+      const handleLink =
+        document.querySelector('ytd-video-owner-renderer a[href^="/@"]') ||
+        document.querySelector('ytd-channel-name a[href^="/@"]') ||
+        document.querySelector('ytd-reel-player-header-renderer a[href^="/@"]') ||
+        document.querySelector('#channel-name a[href^="/@"]');
+      if (handleLink) {
+        const href = handleLink.getAttribute('href') || '';
+        const match = href.match(/\/@([^/?#]+)/);
+        if (match) hints.channelHandle = match[1];
+      }
+      const channelText =
+        document.querySelector('ytd-video-owner-renderer ytd-channel-name #text') ||
+        document.querySelector('ytd-reel-player-header-renderer #channel-name');
+      if (channelText && channelText.textContent) {
+        hints.channelName = channelText.textContent.trim();
+      }
+    } else if (host.includes('instagram.com')) {
+      const headerLink =
+        document.querySelector('article header a[href^="/"]') ||
+        document.querySelector('main a[role="link"][href^="/"]');
+      if (headerLink) {
+        const seg = (headerLink.getAttribute('href') || '').split('/').filter(Boolean)[0];
+        if (seg) hints.channelHandle = seg;
+      }
     } else if (host.includes('kick.com')) {
-      platform = 'kick';
-      const parts = path.split('/').filter(Boolean);
-      channel = parts[0] || 'kick_stream';
-    }
-  }
-
-  detectPlatform();
-
-  // 2. Ping PulseCut local server health
-  async function checkServerHealth() {
-    try {
-      const res = await fetch(`${cfg.serverUrl}/api/extension/status`, {
-        method: 'GET',
-        headers: { 'Accept': 'application/json' },
-        cache: 'no-cache'
-      });
-      if (res.ok) {
-        const data = await res.json();
-        isServerOnline = data.ok === true;
-      } else {
-        isServerOnline = false;
+      const heading = document.querySelector('[data-testid="channel-username"], h1');
+      if (heading && heading.textContent) {
+        hints.channelName = heading.textContent.trim();
       }
-    } catch (_) {
-      isServerOnline = false;
     }
-    updateHudStatus();
+
+    return hints;
   }
 
-  // Periodic health check
-  setInterval(checkServerHealth, 5000);
-  checkServerHealth();
+  function readPageContext() {
+    return engine.detectStreamContext(window.location.href, readDomHints());
+  }
 
-  // 3. Measure Chat Hype Engine
-  function recordChatMessage(text, emoteCount = 0) {
+  function sendRuntimeMessage(payload) {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage(payload, (response) => {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve(response || { ok: false, error: 'No response' });
+        });
+      } catch (err) {
+        resolve({ ok: false, error: String(err?.message || err) });
+      }
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Chat DOM Observation (2025/2026 Kick, Twitch, YouTube Live selectors)
+  // -------------------------------------------------------------------------
+
+  function findChatContainer() {
+    if (context.platform === 'kick') {
+      return (
+        document.querySelector('#chatroom-messages') ||
+        document.querySelector('[data-testid="chat-messages"]') ||
+        document.querySelector('[class*="chatroom-messages"]') ||
+        document.querySelector('[class*="chat-messages"]')
+      );
+    }
+    if (context.platform === 'twitch') {
+      return (
+        document.querySelector('.chat-scrollable-area__message-container') ||
+        document.querySelector('[role="log"][aria-label*="Chat"]') ||
+        document.querySelector('[data-test-selector="chat-scrollable-area__message-container"]')
+      );
+    }
+    if (context.platform === 'youtube') {
+      return (
+        document.querySelector('yt-live-chat-item-list-renderer #items') ||
+        document.querySelector('#items.yt-live-chat-item-list-renderer') ||
+        document.querySelector('#chat-messages #items')
+      );
+    }
+    return null;
+  }
+
+  function extractMessageText(node) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return '';
+
+    if (context.platform === 'kick') {
+      const msgEl =
+        node.querySelector('[data-testid="chat-message-content"]') ||
+        node.querySelector('.chat-entry-content') ||
+        node.querySelector('span[class*="font-normal"]');
+      return (msgEl ? msgEl.textContent : node.textContent || '').trim();
+    }
+
+    if (context.platform === 'twitch') {
+      const body = node.querySelector('[data-a-target="chat-line-message-body"]') || node;
+      return (body.textContent || '').trim();
+    }
+
+    if (context.platform === 'youtube') {
+      const msgEl = node.querySelector('#message') || node;
+      return (msgEl.textContent || '').trim();
+    }
+
+    return (node.textContent || '').trim();
+  }
+
+  function isChatMessageNode(node) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+    if (context.platform === 'kick') {
+      return (
+        node.hasAttribute('data-index') ||
+        node.hasAttribute('data-chat-entry') ||
+        Boolean(node.querySelector('[data-chat-entry], .chat-entry-content'))
+      );
+    }
+    if (context.platform === 'twitch') {
+      return (
+        node.matches?.('.chat-line__message, [data-a-target="chat-line-message"]') ||
+        Boolean(node.querySelector?.('[data-a-target="chat-line-message"]'))
+      );
+    }
+    if (context.platform === 'youtube') {
+      return (
+        node.tagName === 'YT-LIVE-CHAT-TEXT-MESSAGE-RENDERER' ||
+        node.tagName === 'YT-LIVE-CHAT-PAID-MESSAGE-RENDERER' ||
+        Boolean(node.querySelector?.('#message'))
+      );
+    }
+    return false;
+  }
+
+  function recordMessages(items) {
+    if (!items.length) return;
+    if (!IS_TOP_FRAME) {
+      iframeRelayBuffer.push(...items);
+      if (!iframeRelayTimer) {
+        iframeRelayTimer = window.setTimeout(() => {
+          const batch = iframeRelayBuffer.splice(0, iframeRelayBuffer.length);
+          iframeRelayTimer = null;
+          if (batch.length > 0) {
+            void sendRuntimeMessage({ type: 'CHAT_BURST', messages: batch });
+          }
+        }, 250);
+      }
+      return;
+    }
+
+    for (const item of items) {
+      messageTimestamps.push(item);
+      baselineCount.push(item.ts);
+    }
+  }
+
+  function attachChatObserver() {
+    const container = findChatContainer();
+    if (!container || container === observedContainer) return;
+
+    if (chatObserver) {
+      chatObserver.disconnect();
+    }
+
+    observedContainer = container;
+    chatObserver = new MutationObserver((mutations) => {
+      const now = Date.now();
+      const batch = [];
+      for (const m of mutations) {
+        for (const node of m.addedNodes) {
+          if (!isChatMessageNode(node)) continue;
+          const text = extractMessageText(node);
+          if (text) {
+            batch.push({ ts: now, text: text.slice(0, 240) });
+          }
+        }
+      }
+      if (batch.length > 0) {
+        recordMessages(batch);
+      }
+    });
+
+    chatObserver.observe(container, { childList: true, subtree: false });
+  }
+
+  // -------------------------------------------------------------------------
+  // Top-Frame HUD, Server Health & Clip Triggering
+  // -------------------------------------------------------------------------
+
+  async function pingServer() {
+    const res = await sendRuntimeMessage({
+      type: 'PING_SERVER',
+      serverUrl: config.serverUrl,
+    });
+    serverConnected = Boolean(res.ok);
+    updateHudHeader();
+    return serverConnected;
+  }
+
+  async function triggerClip(source, score, reasons) {
     const now = Date.now();
-    messageTimestamps.push(now);
-    emoteHits += emoteCount;
+    const gate = engine.evaluateTriggerGate({
+      source,
+      nowMs: now,
+      lastManualTriggerMs,
+      lastAutoTriggerMs,
+      lastAlertMs,
+      cooldownSecs: config.cooldownSecs,
+      manualDebounceSecs: config.manualDebounceSecs,
+    });
 
-    const lower = (text || '').toLowerCase();
-    for (const kw of HYPE_KEYWORDS) {
-      if (lower.includes(kw)) {
-        keywordHits++;
+    if (!gate.allowed) {
+      if (source === 'manual') {
+        showToast(`Please wait ${gate.retryAfterSecs}s before clipping again`, 'info');
       }
+      return { ok: false, throttled: true };
     }
 
-    // Prune messages older than 60 seconds
-    const cutoff = now - 60000;
-    while (messageTimestamps.length > 0 && messageTimestamps[0] < cutoff) {
-      messageTimestamps.shift();
+    if (source === 'manual') {
+      lastManualTriggerMs = now;
+    } else {
+      lastAutoTriggerMs = now;
     }
+
+    context = readPageContext();
+    setClipButtonBusy(true);
+
+    const res = await sendRuntimeMessage({
+      type: 'TRIGGER_CLIP',
+      serverUrl: config.serverUrl,
+      url: window.location.href,
+      channel: context.channel,
+      platform: context.platform,
+      template: context.template,
+      lookback_secs: config.lookbackSecs,
+      hype_score: score,
+      reasons: reasons || [],
+    });
+
+    setClipButtonBusy(false);
+
+    if (res.ok) {
+      serverConnected = true;
+      updateHudHeader();
+      showToast(
+        `Clipped ${context.channel} (${config.lookbackSecs}s · ${context.template})`,
+        'success'
+      );
+      return { ok: true, data: res.data };
+    }
+
+    serverConnected = false;
+    updateHudHeader();
+    showToast(res.error || 'PulseCut server offline — start PulseCut first', 'error');
+    return { ok: false, error: res.error };
   }
 
-  function calculateHype() {
+  function showHypeAlertModal(score, reasons) {
     const now = Date.now();
-    const cutoff5s = now - 5000;
-    const cutoff30s = now - 30000;
+    const gate = engine.evaluateTriggerGate({
+      source: 'alert',
+      nowMs: now,
+      lastAlertMs,
+      alertCooldownSecs: config.alertCooldownSecs,
+    });
+    if (!gate.allowed) return;
+    if (document.getElementById('pulsecut-alert-modal')) return;
 
-    // Messages in last 5 seconds and last 30 seconds
-    let count5s = 0;
-    let count30s = 0;
-    for (let i = messageTimestamps.length - 1; i >= 0; i--) {
-      const ts = messageTimestamps[i];
-      if (ts >= cutoff5s) count5s++;
-      if (ts >= cutoff30s) count30s++;
-    }
-
-    const velocity = count5s / 5.0; // msgs per second
-    const baseline = Math.max(1.0, count30s / 30.0); // msgs per second baseline
-    const ratio = velocity / baseline;
-
-    // Hype score calculation (0 - 100)
-    // Combines spike multiplier ratio, raw velocity, and keyword excitement
-    let score = 0;
-    if (velocity >= 1.5) {
-      score = Math.min(100, Math.round(
-        (ratio * 25) +
-        (Math.min(velocity, 25) * 2.2) +
-        (Math.min(keywordHits, 10) * 3)
-      ));
-    }
-
-    // Decay keyword / emote hits slowly
-    keywordHits = Math.max(0, keywordHits * 0.92);
-    emoteHits = Math.max(0, emoteHits * 0.90);
-
-    return {
-      score: Math.min(100, Math.max(0, score)),
-      velocity: velocity.toFixed(1),
-      count5s,
-      ratio: ratio.toFixed(1)
-    };
-  }
-
-  // 4. Trigger PulseCut Clipping Job
-  async function triggerClip(reasons = ['Chat reaction spike']) {
-    const now = Date.now();
-    if (now - lastTriggerTime < cfg.cooldownSecs * 1000) {
-      return { success: false, reason: 'In cooldown' };
-    }
-    lastTriggerTime = now;
-
-    const clipBtn = document.getElementById('pulsecut-btn-clip');
-    if (clipBtn) {
-      clipBtn.classList.add('clipping');
-      clipBtn.innerText = '⏳ Clipping...';
-    }
-
-    try {
-      const payload = {
-        url: window.location.href,
-        channel: channel || 'streamer',
-        platform: platform,
-        lookback_secs: Number(cfg.lookbackSecs) || 30,
-        hype_score: calculateHype().score / 100.0,
-        reasons: reasons
-      };
-
-      const res = await fetch(`${cfg.serverUrl}/api/extension/clip`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        showNotificationToast('✅ Clip Triggered!', `PulseCut is capturing the last ${cfg.lookbackSecs}s.`, true);
-        return { success: true, data };
-      } else {
-        const err = await res.text();
-        showNotificationToast('❌ Clip Failed', `Server error: ${err.slice(0, 100)}`, false);
-        return { success: false, reason: err };
-      }
-    } catch (err) {
-      showNotificationToast('⚠️ PulseCut Offline', `Could not reach ${cfg.serverUrl}. Is PulseCut running?`, false);
-      return { success: false, reason: err.message };
-    } finally {
-      if (clipBtn) {
-        clipBtn.classList.remove('clipping');
-        clipBtn.innerText = `🔥 Clip Last ${cfg.lookbackSecs}s`;
-      }
-    }
-  }
-
-  // 5. Toast alerts
-  function showHypeAlertModal(hype) {
-    const existing = document.getElementById('pulsecut-alert-modal');
-    if (existing) existing.remove();
-
-    const toast = document.createElement('div');
-    toast.id = 'pulsecut-alert-modal';
-    toast.className = 'pulsecut-alert-toast';
-    toast.innerHTML = `
-      <div class="pulsecut-alert-title">
-        🔥 <span>Chat Going Crazy! (${hype.score}% Hype)</span>
+    lastAlertMs = now;
+    const modal = document.createElement('div');
+    modal.id = 'pulsecut-alert-modal';
+    modal.className = 'pulsecut-alert-toast';
+    modal.innerHTML = `
+      <div class="pulsecut-alert-header">
+        <span class="pulsecut-alert-badge">HYPE SPIKE · ${score}%</span>
+        <button type="button" class="pulsecut-alert-close" aria-label="Dismiss">&times;</button>
       </div>
-      <div class="pulsecut-alert-desc">
-        Chat velocity spiked to <strong>${hype.velocity} msg/s</strong> (${hype.ratio}x baseline)! Clip the last ${cfg.lookbackSecs} seconds?
-      </div>
+      <div class="pulsecut-alert-title">${escapeHtml(context.channel)} is popping off</div>
+      <div class="pulsecut-alert-sub">${escapeHtml((reasons || []).join(' · ') || 'Chat burst detected')}</div>
       <div class="pulsecut-alert-actions">
-        <button class="pulsecut-btn-clip-now" id="pulsecut-toast-clip">🔥 Clip Now (${cfg.lookbackSecs}s)</button>
-        <button class="pulsecut-btn-dismiss" id="pulsecut-toast-dismiss">Dismiss</button>
+        <button type="button" class="pulsecut-btn-clip">Clip Last ${config.lookbackSecs}s</button>
+        <button type="button" class="pulsecut-btn-dismiss">Dismiss</button>
       </div>
     `;
 
-    document.body.appendChild(toast);
+    const closeModal = () => modal.remove();
+    modal.querySelector('.pulsecut-alert-close')?.addEventListener('click', closeModal);
+    modal.querySelector('.pulsecut-btn-dismiss')?.addEventListener('click', closeModal);
+    modal.querySelector('.pulsecut-btn-clip')?.addEventListener('click', () => {
+      closeModal();
+      void triggerClip('manual', score, reasons);
+    });
 
-    toast.querySelector('#pulsecut-toast-clip').onclick = () => {
-      triggerClip([`Chat spiked to ${hype.velocity} msg/s (${hype.score}% hype)`]);
-      toast.remove();
-    };
-
-    toast.querySelector('#pulsecut-toast-dismiss').onclick = () => {
-      toast.remove();
-    };
-
-    // Auto dismiss after 12s
-    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 12000);
+    document.body.appendChild(modal);
+    window.setTimeout(() => {
+      if (modal.isConnected) modal.remove();
+    }, 10000);
   }
 
-  function showNotificationToast(title, desc, isSuccess) {
-    const existing = document.getElementById('pulsecut-toast-status');
+  function showToast(message, kind = 'info') {
+    if (!IS_TOP_FRAME) return;
+    const existing = document.getElementById('pulsecut-status-toast');
     if (existing) existing.remove();
 
     const toast = document.createElement('div');
-    toast.id = 'pulsecut-toast-status';
-    toast.className = 'pulsecut-alert-toast';
-    toast.style.borderColor = isSuccess ? '#10b981' : '#ef4444';
-    toast.innerHTML = `
-      <div class="pulsecut-alert-title" style="color: ${isSuccess ? '#34d399' : '#f87171'}">
-        ${title}
-      </div>
-      <div class="pulsecut-alert-desc">
-        ${desc}
-      </div>
-      ${isSuccess ? `<a href="${cfg.serverUrl}" target="_blank" style="font-size: 11px; color: #818cf8; text-decoration: underline; font-weight: 600;">Open PulseCut Editor &rarr;</a>` : ''}
-    `;
-
+    toast.id = 'pulsecut-status-toast';
+    toast.className = `pulsecut-toast pulsecut-toast-${kind}`;
+    toast.textContent = message;
     document.body.appendChild(toast);
-    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 6000);
+
+    window.setTimeout(() => {
+      if (toast.isConnected) toast.remove();
+    }, 3600);
   }
 
-  // 6. UI HUD Widget
-  function injectHud() {
-    if (document.getElementById('pulsecut-hud')) return;
+  function escapeHtml(str) {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function createHud() {
+    if (!IS_TOP_FRAME || hudEl || !context.supported) return;
 
     hudEl = document.createElement('div');
     hudEl.id = 'pulsecut-hud';
     hudEl.innerHTML = `
-      <div class="pulsecut-header">
-        <div class="pulsecut-brand">
-          <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-          <span>PulseCut</span>
-          <span id="pulsecut-status-dot" class="pulsecut-status-dot ${isServerOnline ? '' : 'offline'}" title="${isServerOnline ? 'Connected to local PulseCut' : 'PulseCut Offline'}"></span>
-        </div>
-        <div class="pulsecut-controls-top">
-          <button class="pulsecut-icon-btn" id="pulsecut-btn-min" title="Minimize">−</button>
-        </div>
+      <div class="pc-hud-row">
+        <span class="pc-hud-dot" id="pc-hud-dot"></span>
+        <span class="pc-hud-brand">PulseCut</span>
+        <span class="pc-hud-channel" id="pc-hud-channel"></span>
+        <button type="button" class="pc-hud-min" id="pc-hud-min" title="Collapse HUD">–</button>
       </div>
-      <div class="pulsecut-body">
-        <div class="pulsecut-gauge-row">
-          <span>Hype Meter</span>
-          <span class="pulsecut-gauge-val" id="pulsecut-gauge-text">0%</span>
-        </div>
-        <div class="pulsecut-bar-track">
-          <div class="pulsecut-bar-fill" id="pulsecut-bar"></div>
-        </div>
-        <div class="pulsecut-stats-grid">
-          <div class="pulsecut-stat-item">
-            <span class="pulsecut-stat-label">Velocity</span>
-            <span class="pulsecut-stat-value" id="pulsecut-stat-vel">0.0/s</span>
+      <div class="pc-hud-body" id="pc-hud-body">
+        <div class="pc-hud-meter-wrap">
+          <div class="pc-hud-meter-label">
+            <span>Chat Hype</span>
+            <span id="pc-hud-score">0%</span>
           </div>
-          <div class="pulsecut-stat-item">
-            <span class="pulsecut-stat-label">Lookback</span>
-            <span class="pulsecut-stat-value">${cfg.lookbackSecs}s</span>
+          <div class="pc-hud-bar-bg">
+            <div class="pc-hud-bar-fill" id="pc-hud-bar"></div>
           </div>
+          <div class="pc-hud-meta" id="pc-hud-meta">Monitoring stream…</div>
         </div>
-        <button class="pulsecut-action-btn" id="pulsecut-btn-clip">
-          🔥 Clip Last ${cfg.lookbackSecs}s
+        <button type="button" class="pc-hud-clip-btn" id="pc-hud-clip-btn">
+          Clip Last ${config.lookbackSecs}s
         </button>
       </div>
     `;
 
+    hudEl.querySelector('#pc-hud-clip-btn')?.addEventListener('click', () => {
+      void triggerClip('manual', 100, ['manual']);
+    });
+
+    hudEl.querySelector('#pc-hud-min')?.addEventListener('click', () => {
+      const body = hudEl.querySelector('#pc-hud-body');
+      const minBtn = hudEl.querySelector('#pc-hud-min');
+      if (!body || !minBtn) return;
+      const collapsed = body.classList.toggle('pc-collapsed');
+      minBtn.textContent = collapsed ? '+' : '–';
+    });
+
     document.body.appendChild(hudEl);
-
-    // Minimize toggle
-    const minBtn = hudEl.querySelector('#pulsecut-btn-min');
-    minBtn.onclick = (e) => {
-      e.stopPropagation();
-      hudEl.classList.toggle('pulsecut-minimized');
-      minBtn.innerText = hudEl.classList.contains('pulsecut-minimized') ? '+' : '−';
-    };
-
-    hudEl.onclick = () => {
-      if (hudEl.classList.contains('pulsecut-minimized')) {
-        hudEl.classList.remove('pulsecut-minimized');
-        minBtn.innerText = '−';
-      }
-    };
-
-    // Manual Clip Button
-    hudEl.querySelector('#pulsecut-btn-clip').onclick = (e) => {
-      e.stopPropagation();
-      triggerClip(['Manual button clip']);
-    };
+    updateHudHeader();
   }
 
-  function updateHudStatus() {
-    const dot = document.getElementById('pulsecut-status-dot');
+  function removeHud() {
+    if (hudEl) {
+      hudEl.remove();
+      hudEl = null;
+    }
+  }
+
+  function setClipButtonBusy(busy) {
+    if (!hudEl) return;
+    const btn = hudEl.querySelector('#pc-hud-clip-btn');
+    if (!btn) return;
+    btn.disabled = busy;
+    btn.textContent = busy ? 'Sending clip…' : `Clip Last ${config.lookbackSecs}s`;
+  }
+
+  function updateHudHeader() {
+    if (!hudEl) return;
+    const dot = hudEl.querySelector('#pc-hud-dot');
+    const channelEl = hudEl.querySelector('#pc-hud-channel');
+    const btn = hudEl.querySelector('#pc-hud-clip-btn');
     if (dot) {
-      if (isServerOnline) {
-        dot.classList.remove('offline');
-        dot.title = 'Connected to PulseCut (127.0.0.1:8756)';
-      } else {
-        dot.classList.add('offline');
-        dot.title = 'PulseCut server is offline (start pulsecut editor)';
-      }
+      dot.className = `pc-hud-dot ${serverConnected ? 'pc-online' : 'pc-offline'}`;
+      dot.title = serverConnected
+        ? `Connected to ${config.serverUrl}`
+        : `PulseCut server offline (${config.serverUrl})`;
+    }
+    if (channelEl) {
+      channelEl.textContent = context.channel;
+      channelEl.title = `${context.platform} · template: ${context.template}`;
+    }
+    if (btn && !btn.disabled) {
+      btn.textContent = `Clip Last ${config.lookbackSecs}s`;
     }
   }
 
-  // 7. Update HUD & Evaluate Triggers Every 500ms
-  setInterval(() => {
-    const hype = calculateHype();
+  function evaluateHypeTick() {
+    if (!IS_TOP_FRAME) return;
 
-    const gaugeText = document.getElementById('pulsecut-gauge-text');
-    const bar = document.getElementById('pulsecut-bar');
-    const velText = document.getElementById('pulsecut-stat-vel');
-
-    if (gaugeText) gaugeText.innerText = `${hype.score}%`;
-    if (velText) velText.innerText = `${hype.velocity}/s`;
-    if (bar) {
-      bar.style.width = `${hype.score}%`;
-      if (hype.score >= 70) {
-        bar.classList.add('fire');
+    // Detect SPA route changes (Kick, Twitch, YouTube, Instagram)
+    if (window.location.href !== currentUrl) {
+      currentUrl = window.location.href;
+      messageTimestamps = [];
+      baselineCount = [];
+      observedContainer = null;
+      context = readPageContext();
+      if (context.supported && config.mode !== 'off') {
+        createHud();
+        updateHudHeader();
       } else {
-        bar.classList.remove('fire');
+        removeHud();
       }
     }
 
-    // Trigger check
+    // Re-read YouTube / Instagram DOM channel name once hydrated
+    const refreshed = readPageContext();
+    if (refreshed.channel !== context.channel || refreshed.template !== context.template) {
+      context = refreshed;
+      updateHudHeader();
+    }
+
+    if (config.mode === 'off') {
+      removeHud();
+      return;
+    }
+
+    attachChatObserver();
+
     const now = Date.now();
-    if (hype.score >= cfg.sensitivityThreshold && (now - lastTriggerTime > cfg.cooldownSecs * 1000)) {
-      if (cfg.autoClipMode === 'auto') {
-        triggerClip([`Auto-triggered: hype reached ${hype.score}% (${hype.velocity} msg/s)`]);
-      } else if (cfg.autoClipMode === 'ask') {
-        showHypeAlertModal(hype);
+    messageTimestamps = messageTimestamps.filter((m) => now - m.ts <= CHAT_WINDOW_MS);
+    baselineCount = baselineCount.filter((ts) => now - ts <= BASELINE_WINDOW_MS);
+
+    const baselineRatePerSec = baselineCount.length / (BASELINE_WINDOW_MS / 1000);
+    const analysis = engine.analyzeChatWindow({
+      messages: messageTimestamps,
+      nowMs: now,
+      windowMs: CHAT_WINDOW_MS,
+      baselineRatePerSec,
+    });
+
+    if (hudEl) {
+      const scoreEl = hudEl.querySelector('#pc-hud-score');
+      const barEl = hudEl.querySelector('#pc-hud-bar');
+      const metaEl = hudEl.querySelector('#pc-hud-meta');
+      if (scoreEl) scoreEl.textContent = `${analysis.score}%`;
+      if (barEl) {
+        barEl.style.width = `${analysis.score}%`;
+        barEl.className = `pc-hud-bar-fill ${
+          analysis.score >= config.threshold
+            ? 'pc-hot'
+            : analysis.score >= Math.round(config.threshold * 0.6)
+            ? 'pc-warm'
+            : ''
+        }`;
+      }
+      if (metaEl) {
+        const modeTag = config.mode === 'auto' ? 'Auto' : 'Alert';
+        metaEl.textContent =
+          analysis.reasons.length > 0
+            ? `${modeTag} · ${analysis.reasons.slice(0, 2).join(' · ')}`
+            : `${modeTag} · ${analysis.ratePerSec} msg/s · ${context.template}`;
       }
     }
-  }, 500);
 
-  // 8. Chat DOM Observers for Twitch, YouTube Live, and Kick
-  function setupChatObserver() {
-    let observed = false;
-
-    // Twitch
-    const twitchContainer = document.querySelector('.chat-scrollable-area__message-container') ||
-                            document.querySelector('[data-a-target="chat-scroller"]');
-    if (twitchContainer && !twitchContainer.__pc_observed) {
-      twitchContainer.__pc_observed = true;
-      const observer = new MutationObserver((mutations) => {
-        for (const m of mutations) {
-          for (const node of m.addedNodes) {
-            if (node.nodeType === Node.ELEMENT_NODE) {
-              const textEl = node.querySelector('[data-a-target="chat-message-text"]') || node;
-              const emotes = node.querySelectorAll('img.chat-image').length;
-              recordChatMessage(textEl.textContent || '', emotes);
-            }
-          }
-        }
-      });
-      observer.observe(twitchContainer, { childList: true, subtree: true });
-      observed = true;
+    if (analysis.score >= config.threshold) {
+      if (config.mode === 'auto') {
+        void triggerClip('auto', analysis.score, analysis.reasons);
+      } else if (config.mode === 'alert') {
+        showHypeAlertModal(analysis.score, analysis.reasons);
+      }
     }
-
-    // YouTube Live
-    const ytItems = document.querySelector('yt-live-chat-item-list-renderer #items') ||
-                    document.querySelector('#item-list #items');
-    if (ytItems && !ytItems.__pc_observed) {
-      ytItems.__pc_observed = true;
-      const observer = new MutationObserver((mutations) => {
-        for (const m of mutations) {
-          for (const node of m.addedNodes) {
-            if (node.nodeType === Node.ELEMENT_NODE) {
-              const msgEl = node.querySelector('#message');
-              const emotes = node.querySelectorAll('img.emoji').length;
-              recordChatMessage(msgEl ? msgEl.textContent : node.textContent, emotes);
-            }
-          }
-        }
-      });
-      observer.observe(ytItems, { childList: true, subtree: true });
-      observed = true;
-    }
-
-    // Kick
-    const kickContainer = document.querySelector('#chatroom-messages') ||
-                          document.querySelector('.chat-messages');
-    if (kickContainer && !kickContainer.__pc_observed) {
-      kickContainer.__pc_observed = true;
-      const observer = new MutationObserver((mutations) => {
-        for (const m of mutations) {
-          for (const node of m.addedNodes) {
-            if (node.nodeType === Node.ELEMENT_NODE) {
-              const textEl = node.querySelector('.chat-entry') || node;
-              const emotes = node.querySelectorAll('img').length;
-              recordChatMessage(textEl.textContent || '', emotes);
-            }
-          }
-        }
-      });
-      observer.observe(kickContainer, { childList: true, subtree: true });
-      observed = true;
-    }
-
-    return observed;
   }
 
-  // Poll for chat elements (since SPA frameworks load them asynchronously)
-  function init() {
-    detectPlatform();
-    injectHud();
+  // -------------------------------------------------------------------------
+  // Runtime Messages & Live Storage Sync
+  // -------------------------------------------------------------------------
 
-    const checkInterval = setInterval(() => {
-      setupChatObserver();
-    }, 2000);
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (!msg || typeof msg.type !== 'string') return false;
 
-    // Initial check
-    setupChatObserver();
+    if (msg.type === 'RELAYED_CHAT_BURST' && IS_TOP_FRAME) {
+      recordMessages(Array.isArray(msg.messages) ? msg.messages : []);
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    if (msg.type === 'POPUP_TRIGGER_CLIP' && IS_TOP_FRAME) {
+      triggerClip('manual', 100, ['popup']).then(sendResponse);
+      return true;
+    }
+
+    if (msg.type === 'GET_PAGE_CONTEXT' && IS_TOP_FRAME) {
+      context = readPageContext();
+      sendResponse({
+        ok: true,
+        context,
+        serverConnected,
+      });
+      return false;
+    }
+
+    return false;
+  });
+
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'sync') return;
+    let urlChanged = false;
+    for (const [key, change] of Object.entries(changes)) {
+      if (key === 'serverUrl') {
+        config.serverUrl = engine.normalizeServerUrl(change.newValue);
+        urlChanged = true;
+      } else if (key in config) {
+        config[key] = change.newValue;
+      }
+    }
+    if (config.mode === 'off') {
+      removeHud();
+    } else if (IS_TOP_FRAME && context.supported) {
+      createHud();
+      updateHudHeader();
+    }
+    if (urlChanged && IS_TOP_FRAME) {
+      void pingServer();
+    }
+  });
+
+  // Keyboard shortcut: Alt+Shift+C to manually clip active stream
+  if (IS_TOP_FRAME) {
+    window.addEventListener('keydown', (e) => {
+      if (e.altKey && e.shiftKey && e.code === 'KeyC') {
+        const tag = (e.target && e.target.tagName) || '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+        e.preventDefault();
+        void triggerClip('manual', 100, ['hotkey']);
+      }
+    });
   }
 
-  // Start when DOM is ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+  // Bootstrap
+  chrome.storage.sync.get(engine.DEFAULT_CONFIG, (items) => {
+    config = {
+      ...engine.DEFAULT_CONFIG,
+      ...(items || {}),
+      serverUrl: engine.normalizeServerUrl(items?.serverUrl),
+    };
+
+    if (IS_TOP_FRAME) {
+      if (config.mode !== 'off' && context.supported) {
+        createHud();
+      }
+      void pingServer();
+      window.setInterval(evaluateHypeTick, TICK_INTERVAL_MS);
+      window.setInterval(() => void pingServer(), 15000);
+    } else {
+      // Subframe (e.g. YouTube /live_chat iframe): never render HUD, only observe chat
+      attachChatObserver();
+      window.setInterval(attachChatObserver, 1500);
+    }
+  });
 })();
