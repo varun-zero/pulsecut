@@ -1,96 +1,78 @@
 # PulseCut Automation Agent — Integration Playbook
 
-This defines how the AI agent (me) controls the whole workflow, from finding a
-live stream to publishing a verified short. The integration lives in
-`automation/` and the API hooks added to `crates/app/src/web.rs`.
+How the AI agent (me) controls the whole workflow, from finding a live stream to
+publishing a verified short. Integration lives in `automation/` plus API hooks in
+`crates/app/src/web.rs`.
 
-## Architecture
+## Workflow (what I run and check)
 
-```
-        ┌─────────────────────────────────────────────────────┐
-        │  ME (automation agent)                              │
-        │  automation/agent.py  <- I drive this via commands   │
-        └───────────────┬─────────────────────────────────────┘
-                        │ HTTP (localhost:8756)
-        ┌───────────────▼─────────────────────────────────────┐
-        │  PulseCut backend (web.rs)                           │
-        │  POST /api/jobs           -> download+clip (vertical)│
-        │  GET  /api/jobs/{id}      -> progress monitor        │
-        │  POST /api/clips/{id}/verify -> vitality + QA frames │
-        │  POST /api/clips/{id}/metadata -> captions/hashtags  │
-        │  POST /api/clips/{id}/publish  -> platform publishing│
-        │  GET  /api/qa/{id}/{frame}.jpg -> visual review      │
-        └─────────────────────────────────────────────────────┘
-```
-
-## The workflow I run (and what each step checks)
-
-1. **Find / supply a stream** — the Chrome extension (`tools/extension`)
-   detects Kick/Twitch/YouTube/Instagram live streams and hype spikes and posts
-   `/api/extension/clip`. I can also take a direct URL via `agent.py run <url>`.
-2. **Download + clip** — `POST /api/jobs` starts the full pipeline:
-   highest-quality source (1080p) → word-level transcription → AI viral-moment
+1. **Find/supply a stream** — Chrome extension (`tools/extension`) detects
+   Kick/Twitch/YouTube/Instagram live streams + hype spikes → `/api/extension/clip`.
+   Or direct URL via `agent.py run <url>`.
+2. **Download + clip** — `POST /api/jobs`: highest-quality source (1080p) →
+   **local word-level transcription (faster-whisper, small.en)** → viral-moment
    discovery (Hook/Emotion/Value/Shareability) → 1080×1920 render at CRF 16.
-3. **Monitor** — I poll `/api/jobs/{id}` (12/35/58/65-95% stage signals) until
-   done. `agent.py run` does this and logs to `automation/ledger.json`.
-4. **Verify every short** (`agent.py verify`) — objective, no guesswork:
-   - H.264 + AAC present, 1080×1920 canvas, 8–60s, video ≥2 Mbps, audio ≥128 kbps,
-     fps 20–61, clean full decode → a **0–100 vitality score** + reasons.
-   - Returns the pipeline's **viral score** (`confidence`) + its reason.
-   - Extracts start/middle/end QA frames (`agent.py qa`) for **visual review** —
-     I check captions/overlays are actually visible and not clipped by UI chrome.
-5. **Captions + hashtags** (`agent.py caption`) — I write the title, description
-   and hashtags with emojis into the clip metadata (researched/trending tags),
-   before publishing.
-6. **Approve** — `/api/clips/{id}/approve` (human gate is the default).
-7. **Publish** (`agent.py publish`) — `POST /api/clips/{id}/publish` calls the
-   real publisher and writes one receipt per platform, setting status
-   Published/Failed. Targets: youtube, instagram, tiktok (direct) or the
-   aggregators (woopsocial / uploadpost / postiz) via `PULSECUT_PUBLISHER`.
-8. **Monitor** — `agent.py status` + `automation/ledger.json` track every run,
-   verification, caption and publish. Nothing is published without passing steps 4–6.
+3. **Monitor** — poll `/api/jobs/{id}` (12/35/58/65-95% stages) to done.
+4. **Verify every short** (`agent.py verify`) — objective 0–100 **vitality score**
+   (codec/canvas/bitrate/fps/clean-decode) + pipeline **viral score** + reasons,
+   plus start/mid/end QA frames (`agent.py qa`) for visual confirmation that
+   captions/overlays are visible and not clipped.
+5. **Captions + hashtags** (`agent.py caption`) — researched, emoji-rich title /
+   description / hashtags written into metadata before publishing.
+6. **Approve** — `/api/clips/{id}/approve` (human gate default).
+7. **Publish** (`agent.py publish`) — `POST /api/clips/{id}/publish` → real
+   publisher, per-platform receipts, status Published/Failed. WoopSocial (one
+   token → 9 platforms) or direct YouTube/Instagram/TikTok.
+8. **Monitor** — `agent.py status` + `automation/ledger.json` audit trail.
+   Nothing publishes without passing verify → caption → approve.
 
-## Commands (what I type)
+## Local stack (no cloud needed for the core pipeline)
+
+- **Transcription:** `faster-whisper` (CTranslate2) installed; wrapper
+  `automation/whisper_cli.py` + `whisper-cli.cmd` is a drop-in for PULSECUT_WHISPER.
+  Model `small.en` cached in `~/.cache/huggingface`. Verified end-to-end.
+  More accuracy: `PULSECUT_WHISPER_MODEL=large-v3-turbo`.
+- **Orchestration:** Python controller (`agent.py`) + HTTP API — no n8n needed
+  (n8n is not installed on this machine). Local-first; only publish + optional AI
+  go external.
+- **Publishing:** WoopSocial publisher rewritten to the verified v1 API
+  (GET /projects → POST /media → GET /social-accounts → POST /posts).
+
+## What you need to provide (exact sources in automation/TOKENS.md)
+
+1. **Publishing token** — recommended: WoopSocial API key from
+   https://app.woopsocial.com/api-access (one key → IG + YT + TikTok + 6 more),
+   connect accounts there once, set `PULSECUT_WOOPSOCIAL_TOKEN` +
+   `PULSECUT_PUBLISHER=woopsocial`. Direct-platform tokens also supported.
+   Without a token, `publish` returns 502 with a clear hint (verified).
+2. **AI for auto viral-scoring + rich metadata** (optional — transcription is
+   local now): Ollama (`ollama serve` + `ollama pull gemma3:4b`) or
+   `OPENROUTER_API_KEY`. Without it the built-in multi-signal scorer still picks
+   clips; metadata falls back to offline titles (I can write captions manually).
+3. **Trending hashtags** — live web search had no credits (HTTP 402); give me a
+   tag list or restore search credits.
+4. **Stream discovery** — Chrome extension open on the live-stream page.
+
+## Commands
 
 ```powershell
 $py = "$env:USERPROFILE\AppData\Local\Programs\Python\Python313\python.exe"
 $agent = "<repo>\automation\agent.py"
-
 & $py $agent status
 & $py $agent run "https://www.youtube.com/watch?v=..." --max-clips 6
-& $py $agent verify              # verifies all clips, writes ledger
-& $py $agent qa <clip_id>        # QA frame URLs for visual review
+& $py $agent verify
+& $py $agent qa <clip_id>
 & $py $agent caption <clip_id> --title "..." --description "..." --hashtags "a,b,c"
 & $py $agent publish <clip_id> --targets youtube,instagram
 ```
 
-## Current blockers (what I need from you to publish for real)
-
-- **Publishing tokens are not configured.** No `PULSECUT_*_TOKEN` env vars exist.
-  To publish you must provide (via environment, not chat, for security):
-  - Aggregator (recommended, one token → 9 platforms): `PULSECUT_WOOPSOCIAL_TOKEN`
-    (or `PULSECUT_UPLOADPOST_TOKEN` / `PULSECUT_POSTIZ_TOKEN`), then set
-    `PULSECUT_PUBLISHER=woopsocial|uploadpost|postiz`.
-  - Direct YouTube: `PULSECUT_YOUTUBE_TOKEN` + `PULSECUT_PUBLISHER=direct`.
-  - Direct Instagram Reels: `PULSECUT_IG_TOKEN` + `PULSECUT_IG_USER_ID` +
-    `PULSECUT_PUBLISHER=instagram_direct` (app review required for public posting).
-  Without these, `publish` returns 502 with a clear hint (verified).
-- **AI backend for rich metadata is down.** Ollama is not running and no
-  OpenRouter key exists, so the pipeline falls back to offline titles/hashtags.
-  I can write captions/hashtags manually through `agent.py caption`, or start
-  Ollama (`ollama serve` + `gemma3:4b`) / set `OPENROUTER_API_KEY` for automatic
-  AI metadata.
-- **Trending-hashtag research is unavailable right now** — the web search
-  integration returned HTTP 402 (no credits). I can supply researched tags once
-  a search integration is available, or you can give me a tag list to use.
-- **Finding streams automatically** still requires the Chrome extension to be
-  installed and open on the stream page; the backend has no stream-discovery
-  scanner of its own.
-
 ## Files
 
-- `automation/agent.py` — controller I drive (status/run/verify/caption/publish/qa).
+- `automation/agent.py` — controller (status/run/verify/caption/publish/qa).
 - `automation/verify_clip.py` — standalone verifier (same checks, CLI).
-- `automation/ledger.json` — run/verification/caption/publish audit trail.
-- `crates/app/src/web.rs` — added `/verify`, `/metadata`, `/publish`, `/api/qa/*`.
-- `pulsecut.json` — CRF set to 16 (max quality).
+- `automation/whisper_cli.py` + `whisper-cli.cmd` — local transcription wrapper.
+- `automation/ledger.json` — audit trail.
+- `automation/TOKENS.md` — where to get every token.
+- `crates/app/src/web.rs` — `/verify`, `/metadata`, `/publish`, `/api/qa/*`.
+- `crates/publish/src/aggregator.rs` — WoopSocial v1 API rewrite.
+- `pulsecut.json` — CRF 16, local whisper configured.

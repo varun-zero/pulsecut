@@ -71,8 +71,8 @@
     "openrouter_url": "https://openrouter.ai/api/v1/chat/completions",
     "openrouter_model": "google/gemma-3-27b-it:free",
     "api_key_env": "OPENROUTER_API_KEY",
-    "whisper_binary": "",
-    "whisper_model": "large-v3-turbo",
+    "whisper_binary": "automation/whisper-cli.cmd",
+    "whisper_model": "small.en",
     "temperature": 0.3,
     "max_tokens": 512
   },

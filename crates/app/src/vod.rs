@@ -43,12 +43,6 @@ pub struct ClipJobOptions {
     pub platform_hint: Option<String>,
 }
 
-/// Download a URL at maximum available quality (backwards-compatible entry point).
-pub async fn download(url: &str, dir: &Path) -> Result<PathBuf> {
-    let (path, _) = download_with_options(url, dir, &ClipJobOptions::default(), None).await?;
-    Ok(path)
-}
-
 /// Download a VOD at the highest available resolution (no 1080p cap, no forced
 /// 180s truncation) or capture a live stream via direct HLS + FFmpeg.
 /// Returns `(video_path, section_offset_ms)` where `section_offset_ms` is non-zero
@@ -1069,29 +1063,6 @@ fn extract_channel(url: &str, opts: &ClipJobOptions) -> String {
         }
     }
     "vod".into()
-}
-
-/// Create up to `max_clips` shorts from a downloaded video or live stream
-/// (backwards-compatible entry point used by CLI and integration tests).
-pub async fn make_clips(
-    cfg: &Config,
-    url: &str,
-    max_clips: usize,
-    template_id: &str,
-    out: &Path,
-    ai: &dyn AiBackend,
-) -> Result<Vec<ClipPackage>> {
-    make_clips_with_options(
-        cfg,
-        url,
-        max_clips,
-        template_id,
-        out,
-        ai,
-        ClipJobOptions::default(),
-        |_, _| {},
-    )
-    .await
 }
 
 /// Full SupoClip-style VOD/live pipeline with stage progress callback.

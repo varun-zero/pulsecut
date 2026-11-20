@@ -6,6 +6,9 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
 
 $env:PULSECUT_FFMPEG = "C:\Users\varun\AppData\Local\Programs\YIZERGE\ffmpeg.exe"
+$env:PULSECUT_WHISPER = Join-Path $root 'automation\whisper-cli.cmd'
+$env:PULSECUT_WHISPER_MODEL = 'small.en'
+$env:PULSECUT_FFPROBE = 'C:\Users\varun\AppData\Local\Programs\YIZERGE\ffprobe.exe'
 $env:PULSECUT_API_URL = "http://127.0.0.1:8756"
 $env:PATH = "C:\Users\varun\AppData\Local\Programs\YIZERGE;$env:PATH"
 
@@ -43,3 +46,4 @@ Write-Host "Frontend: $(if (Test-Port 3000) {'OK'} else {'FAILED'})"
 
 Start-Process "http://127.0.0.1:3000/"
 Write-Host "Opened http://127.0.0.1:3000/  (backend API: http://127.0.0.1:8756/)"
+
