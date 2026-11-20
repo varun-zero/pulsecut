@@ -41,6 +41,7 @@
     'downloads',
     'settings',
     'search',
+    'video',
     'videos',
     'clip',
     'clips',
@@ -68,9 +69,65 @@
   }
 
   /**
-   * Detects platform, streamer/creator handle, and recommended PulseCut viral template
-   * from the page URL + optional DOM hints (for YouTube /watch or /shorts pages where
-   * the creator handle lives in the DOM rather than the URL).
+   * Returns the Kick live channel slug (e.g. "funnyhoodvidz") when on a Kick
+   * channel page, or "" for Kick VODs/clips/browse pages.
+   */
+  function extractKickSlug(urlString) {
+    let parsed;
+    try {
+      parsed = new URL(urlString);
+    } catch {
+      return '';
+    }
+    const host = parsed.hostname.toLowerCase();
+    if (!host.includes('kick.com')) return '';
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    if (!parts.length) return '';
+    const first = parts[0].toLowerCase();
+    if (RESERVED_SEGMENTS.has(first)) return '';
+    if (parts[1] && (parts[1].toLowerCase() === 'videos' || parts[1].toLowerCase() === 'clips')) {
+      return '';
+    }
+    return cleanHandle(parts[0]);
+  }
+
+  /**
+   * Determines whether the current tab is a live stream vs. an on-demand VOD.
+   */
+  function detectLiveStatus(urlString, domHints = {}) {
+    if (typeof domHints.isLive === 'boolean') return domHints.isLive;
+    let parsed;
+    try {
+      parsed = new URL(urlString);
+    } catch {
+      return false;
+    }
+    const host = parsed.hostname.toLowerCase();
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    const first = (parts[0] || '').toLowerCase();
+
+    if (host.includes('kick.com')) {
+      return Boolean(extractKickSlug(urlString));
+    }
+    if (host.includes('twitch.tv')) {
+      if (host.startsWith('clips.')) return false;
+      if (!parts.length || RESERVED_SEGMENTS.has(first)) return false;
+      if (parts[1] && (parts[1].toLowerCase() === 'videos' || parts[1].toLowerCase() === 'clip')) {
+        return false;
+      }
+      return true;
+    }
+    if (host.includes('youtube.com') || host.includes('youtu.be')) {
+      if (first === 'live') return true;
+      return Boolean(domHints.hasLiveBadge);
+    }
+    return false;
+  }
+
+  /**
+   * Detects platform, streamer/creator handle, live status, and default PulseCut
+   * short template (`default` — white title + yellow subtitles) from the page
+   * URL + optional DOM hints.
    */
   function detectStreamContext(urlString, domHints = {}) {
     let parsed;
@@ -81,6 +138,8 @@
         platform: 'unknown',
         channel: 'unknown',
         template: 'default',
+        platformTemplate: 'default',
+        isLive: false,
         isChatIframe: false,
         supported: false,
       };
@@ -89,6 +148,7 @@
     const host = parsed.hostname.toLowerCase();
     const parts = parsed.pathname.split('/').filter(Boolean);
     const first = (parts[0] || '').toLowerCase();
+    const isLive = detectLiveStatus(urlString, domHints);
 
     if (host.includes('kick.com')) {
       const candidate = parts[0] && !RESERVED_SEGMENTS.has(first) ? cleanHandle(parts[0]) : '';
@@ -96,9 +156,11 @@
       return {
         platform: 'kick',
         channel,
-        template: 'kick-stream',
+        template: 'default',
+        platformTemplate: 'kick-stream',
+        isLive,
         isChatIframe: parsed.pathname.includes('/chatroom'),
-        supported: Boolean(candidate || domHints.channelName),
+        supported: Boolean(candidate || first === 'video' || first === 'clips' || domHints.channelName),
       };
     }
 
@@ -108,9 +170,11 @@
       return {
         platform: 'twitch',
         channel,
-        template: 'split-stream',
+        template: 'default',
+        platformTemplate: 'split-stream',
+        isLive,
         isChatIframe: parsed.pathname.startsWith('/popout/') && parsed.pathname.includes('/chat'),
-        supported: Boolean(candidate || domHints.channelName),
+        supported: Boolean(candidate || first === 'videos' || domHints.channelName),
       };
     }
 
@@ -128,7 +192,9 @@
       return {
         platform: 'youtube',
         channel,
-        template: 'yt-short',
+        template: 'default',
+        platformTemplate: 'yt-short',
+        isLive,
         isChatIframe,
         supported: isChatIframe || first === 'watch' || first === 'live' || isShort || Boolean(urlHandle),
       };
@@ -144,7 +210,9 @@
       return {
         platform: 'instagram',
         channel,
-        template: 'insta-short',
+        template: 'default',
+        platformTemplate: 'insta-short',
+        isLive: false,
         isChatIframe: false,
         supported:
           first === 'reel' ||
@@ -158,6 +226,8 @@
       platform: 'unknown',
       channel: 'unknown',
       template: 'default',
+      platformTemplate: 'default',
+      isLive: false,
       isChatIframe: false,
       supported: false,
     };
@@ -300,6 +370,8 @@
     DEFAULT_CONFIG,
     normalizeServerUrl,
     cleanHandle,
+    extractKickSlug,
+    detectLiveStatus,
     detectStreamContext,
     analyzeChatWindow,
     evaluateTriggerGate,

@@ -247,16 +247,16 @@ export const VIRAL_CAPTION_PRESETS: readonly ViralCaptionPreset[] = [
   {
     id: 'hormozi-classic',
     name: 'Hormozi Classic',
-    tagline: 'Montserrat Black · Yellow Pop',
-    headlineFont: 'Anton',
+    tagline: 'Montserrat Black · Bold Yellow Subs',
+    headlineFont: 'Montserrat',
     subtitleFont: 'Montserrat',
     subtitleWeight: 900,
     casing: 'upper',
     wordsPerScreen: '2-3',
-    baseColor: '#FFFFFF',
-    activeColor: '#FFE600',
-    emphasisColor: '#22C55E',
-    strokeWidth: 4,
+    baseColor: '#FFE600',
+    activeColor: '#FFF380',
+    emphasisColor: '#FFFFFF',
+    strokeWidth: 5,
     strokeColor: '#000000',
     dropShadow: true,
     neonGlow: false,
@@ -398,6 +398,9 @@ export function normalizeCaptionPresetId(id: CaptionStyleId | string | undefined
     case 'breaking-news':
       return id;
     case 'bold':
+    case 'karaoke_yellow':
+    case 'karaoke_bold':
+    case 'default':
       return 'hormozi-classic';
     case 'box':
       return 'editorial-aesthetic';

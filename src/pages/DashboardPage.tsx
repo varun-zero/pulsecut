@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   ArrowRight,
@@ -54,8 +54,7 @@ export function DashboardPage({
   const [dragActive, setDragActive] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  const [selectedTemplate, setSelectedTemplate] = useState<string>('kick-stream');
-  const [userOverrodeTemplate, setUserOverrodeTemplate] = useState<boolean>(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<string>('default');
   const [maxClips, setMaxClips] = useState<number>(6);
   const [burnCaptions, setBurnCaptions] = useState<boolean>(true);
   const [defaultsExpanded, setDefaultsExpanded] = useState<boolean>(true);
@@ -64,14 +63,6 @@ export function DashboardPage({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const detected = useMemo(() => detectVideoSource(url), [url]);
-
-  // Smart Ingest Auto-Detect: pre-select Kick Viral / Insta Reels / YT Shorts from URL
-  // while still letting the creator manually override at any time.
-  useEffect(() => {
-    if (detected.valid && detected.suggestedTemplateId && !userOverrodeTemplate) {
-      setSelectedTemplate(detected.suggestedTemplateId);
-    }
-  }, [detected.valid, detected.suggestedTemplateId, userOverrodeTemplate]);
 
   const activeJobsCount = jobs.filter(
     (j) =>
@@ -86,7 +77,6 @@ export function DashboardPage({
       const text = await navigator.clipboard.readText();
       if (text) {
         setUrl(text.trim());
-        setUserOverrodeTemplate(false);
         setFormError(null);
       }
     } catch {
@@ -217,7 +207,6 @@ export function DashboardPage({
                     value={url}
                     onChange={(e) => {
                       setUrl(e.target.value);
-                      setUserOverrodeTemplate(false);
                       if (formError) setFormError(null);
                     }}
                     placeholder="https://youtube.com/watch?v=... or https://kick.com/... or https://instagram.com/reel/..."
@@ -299,14 +288,10 @@ export function DashboardPage({
                               </span>
                             </>
                           )}
-                          {detected.suggestedTemplateId && (
-                            <>
-                              <span aria-hidden="true">·</span>
-                              <span className="text-[var(--pc-ink)]">
-                                Auto: {getTemplatePreset(detected.suggestedTemplateId).name}
-                              </span>
-                            </>
-                          )}
+                          <span aria-hidden="true">·</span>
+                          <span className="text-[var(--pc-ink)]">
+                            Max Quality · Full Transcript
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -414,7 +399,6 @@ export function DashboardPage({
                       aria-pressed={active}
                       onClick={() => {
                         setSelectedTemplate(preset.id);
-                        setUserOverrodeTemplate(true);
                       }}
                       className={`p-2.5 rounded-lg border text-left flex items-center gap-2.5 cursor-pointer transition-colors duration-150 ${
                         active
@@ -496,7 +480,7 @@ export function DashboardPage({
               <span className="text-xs text-[var(--pc-muted)]">
                 {importMode === 'file' && selectedFile
                   ? 'Opens Section 1 (Framing Studio) to crop & frame, then hand off to Shorts Studio.'
-                  : 'Queues real peak detection & vertical reframing on the PulseCut backend.'}
+                  : 'Downloads max quality, transcribes the full video, ranks viral hooks & renders shorts.'}
               </span>
               <Button type="submit" variant="primary" disabled={submitting}>
                 <span>

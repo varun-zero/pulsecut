@@ -2,9 +2,9 @@
  * PulseCut Auto-Clipper — Content Script
  *
  * Works cleanly across:
- * - Kick (live channels & chatroom)
- * - Twitch (live channels & chat)
- * - YouTube Live (top-frame HUD + /live_chat iframe observer relayed via background.js)
+ * - Kick (live channels, virtualized chatroom, same-origin HLS playback_url capture)
+ * - Twitch (live channels, VODs & chat)
+ * - YouTube Live & VODs (top-frame HUD + /live_chat iframe observer + exact playback timestamp)
  * - YouTube Shorts & Instagram Reels (one-click capture + auto-detected creator handle)
  *
  * All localhost server requests are proxied through background.js so HTTPS pages
@@ -35,12 +35,20 @@
   let chatObserver = null;
   let observedContainer = null;
 
+  // Deduplication for subtree MutationObserver + virtualized Kick/Twitch chat scanner
+  const seenNodes = new WeakSet();
+  const seenMessageKeys = new Map(); // key -> timestamp
+
+  // Cached Kick/HLS playback URL resolved inside the authenticated browser tab
+  let cachedPlaybackUrl = '';
+  let cachedPlaybackSlug = '';
+
   // Iframe batch buffer for relaying YouTube live_chat messages to top frame
   let iframeRelayBuffer = [];
   let iframeRelayTimer = null;
 
   function readDomHints() {
-    const hints = { channelName: '', channelHandle: '' };
+    const hints = { channelName: '', channelHandle: '', hasLiveBadge: false };
     const host = window.location.hostname.toLowerCase();
 
     if (host.includes('youtube.com')) {
@@ -60,6 +68,16 @@
       if (channelText && channelText.textContent) {
         hints.channelName = channelText.textContent.trim();
       }
+      const liveBadge = document.querySelector('.ytp-live-badge');
+      if (liveBadge) {
+        const style = window.getComputedStyle(liveBadge);
+        const text = (liveBadge.textContent || '').trim().toUpperCase();
+        hints.hasLiveBadge =
+          style.display !== 'none' &&
+          style.visibility !== 'hidden' &&
+          liveBadge.getAttribute('disabled') !== null &&
+          text.includes('LIVE');
+      }
     } else if (host.includes('instagram.com')) {
       const headerLink =
         document.querySelector('article header a[href^="/"]') ||
@@ -69,7 +87,7 @@
         if (seg) hints.channelHandle = seg;
       }
     } else if (host.includes('kick.com')) {
-      const heading = document.querySelector('[data-testid="channel-username"], h1');
+      const heading = document.querySelector('[data-testid="channel-username"], #channel-username, h1');
       if (heading && heading.textContent) {
         hints.channelName = heading.textContent.trim();
       }
@@ -80,6 +98,71 @@
 
   function readPageContext() {
     return engine.detectStreamContext(window.location.href, readDomHints());
+  }
+
+  function readVideoTitle() {
+    const raw = String(document.title || '')
+      .replace(/\s*[-|·]\s*(YouTube|Kick|Twitch|Instagram)\s*$/i, '')
+      .replace(/^\(\d+\)\s*/, '')
+      .trim();
+    return raw.slice(0, 120);
+  }
+
+  function readActiveVideoCurrentTime() {
+    const videos = Array.from(document.querySelectorAll('video'));
+    const active =
+      videos.find((v) => !v.paused && v.readyState >= 2 && Number.isFinite(v.currentTime)) ||
+      videos.find((v) => v.readyState >= 2 && Number.isFinite(v.currentTime) && v.currentTime > 0);
+    if (!active) return null;
+    return Number(active.currentTime.toFixed(2));
+  }
+
+  /**
+   * Resolves a direct HLS `.m3u8` URL inside the authenticated browser tab.
+   * For Kick live channels, this runs same-origin AFTER Cloudflare clearance so
+   * PulseCut's backend FFmpeg can capture the live stream cleanly without 403s.
+   */
+  async function resolveLivePlaybackUrl() {
+    // 1. Check Performance Resource Timing API for any active HLS manifest loaded by the player.
+    try {
+      const entries = performance.getEntriesByType('resource') || [];
+      for (let i = entries.length - 1; i >= 0; i -= 1) {
+        const name = entries[i]?.name || '';
+        if (name.includes('.m3u8') && !name.includes('preview')) {
+          cachedPlaybackUrl = name;
+          break;
+        }
+      }
+    } catch {
+      // Ignore if performance API is restricted
+    }
+
+    // 2. For Kick live channels, fetch same-origin channel API to get the exact master playback_url.
+    const slug = engine.extractKickSlug ? engine.extractKickSlug(window.location.href) : '';
+    if (slug) {
+      if (cachedPlaybackSlug === slug && cachedPlaybackUrl.includes('.m3u8')) {
+        return cachedPlaybackUrl;
+      }
+      try {
+        const resp = await fetch(`https://kick.com/api/v2/channels/${encodeURIComponent(slug)}`, {
+          credentials: 'include',
+          headers: { Accept: 'application/json' },
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          const url = data?.playback_url || data?.livestream?.playback_url || '';
+          if (typeof url === 'string' && url.startsWith('http')) {
+            cachedPlaybackUrl = url;
+            cachedPlaybackSlug = slug;
+            return url;
+          }
+        }
+      } catch {
+        // Fall back to resource-timing URL if present
+      }
+    }
+
+    return cachedPlaybackUrl || '';
   }
 
   function sendRuntimeMessage(payload) {
@@ -107,8 +190,11 @@
       return (
         document.querySelector('#chatroom-messages') ||
         document.querySelector('[data-testid="chat-messages"]') ||
+        document.querySelector('[id*="chatroom-messages"]') ||
         document.querySelector('[class*="chatroom-messages"]') ||
-        document.querySelector('[class*="chat-messages"]')
+        document.querySelector('[class*="chat-messages"]') ||
+        document.querySelector('#channel-chatroom') ||
+        document.querySelector('[id*="chatroom"]')
       );
     }
     if (context.platform === 'twitch') {
@@ -136,7 +222,13 @@
         node.querySelector('[data-testid="chat-message-content"]') ||
         node.querySelector('.chat-entry-content') ||
         node.querySelector('span[class*="font-normal"]');
-      return (msgEl ? msgEl.textContent : node.textContent || '').trim();
+      const raw = (msgEl ? msgEl.textContent : node.textContent || '').trim();
+      // Strip leading "username: " prefix if falling back to whole-row textContent
+      const colonIdx = raw.indexOf(':');
+      if (!msgEl && colonIdx > 0 && colonIdx < 32) {
+        return raw.slice(colonIdx + 1).trim();
+      }
+      return raw;
     }
 
     if (context.platform === 'twitch') {
@@ -152,13 +244,27 @@
     return (node.textContent || '').trim();
   }
 
+  function getMessageNodeSelector() {
+    if (context.platform === 'kick') {
+      return '[data-index], [data-chat-entry], [data-testid="chat-entry"], .chat-entry';
+    }
+    if (context.platform === 'twitch') {
+      return '.chat-line__message, [data-a-target="chat-line-message"]';
+    }
+    if (context.platform === 'youtube') {
+      return 'yt-live-chat-text-message-renderer, yt-live-chat-paid-MESSAGE-renderer, yt-live-chat-paid-message-renderer';
+    }
+    return '';
+  }
+
   function isChatMessageNode(node) {
     if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
     if (context.platform === 'kick') {
       return (
         node.hasAttribute('data-index') ||
         node.hasAttribute('data-chat-entry') ||
-        Boolean(node.querySelector('[data-chat-entry], .chat-entry-content'))
+        node.matches?.('[data-testid="chat-entry"], .chat-entry') ||
+        Boolean(node.querySelector?.('[data-chat-entry], .chat-entry-content, [data-testid="chat-message-content"]'))
       );
     }
     if (context.platform === 'twitch') {
@@ -175,6 +281,36 @@
       );
     }
     return false;
+  }
+
+  function buildMessageKey(node, text) {
+    const idx = node.getAttribute?.('data-index') || node.getAttribute?.('data-chat-entry') || node.id || '';
+    return idx ? `${idx}|${text.slice(0, 64)}` : text.slice(0, 80);
+  }
+
+  function collectNewChatMessage(node, now, batch) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
+    if (seenNodes.has(node)) return;
+    const text = extractMessageText(node);
+    if (!text) return;
+
+    const key = buildMessageKey(node, text);
+    const prevTs = seenMessageKeys.get(key);
+    if (prevTs && now - prevTs < 15000) {
+      seenNodes.add(node);
+      return;
+    }
+
+    seenNodes.add(node);
+    seenMessageKeys.set(key, now);
+    batch.push({ ts: now, text: text.slice(0, 240) });
+  }
+
+  function pruneSeenKeys(now) {
+    if (seenMessageKeys.size < 250) return;
+    for (const [k, ts] of seenMessageKeys.entries()) {
+      if (now - ts > 30000) seenMessageKeys.delete(k);
+    }
   }
 
   function recordMessages(items) {
@@ -199,33 +335,78 @@
     }
   }
 
+  /**
+   * Periodic fallback scanner for virtualized chat lists (especially Kick's
+   * react-virtuoso `[data-index]` rows that recycle DOM elements in place).
+   */
+  function scanVisibleChatEntries(seedOnly = false) {
+    if (!observedContainer || !observedContainer.isConnected) return;
+    const selector = getMessageNodeSelector();
+    if (!selector) return;
+
+    const now = Date.now();
+    const batch = [];
+    const nodes = observedContainer.querySelectorAll(selector);
+    const startIdx = Math.max(0, nodes.length - 40);
+
+    for (let i = startIdx; i < nodes.length; i += 1) {
+      const el = nodes[i];
+      const text = extractMessageText(el);
+      if (!text) continue;
+      const key = buildMessageKey(el, text);
+      if (seenMessageKeys.has(key)) continue;
+      seenMessageKeys.set(key, now);
+      seenNodes.add(el);
+      if (!seedOnly) {
+        batch.push({ ts: now, text: text.slice(0, 240) });
+      }
+    }
+
+    pruneSeenKeys(now);
+    if (!seedOnly && batch.length > 0) {
+      recordMessages(batch);
+    }
+  }
+
   function attachChatObserver() {
     const container = findChatContainer();
-    if (!container || container === observedContainer) return;
+    if (!container) return;
+    if (container === observedContainer && observedContainer.isConnected) return;
 
     if (chatObserver) {
       chatObserver.disconnect();
     }
 
     observedContainer = container;
+    // Seed currently visible historic messages so initial mount doesn't trigger a fake spike
+    scanVisibleChatEntries(true);
+
+    const selector = getMessageNodeSelector();
     chatObserver = new MutationObserver((mutations) => {
       const now = Date.now();
       const batch = [];
       for (const m of mutations) {
         for (const node of m.addedNodes) {
-          if (!isChatMessageNode(node)) continue;
-          const text = extractMessageText(node);
-          if (text) {
-            batch.push({ ts: now, text: text.slice(0, 240) });
+          if (node.nodeType !== Node.ELEMENT_NODE) continue;
+          if (isChatMessageNode(node)) {
+            collectNewChatMessage(node, now, batch);
+          } else if (selector && node.querySelectorAll) {
+            const nested = node.querySelectorAll(selector);
+            for (const child of nested) {
+              collectNewChatMessage(child, now, batch);
+            }
           }
         }
       }
+      pruneSeenKeys(now);
       if (batch.length > 0) {
         recordMessages(batch);
       }
     });
 
-    chatObserver.observe(container, { childList: true, subtree: false });
+    // CRITICAL: subtree: true is required on Kick & Twitch because virtualized
+    // chat lists insert rows inside nested wrapper divs under #chatroom-messages.
+    chatObserver.observe(container, { childList: true, subtree: true });
   }
 
   // -------------------------------------------------------------------------
@@ -270,13 +451,21 @@
     context = readPageContext();
     setClipButtonBusy(true);
 
+    const playbackUrl = context.isLive ? await resolveLivePlaybackUrl() : '';
+    const currentTimeSec = context.isLive ? null : readActiveVideoCurrentTime();
+    const videoTitle = readVideoTitle();
+
     const res = await sendRuntimeMessage({
       type: 'TRIGGER_CLIP',
       serverUrl: config.serverUrl,
       url: window.location.href,
+      playback_url: playbackUrl || undefined,
+      is_live: Boolean(context.isLive),
+      current_time_sec: currentTimeSec ?? undefined,
+      video_title: videoTitle || undefined,
       channel: context.channel,
       platform: context.platform,
-      template: context.template,
+      template: context.template || 'default',
       lookback_secs: config.lookbackSecs,
       hype_score: score,
       reasons: reasons || [],
@@ -288,7 +477,7 @@
       serverConnected = true;
       updateHudHeader();
       showToast(
-        `Clipped ${context.channel} (${config.lookbackSecs}s · ${context.template})`,
+        `Clipped ${context.channel} (${config.lookbackSecs}s${context.isLive ? ' · LIVE' : ''})`,
         'success'
       );
       return { ok: true, data: res.data };
@@ -439,12 +628,14 @@
     }
     if (channelEl) {
       channelEl.textContent = context.channel;
-      channelEl.title = `${context.platform} · template: ${context.template}`;
+      channelEl.title = `${context.platform}${context.isLive ? ' LIVE' : ''} · template: ${context.template}`;
     }
     if (btn && !btn.disabled) {
       btn.textContent = `Clip Last ${config.lookbackSecs}s`;
     }
   }
+
+  let scanTickCounter = 0;
 
   function evaluateHypeTick() {
     if (!IS_TOP_FRAME) return;
@@ -455,6 +646,9 @@
       messageTimestamps = [];
       baselineCount = [];
       observedContainer = null;
+      cachedPlaybackUrl = '';
+      cachedPlaybackSlug = '';
+      seenMessageKeys.clear();
       context = readPageContext();
       if (context.supported && config.mode !== 'off') {
         createHud();
@@ -466,7 +660,11 @@
 
     // Re-read YouTube / Instagram DOM channel name once hydrated
     const refreshed = readPageContext();
-    if (refreshed.channel !== context.channel || refreshed.template !== context.template) {
+    if (
+      refreshed.channel !== context.channel ||
+      refreshed.template !== context.template ||
+      refreshed.isLive !== context.isLive
+    ) {
       context = refreshed;
       updateHudHeader();
     }
@@ -477,6 +675,11 @@
     }
 
     attachChatObserver();
+    scanTickCounter += 1;
+    // Poll virtualized chat rows every 1 second so recycled Kick/Twitch nodes never miss messages
+    if (scanTickCounter % 2 === 0) {
+      scanVisibleChatEntries(false);
+    }
 
     const now = Date.now();
     messageTimestamps = messageTimestamps.filter((m) => now - m.ts <= CHAT_WINDOW_MS);
@@ -510,7 +713,7 @@
         metaEl.textContent =
           analysis.reasons.length > 0
             ? `${modeTag} · ${analysis.reasons.slice(0, 2).join(' · ')}`
-            : `${modeTag} · ${analysis.ratePerSec} msg/s · ${context.template}`;
+            : `${modeTag} · ${analysis.ratePerSec} msg/s · ${context.isLive ? 'LIVE' : 'VOD'}`;
       }
     }
 
@@ -606,7 +809,10 @@
     } else {
       // Subframe (e.g. YouTube /live_chat iframe): never render HUD, only observe chat
       attachChatObserver();
-      window.setInterval(attachChatObserver, 1500);
+      window.setInterval(() => {
+        attachChatObserver();
+        scanVisibleChatEntries(false);
+      }, 1200);
     }
   });
 })();

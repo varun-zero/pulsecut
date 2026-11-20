@@ -1,4 +1,5 @@
-//! Title / description / hashtag generation with structured JSON output.
+//! Title / description / hashtag generation and full-video viral moment
+//! discovery (SupoClip workflow) with structured JSON output.
 
 use pulsecut_core::config::AiConfig;
 use pulsecut_core::error::{PulseError, Result};
@@ -14,11 +15,35 @@ pub struct GeneratedMetadata {
     pub hook: String,
 }
 
+/// A viral clip moment selected by analyzing the full-video transcript.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ViralMomentProposal {
+    pub start_sec: f64,
+    pub end_sec: f64,
+    pub title: String,
+    pub hook: String,
+    pub description: String,
+    pub hashtags: Vec<String>,
+    pub virality_score: f64,
+    pub reason: String,
+}
+
 #[async_trait::async_trait]
 pub trait AiBackend: Send + Sync {
     fn name(&self) -> &'static str;
     fn is_available(&self) -> bool { true }
     async fn generate(&self, prompt: &str) -> Result<GeneratedMetadata>;
+
+    /// Analyze a full-video timestamped transcript and return the strongest
+    /// viral short-form moments (SupoClip workflow).
+    async fn discover_clips(
+        &self,
+        _transcript: &str,
+        _max_clips: usize,
+        _duration_secs: f64,
+    ) -> Result<Vec<ViralMomentProposal>> {
+        Ok(Vec::new())
+    }
 }
 
 pub fn build_prompt(transcript: &str, hints: &str) -> String {
@@ -27,6 +52,26 @@ pub fn build_prompt(transcript: &str, hints: &str) -> String {
          return ONLY a JSON object with keys: title (<=60 chars), description (<=180 chars), \
          hashtags (array of 5-8 lowercase tags without #), hook (one short punchy line <=45 chars). \
          Do not explain. Use the language of the transcript.\n\nHINTS: {hints}\n\nTRANSCRIPT:\n{transcript}"
+    )
+}
+
+/// Build the SupoClip-style viral moment selection prompt over a full-video
+/// timestamped transcript.
+pub fn build_clip_discovery_prompt(transcript: &str, max_clips: usize, duration_secs: f64) -> String {
+    format!(
+        "You are an expert viral short-form video editor (TikTok, YouTube Shorts, Instagram Reels).\n\
+         Analyze the FULL timestamped transcript below (total video length: {duration_secs:.0} seconds) \
+         and pick the top {max_clips} most viral, self-contained moments.\n\n\
+         Selection rules:\n\
+         - Each clip MUST be between 20 and 60 seconds long and NEVER overlap another clip.\n\
+         - Start right on a strong attention-grabbing hook or story setup (never mid-sentence).\n\
+         - End right after a punchline, revelation, emotional payoff, or complete thought.\n\
+         - Score each clip on virality_score (0.0 to 1.0) based on Hook, Emotional Spike, Value/Insight, and Shareability.\n\n\
+         Return ONLY valid JSON with this exact schema:\n\
+         {{\"clips\":[{{\"start_sec\":12.5,\"end_sec\":48.0,\"title\":\"Short punchy title <=55 chars\",\
+         \"hook\":\"Big 4-7 word hook title <=42 chars\",\"description\":\"1-2 sentence caption\",\
+         \"hashtags\":[\"shorts\",\"viral\"],\"virality_score\":0.92,\"reason\":\"Why this moment hits\"}}]}}\n\n\
+         TRANSCRIPT:\n{transcript}"
     )
 }
 
@@ -51,6 +96,101 @@ pub fn parse_json_object(text: &str) -> Result<GeneratedMetadata> {
     })
 }
 
+fn parse_time_field(val: &Value) -> Option<f64> {
+    if let Some(n) = val.as_f64() {
+        return Some(n);
+    }
+    let s = val.as_str()?.trim().trim_matches(|c| c == '[' || c == ']');
+    if let Ok(n) = s.parse::<f64>() {
+        return Some(n);
+    }
+    let parts: Vec<&str> = s.split(':').collect();
+    match parts.len() {
+        2 => {
+            let m = parts[0].parse::<f64>().ok()?;
+            let sec = parts[1].parse::<f64>().ok()?;
+            Some(m * 60.0 + sec)
+        }
+        3 => {
+            let h = parts[0].parse::<f64>().ok()?;
+            let m = parts[1].parse::<f64>().ok()?;
+            let sec = parts[2].parse::<f64>().ok()?;
+            Some(h * 3600.0 + m * 60.0 + sec)
+        }
+        _ => None,
+    }
+}
+
+/// Parse an LLM response containing `{"clips": [...]}` or a bare `[...]` array
+/// into validated `ViralMomentProposal` items sorted by virality score.
+pub fn parse_clip_proposals(text: &str) -> Result<Vec<ViralMomentProposal>> {
+    let trimmed = text.trim();
+    let json_slice = if let (Some(s), Some(e)) = (trimmed.find('{'), trimmed.rfind('}')) {
+        if e >= s { &trimmed[s..=e] } else { trimmed }
+    } else if let (Some(s), Some(e)) = (trimmed.find('['), trimmed.rfind(']')) {
+        if e >= s { &trimmed[s..=e] } else { trimmed }
+    } else {
+        return Err(PulseError::Ai("no JSON clip proposals in response".into()));
+    };
+
+    let v: Value = serde_json::from_str(json_slice)
+        .map_err(|e| PulseError::Ai(format!("invalid clip proposal JSON: {e}")))?;
+
+    let arr = v
+        .get("clips")
+        .and_then(|c| c.as_array())
+        .or_else(|| v.as_array())
+        .ok_or_else(|| PulseError::Ai("clip proposal JSON missing clips array".into()))?;
+
+    let mut proposals = Vec::new();
+    for item in arr {
+        let start_sec = parse_time_field(&item["start_sec"])
+            .or_else(|| parse_time_field(&item["start"]))
+            .unwrap_or(-1.0);
+        let end_sec = parse_time_field(&item["end_sec"])
+            .or_else(|| parse_time_field(&item["end"]))
+            .unwrap_or(-1.0);
+        if start_sec < 0.0 || end_sec <= start_sec + 5.0 {
+            continue;
+        }
+        let raw_score = item["virality_score"]
+            .as_f64()
+            .or_else(|| item["score"].as_f64())
+            .unwrap_or(0.8);
+        let score = if raw_score > 1.0 { (raw_score / 100.0).clamp(0.0, 1.0) } else { raw_score.clamp(0.0, 1.0) };
+        let title = item["title"].as_str().unwrap_or("").trim().to_string();
+        let hook = item["hook"].as_str().unwrap_or(&title).trim().to_string();
+        let description = item["description"].as_str().unwrap_or("").trim().to_string();
+        let reason = item["reason"].as_str().unwrap_or("AI viral moment").trim().to_string();
+        let hashtags = item["hashtags"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.trim_start_matches('#').to_ascii_lowercase()))
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        proposals.push(ViralMomentProposal {
+            start_sec,
+            end_sec,
+            title,
+            hook,
+            description,
+            hashtags,
+            virality_score: score,
+            reason,
+        });
+    }
+    proposals.sort_by(|a, b| {
+        b.virality_score
+            .partial_cmp(&a.virality_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Ok(proposals)
+}
+
 /// Local Ollama backend. Uses JSON mode so we get a parseable object even from
 /// small 4B models.
 pub struct Ollama {
@@ -62,6 +202,29 @@ pub struct Ollama {
 impl Ollama {
     pub fn new(cfg: &AiConfig) -> Self {
         Self { url: cfg.ollama_url.trim_end_matches('/').to_string(), model: cfg.ollama_model.clone(), client: Client::new() }
+    }
+
+    async fn prompt_json(&self, prompt: &str) -> Result<String> {
+        let body = json!({
+            "model": self.model,
+            "prompt": prompt,
+            "format": "json",
+            "stream": false,
+            "options": { "temperature": 0.3 }
+        });
+        let text = self.client
+            .post(format!("{}/api/generate", self.url))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| PulseError::Ai(format!("ollama request failed: {e}")))?
+            .json::<Value>()
+            .await
+            .map_err(|e| PulseError::Ai(e.to_string()))?["response"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        Ok(text)
     }
 }
 
@@ -80,6 +243,33 @@ impl OpenRouter {
             key_env: cfg.api_key_env.clone(),
             client: Client::new(),
         }
+    }
+
+    async fn prompt_json(&self, prompt: &str) -> Result<String> {
+        let key = crate::require_key(&self.key_env)?;
+        let body = json!({
+            "model": self.model,
+            "messages": [
+                { "role": "system", "content": "Reply with valid JSON only." },
+                { "role": "user", "content": prompt }
+            ],
+            "response_format": { "type": "json_object" },
+            "temperature": 0.3
+        });
+        let text = self.client
+            .post(&self.url)
+            .bearer_auth(key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| PulseError::Ai(format!("openrouter request failed: {e}")))?
+            .json::<Value>()
+            .await
+            .map_err(|e| PulseError::Ai(e.to_string()))?["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        Ok(text)
     }
 }
 
@@ -125,57 +315,40 @@ impl AiBackend for Ollama {
         }
     }
     async fn generate(&self, prompt: &str) -> Result<GeneratedMetadata> {
-        let body = json!({
-            "model": self.model,
-            "prompt": prompt,
-            "format": "json",
-            "stream": false,
-            "options": { "temperature": 0.3 }
-        });
-        let text = self.client
-            .post(format!("{}/api/generate", self.url))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| PulseError::Ai(format!("ollama request failed: {e}")))?
-            .json::<Value>()
-            .await
-            .map_err(|e| PulseError::Ai(e.to_string()))?["response"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let text = self.prompt_json(prompt).await?;
         parse_json_object(&text)
+    }
+    async fn discover_clips(
+        &self,
+        transcript: &str,
+        max_clips: usize,
+        duration_secs: f64,
+    ) -> Result<Vec<ViralMomentProposal>> {
+        let prompt = build_clip_discovery_prompt(transcript, max_clips, duration_secs);
+        let text = self.prompt_json(&prompt).await?;
+        parse_clip_proposals(&text)
     }
 }
 
 #[async_trait::async_trait]
 impl AiBackend for OpenRouter {
     fn name(&self) -> &'static str { "openrouter" }
+    fn is_available(&self) -> bool {
+        std::env::var(&self.key_env).map(|v| !v.trim().is_empty()).unwrap_or(false)
+    }
     async fn generate(&self, prompt: &str) -> Result<GeneratedMetadata> {
-        let key = crate::require_key(&self.key_env)?;
-        let body = json!({
-            "model": self.model,
-            "messages": [
-                { "role": "system", "content": "Reply with JSON only." },
-                { "role": "user", "content": prompt }
-            ],
-            "response_format": { "type": "json_object" },
-            "temperature": 0.3
-        });
-        let text = self.client
-            .post(&self.url)
-            .bearer_auth(key)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| PulseError::Ai(format!("openrouter request failed: {e}")))?
-            .json::<Value>()
-            .await
-            .map_err(|e| PulseError::Ai(e.to_string()))?["choices"][0]["message"]["content"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let text = self.prompt_json(prompt).await?;
         parse_json_object(&text)
+    }
+    async fn discover_clips(
+        &self,
+        transcript: &str,
+        max_clips: usize,
+        duration_secs: f64,
+    ) -> Result<Vec<ViralMomentProposal>> {
+        let prompt = build_clip_discovery_prompt(transcript, max_clips, duration_secs);
+        let text = self.prompt_json(&prompt).await?;
+        parse_clip_proposals(&text)
     }
 }
 
@@ -189,6 +362,21 @@ mod tests {
         let m = parse_json_object(raw).unwrap();
         assert_eq!(m.title, "Amazing");
         assert_eq!(m.hashtags, vec!["fyp", "clips"]);
+    }
+
+    #[test]
+    fn parses_clip_proposals_with_mmss_and_scores() {
+        let raw = r#"```json
+        {"clips":[
+          {"start_sec":"01:10","end_sec":"01:48","title":"Insane clutch","hook":"HE ACTUALLY DID IT","virality_score":94,"reason":"Huge payoff"},
+          {"start_sec":12.0,"end_sec":42.5,"title":"Opening hook","hook":"WAIT FOR THIS","virality_score":0.82,"reason":"Strong hook"}
+        ]}
+        ```"#;
+        let clips = parse_clip_proposals(raw).unwrap();
+        assert_eq!(clips.len(), 2);
+        assert_eq!(clips[0].title, "Insane clutch");
+        assert!((clips[0].start_sec - 70.0).abs() < 0.01);
+        assert!((clips[0].virality_score - 0.94).abs() < 0.01);
     }
 
     #[tokio::test]

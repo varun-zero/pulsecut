@@ -130,7 +130,7 @@ function getFacecamPresetDefaults(preset: TemplatePreset): Pick<
 }
 
 function createEditorSettingsForClip(clip: ClipItem | null, brandKit: BrandKit): EditorSettings {
-  const preset = getTemplatePreset(clip?.template || 'kick-stream');
+  const preset = getTemplatePreset(clip?.template || 'default');
   const captionPreset = getViralCaptionPreset(clip?.caption_style || preset.defaultCaptionStyle);
   const safeSpec = getSafeZoneSpec('auto', preset.id);
   const wmCoords = getWatermarkPresetCoords(brandKit.watermarkPosition);
@@ -265,8 +265,8 @@ export function App() {
   );
 
   const [batchSettings, setBatchSettings] = useState<BatchRestyleSettings>({
-    template: 'kick-stream',
-    font: 'TikTok Sans',
+    template: 'default',
+    font: 'Montserrat',
     subtitleFont: 'Montserrat',
     captionStyle: 'hormozi-classic',
     aspect: '9:16',

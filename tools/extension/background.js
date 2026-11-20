@@ -137,6 +137,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const base = normalizeServerUrl(msg.serverUrl || settings.serverUrl);
       const payload = {
         url: msg.url,
+        playback_url: msg.playback_url || undefined,
+        is_live: Boolean(msg.is_live),
+        current_time_sec:
+          typeof msg.current_time_sec === 'number' && Number.isFinite(msg.current_time_sec)
+            ? msg.current_time_sec
+            : undefined,
+        video_title: msg.video_title || undefined,
         channel: msg.channel || 'unknown',
         platform: msg.platform || 'unknown',
         template: msg.template || 'default',

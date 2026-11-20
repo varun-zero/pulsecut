@@ -297,6 +297,16 @@ export function ShortsStage({
               className="absolute z-20 cursor-move px-1 transition-opacity duration-200"
             >
               <span
+                style={
+                  settings.headlineLayout === 'outline-only'
+                    ? {
+                        color: '#FFFFFF',
+                        WebkitTextStroke: '1.4px #000000',
+                        paintOrder: 'stroke fill',
+                        textShadow: '0 3px 8px rgba(0,0,0,0.95)',
+                      }
+                    : undefined
+                }
                 className={
                   settings.headlineLayout === 'white-stepped'
                     ? 'bg-white text-[#09090B] font-bold px-2.5 py-1 rounded-md box-decoration-clone leading-[1.35] shadow-md'
@@ -304,7 +314,7 @@ export function ShortsStage({
                       ? 'bg-black/90 text-white font-bold px-2.5 py-1 rounded-md box-decoration-clone leading-[1.35] shadow-md'
                       : settings.headlineLayout === 'solid-banner'
                         ? 'bg-[#EF4444] text-white font-extrabold px-2.5 py-1 rounded uppercase leading-tight shadow-md'
-                        : 'text-white font-black leading-tight drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)]'
+                        : 'text-white font-black leading-tight tracking-tight'
                 }
               >
                 {applyWordCasing(settings.headline, settings.headlineCasing)}
@@ -357,9 +367,10 @@ export function ShortsStage({
                         WebkitTextStroke:
                           settings.subtitleBgStyle === 'white-stepped'
                             ? undefined
-                            : `${Math.max(0.5, settings.subtitleStrokeWidth * 0.35)}px ${settings.subtitleStrokeColor}`,
+                            : `${Math.min(1.4, Math.max(0.6, settings.subtitleStrokeWidth * 0.24))}px ${settings.subtitleStrokeColor}`,
+                        paintOrder: 'stroke fill',
                         textShadow: settings.subtitleDropShadow
-                          ? '0 2px 6px rgba(0,0,0,0.85)'
+                          ? '0 2px 6px rgba(0,0,0,0.9)'
                           : undefined,
                         transform:
                           isActive && settings.subtitleAnimation === 'pop-scale'

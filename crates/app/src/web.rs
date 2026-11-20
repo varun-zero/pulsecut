@@ -228,14 +228,22 @@ fn create_job(state: Arc<Shared>, body: &str) -> (u16, &'static str, Vec<u8>) {
     }
     let max_clips = v["max_clips"].as_u64().unwrap_or(6).min(20) as usize;
     let template = v["template"].as_str().unwrap_or("default").to_string();
+    let opts = vod::ClipJobOptions {
+        playback_url: v["playback_url"].as_str().map(String::from),
+        is_live: v["is_live"].as_bool().unwrap_or(false),
+        current_time_sec: v["current_time_sec"].as_f64(),
+        lookback_secs: v["lookback_secs"].as_u64(),
+        channel: v["channel"].as_str().map(String::from),
+        video_title: v["video_title"].as_str().map(String::from),
+        platform_hint: v["platform"].as_str().map(String::from),
+    };
     let job = state.jobs.lock().unwrap().create(&url);
 
-    // Spawn the real download + clipping pipeline in the background; the
-    // dashboard polls /api/jobs for progress.
+    // Spawn the real download + transcription + viral clipping pipeline in the background.
     let shared = state;
     let job_for_task = job.clone();
     tokio::spawn(async move {
-        run_job(shared, job_for_task, max_clips, template).await;
+        run_job(shared, job_for_task, max_clips, template, opts).await;
     });
     json_out(202, json!({"job": job}))
 }
@@ -253,6 +261,10 @@ fn extension_clip(state: Arc<Shared>, body: &str) -> (u16, &'static str, Vec<u8>
     let platform = v["platform"].as_str().unwrap_or("live");
     let lookback = v["lookback_secs"].as_u64().unwrap_or(30);
     let hype_score = v["hype_score"].as_f64().unwrap_or(0.85);
+    let is_live = v["is_live"].as_bool().unwrap_or(false);
+    let playback_url = v["playback_url"].as_str().map(String::from);
+    let current_time_sec = v["current_time_sec"].as_f64();
+    let video_title = v["video_title"].as_str().map(String::from);
     let reasons: Vec<String> = v["reasons"].as_array()
         .map(|arr| arr.iter().filter_map(|r| r.as_str().map(String::from)).collect())
         .unwrap_or_else(|| vec![format!("Hype spike detected ({:.0}%)", hype_score * 100.0)]);
@@ -261,15 +273,24 @@ fn extension_clip(state: Arc<Shared>, body: &str) -> (u16, &'static str, Vec<u8>
     {
         let mut jobs = state.jobs.lock().unwrap();
         let reason_str = reasons.join(", ");
-        let msg = format!("🔥 Clip requested via Extension for {channel} ({platform}): lookback {lookback}s - {reason_str}");
-        let _ = jobs.update(&job.id, JobStatus::Downloading, 15, &msg);
+        let msg = format!("Clip requested via Extension for {channel} ({platform}): {lookback}s - {reason_str}");
+        let _ = jobs.update(&job.id, JobStatus::Downloading, 10, &msg);
     }
 
     let template = v["template"].as_str().unwrap_or("default").to_string();
+    let opts = vod::ClipJobOptions {
+        playback_url,
+        is_live,
+        current_time_sec,
+        lookback_secs: Some(lookback),
+        channel: Some(channel.to_string()),
+        video_title,
+        platform_hint: Some(platform.to_string()),
+    };
     let shared = Arc::clone(&state);
     let job_clone = job.clone();
     tokio::spawn(async move {
-        run_job(shared, job_clone, 1, template).await;
+        run_job(shared, job_clone, 1, template, opts).await;
     });
 
     json_out(202, json!({
@@ -279,16 +300,34 @@ fn extension_clip(state: Arc<Shared>, body: &str) -> (u16, &'static str, Vec<u8>
         "platform": platform,
         "lookback_secs": lookback,
         "hype_score": hype_score,
-        "message": format!("PulseCut is clipping the last {lookback}s for {channel}!")
+        "is_live": is_live,
+        "message": format!("PulseCut is clipping {lookback}s for {channel}!")
     }))
 }
 
-async fn run_job(state: Arc<Shared>, job: Job, max_clips: usize, template: String) {
+async fn run_job(state: Arc<Shared>, job: Job, max_clips: usize, template: String, opts: vod::ClipJobOptions) {
     {
         let mut jobs = state.jobs.lock().unwrap();
-        let _ = jobs.update(&job.id, JobStatus::Downloading, 10, "downloading source");
+        let _ = jobs.update(&job.id, JobStatus::Downloading, 10, "downloading highest quality source");
     }
-    let result = vod::make_clips(&state.cfg, &job.url, max_clips, &template, &state.out, state.ai.as_ref()).await;
+    let state_for_cb = Arc::clone(&state);
+    let job_id_for_cb = job.id.clone();
+    let result = vod::make_clips_with_options(
+        &state.cfg,
+        &job.url,
+        max_clips,
+        &template,
+        &state.out,
+        state.ai.as_ref(),
+        opts,
+        move |pct, msg| {
+            let status = if pct < 35 { JobStatus::Downloading } else { JobStatus::Clipping };
+            if let Ok(mut jobs) = state_for_cb.jobs.lock() {
+                let _ = jobs.update(&job_id_for_cb, status, pct, msg);
+            }
+        },
+    )
+    .await;
     let mut jobs = state.jobs.lock().unwrap();
     match result {
         Ok(packages) => {

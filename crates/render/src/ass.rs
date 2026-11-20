@@ -28,15 +28,16 @@ fn sanitize(text: &str) -> String {
 /// Build a complete ASS file for the given words, offset so the first word
 /// starts at 0 (ASS timestamps are relative to the clip file).
 pub fn build_ass(words: &[Word], cfg: &RenderConfig, clip_start_ms: i64) -> String {
+    // ASS color order is &HAABBGGRR. Bright viral yellow (#FFE600) is &H0000E6FF.
     let color = match cfg.caption_style.as_str() {
-        "karaoke_bold" => "&H00FFFFFF,&H0000FFFF",
         "clean" => "&H00FFFFFF,&H00FFFFFF",
-        _ => "&H00FFFFFF,&H0000FFFF",
+        "karaoke_bold" | "karaoke_yellow" | "karaoke" | _ => "&H0000E6FF,&H0066F2FF",
     };
     let mut primary = color.split(',');
-    let p = primary.next().unwrap_or("&H00FFFFFF");
-    let s = primary.next().unwrap_or("&H0000FFFF");
-    let bold = if cfg.caption_style == "karaoke_bold" { -1 } else { -1 };
+    let p = primary.next().unwrap_or("&H0000E6FF");
+    let s = primary.next().unwrap_or("&H0066F2FF");
+    let bold = -1;
+    let outline = if cfg.caption_style == "clean" { 3 } else { 4 };
     let mut out = format!(
         "[Script Info]\n\
          ScriptType: v4.00+\n\
@@ -46,14 +47,14 @@ pub fn build_ass(words: &[Word], cfg: &RenderConfig, clip_start_ms: i64) -> Stri
          ScaledBorderAndShadow: yes\n\n\
          [V4+ Styles]\n\
          Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n\
-         Style: Default,{},{},{},{},&H00000000,&H90000000,{bold},0,0,0,100,100,0,0,1,3,2,2,40,40,{},1\n\n\
+         Style: Default,{},{},{},{},&H00000000,&H96000000,{bold},0,0,0,100,100,0,0,1,{outline},2,2,48,48,{},1\n\n\
          [Events]\n\
          Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
         cfg.width, cfg.height, cfg.subtitle_font, cfg.subtitle_size, p, s, cfg.safe_zone_bottom
     );
 
-    // Group words into cues of at most ~7 words / 3.5 seconds so captions stay
-    // readable and never collide with the platform UI.
+    // Group words into punchy short-form cues (~4-5 words / 2.6 seconds) so
+    // yellow subtitles stay ultra-readable and never collide with platform UI.
     let mut cues: Vec<(i64, i64, Vec<&Word>)> = Vec::new();
     for w in words {
         let start = w.start_ms - clip_start_ms;
@@ -62,7 +63,7 @@ pub fn build_ass(words: &[Word], cfg: &RenderConfig, clip_start_ms: i64) -> Stri
             continue;
         }
         let can_join = cues.last().map_or(false, |(cs, ce, group)| {
-            end - *cs < 3_500 && group.len() < 7 && start <= *ce + 250
+            end - *cs < 2_600 && group.len() < 5 && start <= *ce + 250
         });
         if can_join {
             let cue = cues.last_mut().unwrap();

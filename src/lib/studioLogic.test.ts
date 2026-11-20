@@ -194,7 +194,15 @@ test('shared viral preset registry exposes 9 featured / 12 total modern formats 
   assert.equal(TEMPLATE_PRESETS.length, 12);
 
   const featuredIds = FEATURED_PRESETS.map((t) => t.id);
-  assert.deepEqual(featuredIds.slice(0, 3), ['kick-stream', 'insta-short', 'yt-short']);
+  assert.deepEqual(featuredIds.slice(0, 4), ['default', 'kick-stream', 'insta-short', 'yt-short']);
+
+  const classic = getTemplatePreset('default');
+  assert.equal(classic.name, 'Classic Short');
+  assert.equal(classic.defaultHeadlineLayout, 'outline-only');
+  assert.equal(classic.defaultCaptionStyle, 'hormozi-classic');
+  assert.equal(classic.defaultStreamerPlatform, 'none');
+  assert.equal(classic.hasHeadline, true);
+  assert.equal(classic.accentHex, '#FFE600');
 
   const kick = getTemplatePreset('kick-stream');
   assert.equal(kick.name, 'Kick Viral');
@@ -289,7 +297,9 @@ test('2026 platform Safe Zone specs auto-match active template and expose exact 
 test('viral typography, positioned ASS subtitles (white-stepped BorderStyle=3), and watermark/streamer parity', () => {
   assert.equal(VIRAL_FONTS.length, 13);
   assert.equal(VIRAL_CAPTION_PRESETS.length, 7);
+  assert.equal(VIRAL_CAPTION_PRESETS[0].baseColor, '#FFE600');
   assert.equal(normalizeCaptionPresetId('bold'), 'hormozi-classic');
+  assert.equal(normalizeCaptionPresetId('karaoke_yellow'), 'hormozi-classic');
   assert.equal(normalizeCaptionPresetId('karaoke'), 'podcast-pill');
   assert.equal(hexToAssColor('#53FC18'), '&H0018FC53');
 
@@ -384,20 +394,31 @@ test('export payload includes editable watermark, streamer attribution, and capt
   assert.equal(payload.out_ms, 24500);
 });
 
-test('browser extension hypeEngine detects Kick/YouTube/Instagram channels, scores spikes, and separates manual vs auto cooldowns', () => {
-  const kickCtx = hypeEngine.detectStreamContext('https://kick.com/adinross');
+test('browser extension hypeEngine detects Kick/YouTube/Instagram channels, live status, defaults to Classic Short, and scores spikes', () => {
+  const kickCtx = hypeEngine.detectStreamContext('https://kick.com/funnyhoodvidz');
   assert.equal(kickCtx.platform, 'kick');
-  assert.equal(kickCtx.channel, 'adinross');
-  assert.equal(kickCtx.template, 'kick-stream');
+  assert.equal(kickCtx.channel, 'funnyhoodvidz');
+  assert.equal(kickCtx.template, 'default');
+  assert.equal(kickCtx.platformTemplate, 'kick-stream');
+  assert.equal(kickCtx.isLive, true);
   assert.equal(kickCtx.supported, true);
+  assert.equal(hypeEngine.extractKickSlug('https://kick.com/funnyhoodvidz'), 'funnyhoodvidz');
+  assert.equal(hypeEngine.extractKickSlug('https://kick.com/video/12345'), '');
+  assert.equal(hypeEngine.detectLiveStatus('https://kick.com/video/12345'), false);
 
   const ytWatchCtx = hypeEngine.detectStreamContext('https://www.youtube.com/watch?v=abc123', {
     channelHandle: '@MrBeast',
   });
   assert.equal(ytWatchCtx.platform, 'youtube');
   assert.equal(ytWatchCtx.channel, 'MrBeast');
-  assert.equal(ytWatchCtx.template, 'yt-short');
+  assert.equal(ytWatchCtx.template, 'default');
+  assert.equal(ytWatchCtx.platformTemplate, 'yt-short');
+  assert.equal(ytWatchCtx.isLive, false);
   assert.equal(ytWatchCtx.isChatIframe, false);
+
+  const ytLiveCtx = hypeEngine.detectStreamContext('https://www.youtube.com/live/YNp4gpjgNH4');
+  assert.equal(ytLiveCtx.isLive, true);
+  assert.equal(ytLiveCtx.template, 'default');
 
   const ytChatIframe = hypeEngine.detectStreamContext('https://www.youtube.com/live_chat?v=abc123');
   assert.equal(ytChatIframe.isChatIframe, true);
@@ -408,7 +429,9 @@ test('browser extension hypeEngine detects Kick/YouTube/Instagram channels, scor
   });
   assert.equal(igCtx.platform, 'instagram');
   assert.equal(igCtx.channel, 'dummnews');
-  assert.equal(igCtx.template, 'insta-short');
+  assert.equal(igCtx.template, 'default');
+  assert.equal(igCtx.platformTemplate, 'insta-short');
+  assert.equal(igCtx.isLive, false);
   assert.equal(igCtx.supported, true);
 
   const now = 100000;

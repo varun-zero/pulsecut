@@ -133,29 +133,49 @@
     if (!activeTab || !activeContext || !activeContext.supported) return;
     els.clipNowBtn.disabled = true;
     els.clipNowBtn.textContent = 'Sending clip…';
-    setHint('Contacting PulseCut server…');
+    setHint('Extracting stream & contacting PulseCut…');
 
-    chrome.runtime.sendMessage(
-      {
-        type: 'TRIGGER_CLIP',
-        serverUrl: normalizeUrl(els.serverUrl.value),
-        url: activeTab.url,
-        channel: activeContext.channel,
-        platform: activeContext.platform,
-        template: activeContext.template,
-        lookback_secs: Number(els.lookbackSecs.value) || 30,
-        hype_score: 100,
-        reasons: ['popup'],
-      },
+    const finish = (res) => {
+      els.clipNowBtn.disabled = false;
+      els.clipNowBtn.textContent = 'Clip Active Tab Now';
+      if (res && res.ok) {
+        setHint(`Queued ${activeContext.channel} (${els.lookbackSecs.value}s)`, 'ok');
+        pingServer(els.serverUrl.value);
+      } else {
+        setHint((res && res.error) || 'Could not reach PulseCut server', 'err');
+      }
+    };
+
+    const sendDirectFallback = () => {
+      chrome.runtime.sendMessage(
+        {
+          type: 'TRIGGER_CLIP',
+          serverUrl: normalizeUrl(els.serverUrl.value),
+          url: activeTab.url,
+          is_live: Boolean(activeContext.isLive),
+          channel: activeContext.channel,
+          platform: activeContext.platform,
+          template: activeContext.template || 'default',
+          lookback_secs: Number(els.lookbackSecs.value) || 30,
+          hype_score: 100,
+          reasons: ['popup'],
+        },
+        finish
+      );
+    };
+
+    // Prefer content.js so Kick's same-origin live playback_url (.m3u8) and
+    // YouTube/Twitch VOD currentTime are captured from the active page.
+    chrome.tabs.sendMessage(
+      activeTab.id,
+      { type: 'POPUP_TRIGGER_CLIP' },
+      { frameId: 0 },
       (res) => {
-        els.clipNowBtn.disabled = false;
-        els.clipNowBtn.textContent = 'Clip Active Tab Now';
-        if (res && res.ok) {
-          setHint(`Queued ${activeContext.channel} (${els.lookbackSecs.value}s)`, 'ok');
-          pingServer(els.serverUrl.value);
-        } else {
-          setHint((res && res.error) || 'Could not reach PulseCut server', 'err');
+        if (chrome.runtime.lastError || !res) {
+          sendDirectFallback();
+          return;
         }
+        finish(res);
       }
     );
   });

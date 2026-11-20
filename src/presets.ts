@@ -61,6 +61,31 @@ export interface TemplatePreset {
  * YouTube Shorts, Instagram Reels, TikTok, and Kick clip formats (zero dated slop).
  */
 export const TEMPLATE_PRESETS: readonly TemplatePreset[] = [
+  /* ---------- Default Generic Short (White Title + Yellow Subtitles) ---------- */
+  {
+    id: 'default',
+    name: 'Classic Short',
+    fullName: 'Classic Short (White Title · Yellow Subs)',
+    category: 'Viral Hooks',
+    description:
+      'Universal viral short format: bold white top title with crisp black outline, yellow word-synced subtitles, and zero forced platform branding.',
+    featured: true,
+    defaultLayout: 'solo',
+    defaultCaptionStyle: 'hormozi-classic',
+    defaultSafeZone: 'universal',
+    defaultHeadlineFont: 'Montserrat',
+    defaultSubtitleFont: 'Montserrat',
+    defaultHeadlineLayout: 'outline-only',
+    defaultSubtitleBg: 'none',
+    defaultStreamerPlatform: 'none',
+    defaultOuterFill: '#09090B',
+    defaultCornerRadius: 0,
+    hasCard: false,
+    hasHeadline: true,
+    hasTicker: false,
+    accentHex: '#FFE600',
+    wireframe: 'plain',
+  },
   /* ---------- 3 First-Class Platform Viral Templates ---------- */
   {
     id: 'kick-stream',
@@ -254,30 +279,6 @@ export const TEMPLATE_PRESETS: readonly TemplatePreset[] = [
     hasTicker: false,
     accentHex: '#E4E4E7',
     wireframe: 'social',
-  },
-  {
-    id: 'default',
-    name: 'Raw Captions',
-    fullName: 'Raw 9:16 (Captions Only)',
-    category: 'Viral Hooks',
-    description:
-      'Clean full-bleed vertical cut with crisp word-synced viral captions and zero extra overlays.',
-    featured: true,
-    defaultLayout: 'solo',
-    defaultCaptionStyle: 'hormozi-classic',
-    defaultSafeZone: 'universal',
-    defaultHeadlineFont: 'Montserrat',
-    defaultSubtitleFont: 'Montserrat',
-    defaultHeadlineLayout: 'none',
-    defaultSubtitleBg: 'none',
-    defaultStreamerPlatform: 'none',
-    defaultOuterFill: '#09090B',
-    defaultCornerRadius: 0,
-    hasCard: false,
-    hasHeadline: false,
-    hasTicker: false,
-    accentHex: '#A1A1AA',
-    wireframe: 'plain',
   },
   /* ---------- Additional Real Viral Formats in Full Library Modal ---------- */
   {

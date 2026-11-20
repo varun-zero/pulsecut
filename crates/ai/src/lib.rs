@@ -8,8 +8,14 @@
 pub mod metadata;
 pub mod transcribe;
 
-pub use metadata::{AiBackend, GeneratedMetadata, MockAi, Ollama, OpenRouter, build_prompt, parse_json_object};
-pub use transcribe::{Transcriber, WhisperCli};
+pub use metadata::{
+    AiBackend, GeneratedMetadata, MockAi, Ollama, OpenRouter, ViralMomentProposal,
+    build_clip_discovery_prompt, build_prompt, parse_clip_proposals, parse_json_object,
+};
+pub use transcribe::{
+    Transcriber, WhisperCli, format_timestamped_transcript, parse_vtt_words,
+    parse_youtube_json3_words, transcribe_whisper_api,
+};
 
 use pulsecut_core::config::{AiConfig, Config};
 use pulsecut_core::error::{PulseError, Result};

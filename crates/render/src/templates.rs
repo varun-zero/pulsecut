@@ -36,10 +36,10 @@ pub struct ShortTemplate {
 pub fn library() -> Vec<ShortTemplate> {
     vec![
         ShortTemplate {
-            id: "default", name: "Plain", background: (0, 0, 0), accent: (255, 255, 255),
-            card: false, headline: false, ticker: false, watermark: false,
-            caption_preset: "karaoke", title_pattern: "{title}", hook_pattern: "{hook}",
-            hashtags: &[],
+            id: "default", name: "Classic Short", background: (0, 0, 0), accent: (255, 230, 0),
+            card: false, headline: true, ticker: false, watermark: false,
+            caption_preset: "karaoke_yellow", title_pattern: "{title}", hook_pattern: "{hook}",
+            hashtags: &["shorts", "clips", "viral"],
         },
         ShortTemplate {
             id: "clean", name: "Clean", background: (10, 12, 16), accent: (255, 255, 255),
@@ -266,11 +266,11 @@ pub fn apply_visual(
     if t.headline {
         if let Some(text) = &overlays.headline {
             filter.push_str(&format!(
-                ",drawtext={}text='{}':fontcolor=white:fontsize={}:x=(w-text_w)/2:y={}:shadowcolor=black:shadowx=2:shadowy=2",
+                ",drawtext={}text='{}':fontcolor=white:fontsize={}:x=(w-text_w)/2:y={}:borderw=4:bordercolor=black:shadowcolor=black@0.85:shadowx=0:shadowy=4",
                 font,
                 escape_drawtext(text),
-                (cfg.subtitle_size as f64 * 0.85) as i64,
-                top + 10
+                (cfg.subtitle_size as f64 * 0.92) as i64,
+                top + 14
             ));
         }
     }
