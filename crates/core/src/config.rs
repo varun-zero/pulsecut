@@ -217,7 +217,7 @@ impl Default for RenderConfig {
             safe_zone_top: 180,
             safe_zone_bottom: 320,
             max_duration_secs: 60,
-            crf: 18,
+            crf: 16,
         }
     }
 }

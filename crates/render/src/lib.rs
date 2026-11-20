@@ -169,11 +169,13 @@ impl Renderer {
     pub fn args(&self, input: &Path, subs: Option<&Path>, out: &Path) -> Vec<String> {
         let vf = video_filter(&self.cfg, &EditDecisionList::default(), subs);
         let crf = self.cfg.crf.to_string();
+        // Max-quality encode: slow preset for better compression/quality at a
+        // given CRF, higher-quality hardware presets, and 256k AAC audio.
         let (codec, extra) = match self.cfg.encoder.as_str() {
-            "nvenc" => ("h264_nvenc", vec!["-preset", "p4", "-cq", "20"]),
-            "amf" => ("h264_amf", vec!["-quality", "balanced"]),
-            "qsv" => ("h264_qsv", vec!["-preset", "medium"]),
-            _ => ("libx264", vec!["-preset", "veryfast", "-crf", crf.as_str()]),
+            "nvenc" => ("h264_nvenc", vec!["-preset", "p7", "-cq", "17", "-b:v", "0"]),
+            "amf" => ("h264_amf", vec!["-quality", "quality"]),
+            "qsv" => ("h264_qsv", vec!["-preset", "slow", "-global_quality", crf.as_str()]),
+            _ => ("libx264", vec!["-preset", "slow", "-crf", crf.as_str()]),
         };
         let mut args = vec![
             "-y".into(), "-loglevel".into(), "error".into(),
@@ -187,7 +189,7 @@ impl Renderer {
         args.extend([
             "-pix_fmt".into(), "yuv420p".into(),
             "-c:a".into(), "aac".into(),
-            "-b:a".into(), "160k".into(),
+            "-b:a".into(), "256k".into(),
             "-t".into(), self.cfg.max_duration_secs.to_string(),
             "-movflags".into(), "+faststart".into(),
             out.to_string_lossy().into_owned(),
@@ -290,14 +292,15 @@ impl Renderer {
             "nvenc" => "h264_nvenc", "amf" => "h264_amf", "qsv" => "h264_qsv", _ => "libx264",
         }]);
         let crf = cfg.crf.to_string();
+        // Max-quality encode (kept in sync with Renderer::args above).
         let (_codec, extra): (&str, Vec<&str>) = match self.cfg.encoder.as_str() {
-            "nvenc" => ("h264_nvenc", vec!["-preset", "p4", "-cq", "20"]),
-            "amf" => ("h264_amf", vec!["-quality", "balanced"]),
-            "qsv" => ("h264_qsv", vec!["-preset", "medium"]),
-            _ => ("libx264", vec!["-preset", "veryfast", "-crf", crf.as_str()]),
+            "nvenc" => ("h264_nvenc", vec!["-preset", "p7", "-cq", "17", "-b:v", "0"]),
+            "amf" => ("h264_amf", vec!["-quality", "quality"]),
+            "qsv" => ("h264_qsv", vec!["-preset", "slow", "-global_quality", crf.as_str()]),
+            _ => ("libx264", vec!["-preset", "slow", "-crf", crf.as_str()]),
         };
         cmd.args(&extra);
-        cmd.args(["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
+        cmd.args(["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k",
                   "-t", &cfg.max_duration_secs.to_string(),
                   "-movflags", "+faststart"])
             .arg(out);

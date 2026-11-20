@@ -40,8 +40,17 @@ pub async fn download(url: &str, dir: &Path) -> Result<PathBuf> {
         // Use the default player client. Forcing alternate clients makes
         // YouTube report "Requested format is not available" even when the
         // default client lists every format correctly.
+        //
+        // MAX QUALITY: prefer the highest-resolution H.264 video (up to 1080p,
+        // the render canvas) merged with the best audio. The previous
+        // `worst[height>=360]` selector grabbed a 360p stream which was then
+        // upscaled to 1080x1920 — the cause of the drastic quality drop.
+        let best_format = "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best";
+        let quality_format = std::env::var("PULSECUT_SOURCE_FORMAT")
+            .unwrap_or_else(|_| best_format.to_string());
         let mut attempts: Vec<Vec<String>> = vec![vec![
-            "-f".into(), "worst[ext=mp4][height>=360]/worst".into(),
+            "-f".into(), quality_format,
+            "--merge-output-format".into(), "mp4".into(),
             "--no-playlist".into(), "--no-update".into(),
             "--download-sections".into(), format!("*0-{section_secs}"),
             "--force-keyframes-at-cuts".into(), "-o".into(), pattern.to_string_lossy().into_owned(),
