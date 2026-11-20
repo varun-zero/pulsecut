@@ -308,6 +308,8 @@ export interface ClipItem {
   audioPeak?: boolean;
   previewImage?: string;
   mediaUrl?: string;
+  /** Full-resolution pre-crop source used by the Framing Studio (e.g. 1920x1080). */
+  rawMediaUrl?: string;
   words: WordCue[];
 }
 

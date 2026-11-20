@@ -586,7 +586,7 @@ export function FramingPage({
                   </div>
                   <div className="flex-1 min-h-0 flex items-center justify-center">
                     <SourceCropCanvas
-                      videoUrl={currentClip.mediaUrl}
+                      videoUrl={currentClip.rawMediaUrl || currentClip.mediaUrl}
                       previewImage={currentClip.previewImage}
                       videoRef={videoRef}
                       sourceAspect={sourceAr}

@@ -97,6 +97,13 @@ export function normalizeServerClip(c: Partial<ClipItem> & Record<string, unknow
     font: typeof c.font === 'string' ? c.font : 'TikTok Sans',
     subtitleFont: typeof c.subtitleFont === 'string' ? c.subtitleFont : 'Montserrat',
     mediaUrl: typeof c.mediaUrl === 'string' && c.mediaUrl ? c.mediaUrl : `/api/clips/${id}/media`,
+    // Full pre-crop source for the Framing Studio. For locally imported blobs
+    // there is no separate raw source, so fall back to the media URL.
+    rawMediaUrl: typeof c.rawMediaUrl === 'string' && c.rawMediaUrl
+      ? c.rawMediaUrl
+      : typeof c.mediaUrl === 'string' && c.mediaUrl.startsWith('blob:')
+        ? c.mediaUrl
+        : `/api/clips/${id}/raw-media`,
     words: Array.isArray(c.words) ? c.words : [],
   };
 }

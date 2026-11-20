@@ -326,6 +326,50 @@ async fn handle_clip(state: &Shared, method: &str, path: &str, body: &str) -> (u
                 Err(e) => json_out(404, json!({"error": e.to_string()})),
             }
         }
+        // Full-resolution source segment (pre-crop). The Framing Studio uses
+        // this so crop regions can be placed against the complete original
+        // frame (e.g. 1920x1080) rather than the already-cropped 9:16 export.
+        ("GET", Some("raw-media")) => {
+            let pkg = match state.store.lock().unwrap().get(id).cloned() {
+                Some(p) => p,
+                None => return json_out(404, json!({"error": "clip not found"})),
+            };
+            let raw = std::path::PathBuf::from(&pkg.raw_video_path);
+            if !raw.is_file() {
+                return json_out(404, json!({"error": "raw source not found"}));
+            }
+            // The raw source is an MPEG-TS segment, which browsers cannot probe
+            // reliably. Remux (stream-copy) to a fragmented MP4 so the Source
+            // Frame <video> can read 1920x1080 metadata and paint frames.
+            let ffmpeg = match pulsecut_capture::ffmpeg(&state.cfg.capture.ffmpeg_path) {
+                Ok(p) => p,
+                Err(e) => return json_out(500, json!({"error": e.to_string()})),
+            };
+            // Remux through a temp file (not a pipe) so the MP4 gets a normal
+            // moov atom with an accurate duration; fragmented MP4 streams
+            // report a bogus ~2s duration in Chromium.
+            let tmp = std::env::temp_dir().join(format!("pulsecut-raw-{id}.mp4"));
+            let remux = std::process::Command::new(&ffmpeg)
+                .args(["-y", "-loglevel", "error", "-i"])
+                .arg(&raw)
+                .args(["-c", "copy", "-bsf:a", "aac_adtstoasc", "-movflags", "+faststart"])
+                .arg(&tmp)
+                .output();
+            let result = if remux.map(|o| o.status.success()).unwrap_or(false) && tmp.is_file() {
+                tokio::fs::read(&tmp).await.ok().map(|b| (200, "video/mp4", b))
+            } else {
+                None
+            };
+            let _ = std::fs::remove_file(&tmp);
+            match result {
+                Some(r) => r,
+                // Fallback: serve the original TS bytes if remuxing is unavailable.
+                None => match tokio::fs::read(&raw).await {
+                    Ok(bytes) => (200, "video/mp2t", bytes),
+                    Err(e) => json_out(404, json!({"error": e.to_string()})),
+                },
+            }
+        }
         ("GET", None) => {
             let store = state.store.lock().unwrap();
             match store.get(id) {
