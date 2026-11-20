@@ -117,7 +117,42 @@
       "at": 1795177589.1455884
     }
   },
-  "captions": {},
-  "approvals": {},
-  "publishes": {}
+  "captions": {
+    "5485c775-fde3-40a3-be9a-f8bb2a48b794": {
+      "data": {
+        "title": "7 Deadly Sins of Speaking - Julian Treasure",
+        "description": "Learn the 7 deadly sins of speaking and how to fix them. #shorts",
+        "hashtags": [
+          "shorts",
+          "youtube",
+          "publicspeaking",
+          "tips",
+          "viral"
+        ]
+      },
+      "status": 200,
+      "at": 1795178185.3530428
+    }
+  },
+  "approvals": {
+    "5485c775-fde3-40a3-be9a-f8bb2a48b794": {
+      "action": "approve",
+      "status": 200,
+      "at": 1795178185.520031
+    }
+  },
+  "publishes": {
+    "5485c775-fde3-40a3-be9a-f8bb2a48b794": {
+      "targets": [
+        "youtube_shorts"
+      ],
+      "status": 502,
+      "result": {
+        "error": "publisher error: missing PULSECUT_YOUTUBE_TOKEN; export your publisher token",
+        "hint": "set the platform token env var (e.g. PULSECUT_WOOPSOCIAL_TOKEN / PULSECUT_IG_TOKEN + PULSECUT_IG_USER_ID / PULSECUT_YOUTUBE_TOKEN)",
+        "ok": false
+      },
+      "at": 1795178200.0463815
+    }
+  }
 }
