@@ -7,6 +7,7 @@
 
 # Runtime audit state (regenerated; never committed)
 automation/ledger.json
+automation/extension-events.jsonl
 
 # Reference clones and research payloads (excluded from publishing)
 /research/
