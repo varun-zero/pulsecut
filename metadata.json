@@ -1,0 +1,5 @@
+{
+  "name": "PulseCut",
+  "description": "Precision stream clipper, clips triage library, and 100dvh studio short-form video editor.",
+  "requestFramePermissions": []
+}
