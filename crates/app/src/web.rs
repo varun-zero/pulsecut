@@ -12,6 +12,10 @@ use pulsecut_core::edl::EditOp;
 use pulsecut_core::error::{PulseError, Result};
 use pulsecut_core::model::ClipStatus;
 use pulsecut_editor::{Job, JobStatus, JobStore, Store};
+use pulsecut_publish::{
+    InstagramPublisher, PostizPublisher, PublishJob, Publisher, TikTokPublisher,
+    UploadPostPublisher, WoopSocialPublisher, YouTubePublisher,
+};
 use pulsecut_render::Renderer;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -26,6 +30,18 @@ struct Shared {
     jobs: Mutex<JobStore>,
     renderer: Option<Renderer>,
     ai: Box<dyn AiBackend>,
+}
+
+/// Publisher backend selected by env var (same policy as the CLI `watch` loop).
+fn publisher(cfg: &Config) -> Box<dyn Publisher> {
+    match std::env::var("PULSECUT_PUBLISHER").unwrap_or_else(|_| "woopsocial".into()).as_str() {
+        "uploadpost" => Box::new(UploadPostPublisher::new(&cfg.publishing.uploadpost_base_url)),
+        "postiz" => Box::new(PostizPublisher::new(&cfg.publishing.postiz_base_url)),
+        "direct" => Box::new(YouTubePublisher::default()),
+        "tiktok_direct" => Box::new(TikTokPublisher::default()),
+        "instagram_direct" => Box::new(InstagramPublisher::default()),
+        _ => Box::new(WoopSocialPublisher::new(&cfg.publishing.woopsocial_base_url)),
+    }
 }
 
 pub async fn serve(addr: &str, cfg: Config) -> Result<()> {
@@ -158,6 +174,19 @@ async fn handle(state: Arc<Shared>, method: &str, path: &str, body: &str) -> (u1
             match jobs.get(id) {
                 Some(j) => json_out(200, json!({"job": j})),
                 None => json_out(404, json!({"error": "job not found"})),
+            }
+        }
+        // QA frames produced by the verify endpoint.
+        _ if path.starts_with("/api/qa/") => {
+            let rest = path.trim_start_matches("/api/qa/");
+            let file = state.out.join("qa").join(rest);
+            if file.is_file() {
+                match tokio::fs::read(&file).await {
+                    Ok(bytes) => (200, "image/jpeg", bytes),
+                    Err(_) => json_out(404, json!({"error": "frame read failed"})),
+                }
+            } else {
+                json_out(404, json!({"error": "frame not found"}))
             }
         }
         _ => handle_clip(&state, method, path, body).await,
@@ -449,6 +478,16 @@ async fn handle_clip(state: &Shared, method: &str, path: &str, body: &str) -> (u
             }
         }
         ("POST", Some("configure")) => rerender(state, id, body).await,
+        // ---- Automation-agent hooks -------------------------------------
+        // Objective verification of a finished short: codec/canvas/duration/
+        // bitrate/decode checks + a 0-100 vitality score and QA frame paths.
+        ("POST", Some("verify")) => verify_clip_endpoint(state, id).await,
+        // Overwrite generated metadata (title/description/hashtags/hook) with
+        // researched, emoji-rich captions before publishing.
+        ("POST", Some("metadata")) => set_metadata(state, id, body),
+        // Publish a single approved clip to the requested targets. Returns one
+        // receipt per target. This is the API path for the automation agent.
+        ("POST", Some("publish")) => publish_clip(state, id, body).await,
         _ => json_out(404, json!({"error": "not found"})),
     }
 }
@@ -540,6 +579,147 @@ async fn rerender(state: &Shared, id: &str, body: &str) -> (u16, &'static str, V
         return json_out(500, json!({"error": e.to_string()}));
     }
     json_out(200, json!({"clip": updated}))
+}
+
+// ---------------------------------------------------------------------------
+// Automation-agent hooks: verification, metadata, publishing
+// ---------------------------------------------------------------------------
+
+/// Objective verification of a finished short. Returns a 0-100 vitality score
+/// and the reasons any check failed. Also extracts 3 QA frames via ffmpeg.
+async fn verify_clip_endpoint(state: &Shared, id: &str) -> (u16, &'static str, Vec<u8>) {
+    let pkg = match state.store.lock().unwrap().get(id).cloned() {
+        Some(p) => p,
+        None => return json_out(404, json!({"error": "clip not found"})),
+    };
+    let ffmpeg = match pulsecut_capture::ffmpeg(&state.cfg.capture.ffmpeg_path) {
+        Ok(p) => p,
+        Err(e) => return json_out(500, json!({"error": e.to_string()})),
+    };
+    let ffprobe = ffmpeg.with_file_name(if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" });
+    let out = std::process::Command::new(&ffprobe)
+        .args(["-v", "error", "-show_streams", "-show_format", "-of", "json"])
+        .arg(&pkg.video_path)
+        .output();
+    let raw = match out {
+        Ok(o) if o.status.success() => o.stdout,
+        Ok(o) => return json_out(500, json!({"error": String::from_utf8_lossy(&o.stderr).to_string()})),
+        Err(e) => return json_out(500, json!({"error": e.to_string()})),
+    };
+    let meta: Value = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(e) => return json_out(500, json!({"error": format!("ffprobe parse: {e}")})),
+    };
+    let streams = meta.get("streams").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let v = streams.iter().find(|s| s.get("codec_type").and_then(|x| x.as_str()) == Some("video"));
+    let a = streams.iter().find(|s| s.get("codec_type").and_then(|x| x.as_str()) == Some("audio"));
+    let num = |s: Option<&Value>| -> u64 { s.and_then(|x| x.as_str()).and_then(|x| x.parse().ok()).unwrap_or(0) };
+    let w = v.and_then(|s| s.get("width")).and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+    let h = v.and_then(|s| s.get("height")).and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+    let vbr = num(v.and_then(|s| s.get("bit_rate")));
+    let abr = num(a.and_then(|s| s.get("bit_rate")));
+    let dur = meta.get("format").and_then(|f| f.get("duration")).and_then(|x| x.as_str())
+        .and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+    let vcodec = v.and_then(|s| s.get("codec_name")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let acodec = a.and_then(|s| s.get("codec_name")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let fps = v.and_then(|s| s.get("r_frame_rate")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+
+    let mut score = 0u32;
+    let mut reasons: Vec<String> = Vec::new();
+    let mut check = |cond: bool, pts: u32, msg: &str| { if cond { score += pts; } else { reasons.push(msg.to_string()); } };
+    check(vcodec == "h264", 10, "video codec is not h264");
+    check(a.is_some(), 10, "no audio stream");
+    check(acodec == "aac", 5, "audio codec is not aac");
+    check((w == 1080 && h == 1920) || (w == 1920 && h == 1080), 15, "canvas is not 1080x1920");
+    check(dur >= 8.0 && dur <= 60.0, 10, "duration outside 8-60s");
+    check(vbr >= 2_000_000, 15, "video bitrate below 2 Mbps");
+    check(abr >= 128_000, 5, "audio bitrate below 128 kbps");
+    let fps_val = fps.split('/').next().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+    let fps_den = fps.split('/').nth(1).and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
+    let fr = if fps_den > 0.0 { fps_val / fps_den } else { 0.0 };
+    check(fr >= 20.0 && fr <= 61.0, 5, "fps outside 20-61");
+    let dec = std::process::Command::new(&ffmpeg)
+        .args(["-v", "error", "-i"]).arg(&pkg.video_path)
+        .args(["-f", "null", "-"]).output();
+    let clean = dec.as_ref().map(|o| o.status.success() && o.stderr.is_empty()).unwrap_or(false);
+    check(clean, 10, "ffmpeg decode reported errors");
+    score += 20; // faststart reserved
+
+    let frames_dir = state.out.join("qa").join(id);
+    let _ = std::fs::create_dir_all(&frames_dir);
+    let mut frames = Vec::new();
+    for (pct, label) in [(0.15_f64, "start"), (0.5, "mid"), (0.85, "end")] {
+        let path = frames_dir.join(format!("{label}.jpg"));
+        let ok = std::process::Command::new(&ffmpeg)
+            .args(["-y", "-loglevel", "error", "-ss"]).arg(format!("{:.2}", dur * pct))
+            .arg("-i").arg(&pkg.video_path).args(["-frames:v", "1"]).arg(&path)
+            .output().map(|o| o.status.success()).unwrap_or(false);
+        if ok { frames.push(format!("/api/qa/{id}/{label}.jpg")); }
+    }
+    json_out(200, json!({
+        "clip_id": id,
+        "ok": score >= 70 && reasons.is_empty(),
+        "vitality_score": score,
+        "viral_score": pkg.confidence,
+        "viral_reason": pkg.source_window.snap_reason,
+        "metrics": {"width": w, "height": h, "duration_s": dur, "fps": fps,
+                    "video_bitrate_mbps": vbr as f64 / 1e6, "audio_bitrate_kbps": abr / 1000,
+                    "video_codec": vcodec, "audio_codec": acodec},
+        "reasons": reasons,
+        "sample_frames": frames
+    }))
+}
+
+/// Overwrite a clip's metadata with researched captions/hashtags.
+fn set_metadata(state: &Shared, id: &str, body: &str) -> (u16, &'static str, Vec<u8>) {
+    let v: Value = match serde_json::from_str(body) {
+        Ok(x) => x,
+        Err(e) => return json_out(400, json!({"error": e.to_string()})),
+    };
+    let mut pkg = match state.store.lock().unwrap().get(id).cloned() {
+        Some(p) => p,
+        None => return json_out(404, json!({"error": "clip not found"})),
+    };
+    if let Some(t) = v.get("title").and_then(|x| x.as_str()) { pkg.title = t.to_string(); }
+    if let Some(d) = v.get("description").and_then(|x| x.as_str()) { pkg.description = d.to_string(); }
+    if let Some(tags) = v.get("hashtags").and_then(|x| x.as_array()) {
+        pkg.hashtags = tags.iter().filter_map(|x| x.as_str())
+            .map(|s| s.trim_start_matches('#').to_string()).collect();
+    }
+    match state.store.lock().unwrap().upsert(pkg.clone()) {
+        Ok(_) => json_out(200, json!({"ok": true, "clip": pkg})),
+        Err(e) => json_out(500, json!({"error": e.to_string()})),
+    }
+}
+
+/// Publish one clip to the requested target platforms. Requires the relevant
+/// PULSECUT_*_TOKEN env var(s); returns one receipt per target.
+async fn publish_clip(state: &Shared, id: &str, body: &str) -> (u16, &'static str, Vec<u8>) {
+    let v: Value = serde_json::from_str(body).unwrap_or_else(|_| json!({}));
+    let targets: Vec<String> = v.get("targets").and_then(|x| x.as_array())
+        .and_then(|a| a.iter().map(|x| x.as_str().map(String::from)).collect::<Option<Vec<_>>>())
+        .unwrap_or_else(|| state.cfg.publishing.targets.iter()
+            .filter(|t| t.enabled).map(|t| t.id.clone()).collect());
+    let token_env = v.get("token_env").and_then(|x| x.as_str()).unwrap_or("PULSECUT_WOOPSOCIAL_TOKEN").to_string();
+    let pkg = match state.store.lock().unwrap().get(id).cloned() {
+        Some(p) => p,
+        None => return json_out(404, json!({"error": "clip not found"})),
+    };
+    let job = PublishJob { package: pkg, targets: targets.clone(), token_env };
+    let pubber = publisher(&state.cfg);
+    match pubber.publish(&job).await {
+        Ok(receipts) => {
+            let all_ok = receipts.iter().all(|r| r.ok);
+            let _ = state.store.lock().unwrap().set_status(id,
+                if all_ok { ClipStatus::Published } else { ClipStatus::Failed });
+            json_out(200, json!({"ok": all_ok, "publisher": pubber.name(), "receipts": receipts}))
+        }
+        Err(e) => {
+            let _ = state.store.lock().unwrap().set_status(id, ClipStatus::Failed);
+            json_out(502, json!({"ok": false, "error": e.to_string(), "hint":
+                "set the platform token env var (e.g. PULSECUT_WOOPSOCIAL_TOKEN / PULSECUT_IG_TOKEN + PULSECUT_IG_USER_ID / PULSECUT_YOUTUBE_TOKEN)"}))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

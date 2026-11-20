@@ -62,7 +62,7 @@
     "safe_zone_top": 180,
     "safe_zone_bottom": 320,
     "max_duration_secs": 60,
-    "crf": 20
+    "crf": 16
   },
   "ai": {
     "backend": "ollama",
