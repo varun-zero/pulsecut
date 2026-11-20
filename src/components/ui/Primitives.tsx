@@ -147,6 +147,7 @@ export function StudioSlider({
   max,
   step = 1,
   unit = '',
+  valueLabel,
   onChange,
   id,
   compact = false,
@@ -157,11 +158,13 @@ export function StudioSlider({
   max: number;
   step?: number;
   unit?: string;
+  valueLabel?: string;
   onChange: (next: number) => void;
   id?: string;
   compact?: boolean;
 }) {
   const pct = max > min ? Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100)) : 0;
+  const displayVal = valueLabel ?? `${value}${unit}`;
 
   return (
     <div className={compact ? 'flex items-center gap-2.5' : 'space-y-1.5'}>
@@ -171,8 +174,7 @@ export function StudioSlider({
             {label}
           </label>
           <span className="font-mono-tabular text-[11px] text-[var(--pc-ink)] bg-[var(--pc-surface-2)] border border-[var(--pc-border)] rounded px-1.5 py-0.5">
-            {value}
-            {unit}
+            {displayVal}
           </span>
         </div>
       )}
@@ -201,8 +203,7 @@ export function StudioSlider({
       </div>
       {!label && (
         <span className="font-mono-tabular text-[11px] text-[var(--pc-sub)] min-w-[38px] text-right">
-          {value}
-          {unit}
+          {displayVal}
         </span>
       )}
     </div>
@@ -879,7 +880,7 @@ export function Toast({ message }: { message: string | null }) {
     <div
       role="status"
       aria-live="polite"
-      className="fixed top-14 left-1/2 -translate-x-1/2 z-[90] px-4 py-2 rounded-lg bg-[var(--pc-cta-bg)] text-[var(--pc-cta-fg)] text-xs font-medium shadow-lg border border-[var(--pc-border)] pointer-events-none"
+      className="fixed bottom-5 right-5 z-[90] px-4 py-2 rounded-lg bg-[var(--pc-cta-bg)] text-[var(--pc-cta-fg)] text-xs font-medium shadow-xl border border-[var(--pc-border)] pointer-events-none"
     >
       {message}
     </div>

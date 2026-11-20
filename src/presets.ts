@@ -388,6 +388,7 @@ export const ASPECT_RATIOS: readonly { id: AspectRatioId; label: string; dimensi
   { id: '4:5', label: '4:5', dimensions: '1080 × 1350' },
   { id: '1:1', label: '1:1', dimensions: '1080 × 1080' },
   { id: '16:9', label: '16:9', dimensions: '1920 × 1080' },
+  { id: '4:3', label: '4:3', dimensions: '1440 × 1080' },
 ];
 
 /** All 6 Studio framing layouts (1:1 YIZERGE + Reaction PiP parity) */

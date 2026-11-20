@@ -653,7 +653,7 @@ function sanitizeAssText(text: string): string {
   return text.replace(/[{}]/g, '').replace(/,/g, ' ').replace(/\r?\n/g, ' ');
 }
 
-function applyWordCasing(word: string, casing: TextCasingId): string {
+export function applyWordCasing(word: string, casing: TextCasingId): string {
   if (casing === 'upper') return word.toUpperCase();
   if (casing === 'title') return word.replace(/\b\w/g, (ch) => ch.toUpperCase());
   return word;
@@ -667,7 +667,8 @@ export function generateAssSubtitle(
 ): string {
   const fontMeta = getViralFont(settings.subtitleFont, customFonts);
   const safeSpec = getSafeZoneSpec(settings.safeZonePlatform, settings.template);
-  const playResX = settings.aspect === '16:9' ? 1920 : 1080;
+  const playResX =
+    settings.aspect === '16:9' ? 1920 : settings.aspect === '4:3' ? 1440 : 1080;
   const playResY =
     settings.aspect === '9:16' ? 1920 : settings.aspect === '4:5' ? 1350 : 1080;
   const posX = Math.round((playResX * settings.subtitleX) / 100);
@@ -764,7 +765,8 @@ export function buildRenderParitySpec(
   const safeZone = getSafeZoneSpec(settings.safeZonePlatform, settings.template);
   const headlineMeta = getViralFont(settings.font, customFonts);
   const subtitleMeta = getViralFont(settings.subtitleFont, customFonts);
-  const width = settings.aspect === '16:9' ? 1920 : 1080;
+  const width =
+    settings.aspect === '16:9' ? 1920 : settings.aspect === '4:3' ? 1440 : 1080;
   const height =
     settings.aspect === '9:16' ? 1920 : settings.aspect === '4:5' ? 1350 : 1080;
 

@@ -354,7 +354,7 @@ export function DashboardPage({
                     Drop a video recording here or click to browse
                   </div>
                   <div className="text-xs text-[var(--pc-muted)] mt-1">
-                    Supports MP4, MOV, MKV, and WebM — opens directly in the Editor or queues to backend
+                    Supports MP4, MOV, MKV, and WebM — opens in Framing Studio first, then Shorts Studio
                   </div>
                   {selectedFile && (
                     <div className="mt-2.5 text-xs font-mono-tabular text-[var(--pc-accent)]">
@@ -495,7 +495,7 @@ export function DashboardPage({
             <div className="pt-1 flex items-center justify-between gap-4">
               <span className="text-xs text-[var(--pc-muted)]">
                 {importMode === 'file' && selectedFile
-                  ? 'Loads directly into the Editor for immediate framing & PiP layout.'
+                  ? 'Opens Section 1 (Framing Studio) to crop & frame, then hand off to Shorts Studio.'
                   : 'Queues real peak detection & vertical reframing on the PulseCut backend.'}
               </span>
               <Button type="submit" variant="primary" disabled={submitting}>
@@ -503,7 +503,7 @@ export function DashboardPage({
                   {submitting
                     ? 'Submitting...'
                     : importMode === 'file' && selectedFile
-                      ? 'Open in Editor'
+                      ? 'Open in Framing Studio'
                       : 'Generate Shorts'}
                 </span>
                 <ArrowRight className="w-3.5 h-3.5 stroke-[2]" />

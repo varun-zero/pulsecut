@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   Check,
   Copy,
+  Crop,
   Film,
   FilterX,
   Play,
@@ -31,6 +32,7 @@ interface ClipsPageProps {
   onToggleSelect: (id: string) => void;
   onSelectAll: (ids: string[]) => void;
   onClearSelection: () => void;
+  onFrameClip: (id: string) => void;
   onEditClip: (id: string) => void;
   onApproveClips: (ids: string[]) => void;
   onRejectClips: (ids: string[]) => void;
@@ -50,6 +52,7 @@ export function ClipsPage({
   onToggleSelect,
   onSelectAll,
   onClearSelection,
+  onFrameClip,
   onEditClip,
   onApproveClips,
   onRejectClips,
@@ -267,10 +270,10 @@ export function ClipsPage({
                     />
                   </div>
 
-                  {/* Quick Edit Overlay Trigger on Hover */}
+                  {/* Quick Open Overlay Trigger on Hover */}
                   <button
                     type="button"
-                    aria-label={`Open ${clip.title} in Studio Editor`}
+                    aria-label={`Open ${clip.title} in Shorts Studio`}
                     onClick={(e) => {
                       e.stopPropagation();
                       onEditClip(clip.id);
@@ -334,21 +337,31 @@ export function ClipsPage({
                   >
                     <div className="flex items-center gap-1.5">
                       <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => onEditClip(clip.id)}
-                      >
-                        Edit
-                      </Button>
-                      <Button
                         variant="secondary"
                         size="sm"
+                        aria-label={`Frame ${clip.title}`}
+                        onClick={() => onFrameClip(clip.id)}
+                      >
+                        <Crop className="w-3.5 h-3.5 stroke-[1.75]" />
+                        <span>Frame</span>
+                      </Button>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        aria-label={`Make short for ${clip.title}`}
+                        onClick={() => onEditClip(clip.id)}
+                      >
+                        Short
+                      </Button>
+                      <button
+                        type="button"
                         aria-label={`Approve ${clip.title}`}
+                        title="Approve clip"
                         onClick={() => onApproveClips([clip.id])}
+                        className="h-8 w-8 rounded-md text-[var(--pc-sub)] hover:text-[var(--pc-ok)] hover:bg-[var(--pc-ok)]/10 grid place-items-center bg-transparent border-0 cursor-pointer transition-colors"
                       >
                         <Check className="w-3.5 h-3.5 stroke-[2]" />
-                        <span>Approve</span>
-                      </Button>
+                      </button>
                     </div>
 
                     <div className="flex items-center gap-1">

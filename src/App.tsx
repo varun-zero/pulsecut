@@ -5,8 +5,10 @@ import type {
   ClipItem,
   CustomFontEntry,
   EditorSettings,
+  FramingBlueprint,
   JobItem,
   PageId,
+  ShortsProductionConfig,
   WordCue,
 } from './types';
 import {
@@ -32,6 +34,8 @@ import {
   undoHistory,
   type HistoryStack,
 } from './lib/studioLogic';
+import { createDefaultFramingBlueprint, reconcileCrops } from './lib/framingEngine';
+import { createDefaultShortsProduction } from './lib/shortsEngine';
 import {
   fetchWorkspaceData,
   normalizeServerJob,
@@ -44,7 +48,8 @@ import { BrandKitModal } from './components/BrandKitModal';
 import { Toast } from './components/ui/Primitives';
 import { DashboardPage } from './pages/DashboardPage';
 import { ClipsPage } from './pages/ClipsPage';
-import { EditorPage } from './pages/EditorPage';
+import { FramingPage } from './pages/FramingPage';
+import { ShortsPage } from './pages/ShortsPage';
 
 const DEFAULT_BRAND_KIT: BrandKit = {
   handle: '',
@@ -252,6 +257,12 @@ export function App() {
   const [history, setHistory] = useState<HistoryStack<EditorSettings>>(() =>
     createHistory(createEditorSettingsForClip(null, DEFAULT_BRAND_KIT))
   );
+  const [framingHistory, setFramingHistory] = useState<HistoryStack<FramingBlueprint>>(() =>
+    createHistory(createDefaultFramingBlueprint('split', '9:16'))
+  );
+  const [shortsConfig, setShortsConfig] = useState<ShortsProductionConfig>(() =>
+    createDefaultShortsProduction()
+  );
 
   const [batchSettings, setBatchSettings] = useState<BatchRestyleSettings>({
     template: 'kick-stream',
@@ -271,6 +282,8 @@ export function App() {
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const draftsByClipIdRef = useRef<Record<string, EditorSettings>>({});
+  const blueprintsByClipIdRef = useRef<Record<string, FramingBlueprint>>({});
+  const shortsByClipIdRef = useRef<Record<string, ShortsProductionConfig>>({});
 
   const notify = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -299,8 +312,14 @@ export function App() {
       if (data.clips[0]) {
         setCurrentClipId((prevId) => {
           if (prevId) return prevId;
-          setHistory(createHistory(createEditorSettingsForClip(data.clips[0], DEFAULT_BRAND_KIT)));
-          return data.clips[0].id;
+          const first = data.clips[0];
+          const preset = getTemplatePreset(first.template || 'kick-stream');
+          setHistory(createHistory(createEditorSettingsForClip(first, DEFAULT_BRAND_KIT)));
+          setFramingHistory(
+            createHistory(createDefaultFramingBlueprint(first.layout || preset.defaultLayout, first.aspect || '9:16'))
+          );
+          setShortsConfig(createDefaultShortsProduction());
+          return first.id;
         });
       }
     });
@@ -334,8 +353,14 @@ export function App() {
       if (data.clips[0]) {
         setCurrentClipId((prevId) => {
           if (prevId) return prevId;
-          setHistory(createHistory(createEditorSettingsForClip(data.clips[0], brandKit)));
-          return data.clips[0].id;
+          const first = data.clips[0];
+          const preset = getTemplatePreset(first.template || 'kick-stream');
+          setHistory(createHistory(createEditorSettingsForClip(first, brandKit)));
+          setFramingHistory(
+            createHistory(createDefaultFramingBlueprint(first.layout || preset.defaultLayout, first.aspect || '9:16'))
+          );
+          setShortsConfig(createDefaultShortsProduction());
+          return first.id;
         });
       }
     }, 2000);
@@ -396,16 +421,30 @@ export function App() {
     (clipId: string | null) => {
       if (currentClipId) {
         draftsByClipIdRef.current[currentClipId] = history.present;
+        blueprintsByClipIdRef.current[currentClipId] = framingHistory.present;
+        shortsByClipIdRef.current[currentClipId] = shortsConfig;
       }
       setCurrentClipId(clipId);
       const found = clips.find((c) => c.id === clipId) ?? null;
-      const restored =
+      const preset = getTemplatePreset(found?.template || 'kick-stream');
+      const restoredSettings =
         clipId && draftsByClipIdRef.current[clipId]
           ? draftsByClipIdRef.current[clipId]
           : createEditorSettingsForClip(found, brandKit);
-      setHistory(createHistory(restored));
+      const restoredBlueprint =
+        clipId && blueprintsByClipIdRef.current[clipId]
+          ? blueprintsByClipIdRef.current[clipId]
+          : createDefaultFramingBlueprint(found?.layout || preset.defaultLayout, found?.aspect || '9:16');
+      const restoredShorts =
+        clipId && shortsByClipIdRef.current[clipId]
+          ? shortsByClipIdRef.current[clipId]
+          : createDefaultShortsProduction();
+
+      setHistory(createHistory(restoredSettings));
+      setFramingHistory(createHistory(restoredBlueprint));
+      setShortsConfig(restoredShorts);
     },
-    [clips, brandKit, currentClipId, history.present]
+    [clips, brandKit, currentClipId, history.present, framingHistory.present, shortsConfig]
   );
 
   const handleUpdateEditorSettings = useCallback(
@@ -420,23 +459,64 @@ export function App() {
     []
   );
 
+  const handleUpdateBlueprint = useCallback(
+    (next: FramingBlueprint, recordHistory = false) => {
+      setFramingHistory((prev) =>
+        recordHistory ? pushHistory(prev, next) : { ...prev, present: next }
+      );
+      if (currentClipId) {
+        blueprintsByClipIdRef.current[currentClipId] = next;
+      }
+      // Keep EditorSettings aspect/layout/speed synchronized with Section 1's Framing Blueprint
+      setHistory((prev) => {
+        if (
+          prev.present.aspect === next.aspect &&
+          prev.present.layout === next.layout &&
+          prev.present.playbackSpeed === next.speed
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          present: {
+            ...prev.present,
+            aspect: next.aspect,
+            layout: next.layout,
+            playbackSpeed: next.speed,
+          },
+        };
+      });
+    },
+    [currentClipId]
+  );
+
+  const handleUpdateShorts = useCallback(
+    (patch: Partial<ShortsProductionConfig>) => {
+      setShortsConfig((prev) => {
+        const next = { ...prev, ...patch };
+        if (currentClipId) {
+          shortsByClipIdRef.current[currentClipId] = next;
+        }
+        return next;
+      });
+    },
+    [currentClipId]
+  );
+
   const handleSelectTemplatePreset = useCallback(
     (preset: TemplatePreset) => {
       const captionPreset = getViralCaptionPreset(preset.defaultCaptionStyle);
       const safeSpec = getSafeZoneSpec('auto', preset.id);
-      const facecamDefaults = getFacecamPresetDefaults(preset);
       handleUpdateEditorSettings(
         {
           template: preset.id,
           templateEnabled: true,
-          layout: preset.defaultLayout,
           outerFill: preset.defaultOuterFill,
           font: preset.defaultHeadlineFont,
           headlineLayout: preset.defaultHeadlineLayout,
           headlineX: 50,
           headlineY: 22,
           headlineCasing: 'asis',
-          ...facecamDefaults,
           streamerPlatform: preset.defaultStreamerPlatform,
           showStreamerBadge: preset.defaultStreamerPlatform !== 'none',
           kickNeonGlow: false,
@@ -459,12 +539,10 @@ export function App() {
           subtitleVerticalPos: safeSpec.autoAlignSubtitlePct,
           safeZonePlatform: 'auto',
           cardTheme: preset.id === 'x_light' ? 'light' : 'dark',
-          cornerRadius: preset.defaultCornerRadius ?? (preset.hasCard ? 12 : 0),
-          framePadding: preset.hasCard ? 12 : 0,
         },
         true
       );
-      notify(`Template switched to ${preset.fullName} (${captionPreset.name})`);
+      notify(`Template applied: ${preset.fullName} (Framing preserved)`);
     },
     [handleUpdateEditorSettings, notify]
   );
@@ -501,7 +579,7 @@ export function App() {
           const filtered = prev.filter((f) => f.family !== entry.family);
           return [...filtered, entry];
         });
-        if (page === 'editor') {
+        if (page === 'shorts') {
           handleUpdateEditorSettings({ subtitleFont: entry.family }, true);
         } else {
           setBatchSettings((prev) => ({ ...prev, subtitleFont: entry.family }));
@@ -569,17 +647,24 @@ export function App() {
           burnCaptions: payload.burnCaptions,
           status: 'done',
           progress: 100,
-          message: 'Loaded local video directly into Studio Editor',
+          message: 'Loaded local video into Framing Studio',
           clip_ids: [clipId],
           created_at_ms: Date.now(),
         };
+
+        const initialBlueprint = createDefaultFramingBlueprint(preset.defaultLayout, '9:16');
+        const initialShorts = createDefaultShortsProduction();
+        blueprintsByClipIdRef.current[clipId] = initialBlueprint;
+        shortsByClipIdRef.current[clipId] = initialShorts;
 
         setClips((prev) => [importedClip, ...prev]);
         setJobs((prev) => [importedJob, ...prev]);
         setCurrentClipId(clipId);
         setHistory(createHistory(createEditorSettingsForClip(importedClip, brandKit)));
-        setPage('editor');
-        notify(`Loaded "${cleanTitle}" into Studio Editor`);
+        setFramingHistory(createHistory(initialBlueprint));
+        setShortsConfig(initialShorts);
+        setPage('framing');
+        notify(`Loaded "${cleanTitle}" into Framing Studio`);
         return true;
       }
 
@@ -778,14 +863,30 @@ export function App() {
         )
       );
 
-      // Keep cached drafts and currently active Editor clip synchronized with Batch Restyle
+      // Keep cached drafts, blueprints, and currently active clip synchronized with Batch Restyle
       ids.forEach((id) => {
         delete draftsByClipIdRef.current[id];
+        delete blueprintsByClipIdRef.current[id];
       });
       if (currentClipId && ids.includes(currentClipId)) {
         const templatePreset = getTemplatePreset(settings.template);
         const safeSpec = getSafeZoneSpec('auto', templatePreset.id);
         const facecamDefaults = getFacecamPresetDefaults(templatePreset);
+        setFramingHistory((prev) => {
+          const nextBp: FramingBlueprint = {
+            ...prev.present,
+            aspect: settings.aspect,
+            layout: settings.layout,
+            crops: reconcileCrops(
+              settings.layout,
+              settings.aspect,
+              16 / 9,
+              prev.present.crops,
+              { splitRatio: prev.present.splitRatio, pip: prev.present.pip }
+            ),
+          };
+          return pushHistory(prev, nextBp);
+        });
         setHistory((prev) =>
           pushHistory(prev, {
             ...prev.present,
@@ -829,10 +930,18 @@ export function App() {
     [currentClipId, notify]
   );
 
+  const handleFrameClip = useCallback(
+    (id: string) => {
+      selectEditorClip(id);
+      setPage('framing');
+    },
+    [selectEditorClip]
+  );
+
   const handleEditClip = useCallback(
     (id: string) => {
       selectEditorClip(id);
-      setPage('editor');
+      setPage('shorts');
     },
     [selectEditorClip]
   );
@@ -964,8 +1073,8 @@ export function App() {
 
   return (
     <div className="min-h-dvh bg-[var(--pc-bg)] text-[var(--pc-ink)]">
-      {/* Global Header renders ONLY on Dashboard & Clips — Editor uses its single unified 48px Studio Bar */}
-      {page !== 'editor' && (
+      {/* Global Header renders ONLY on Dashboard & Clips — Framing Studio & Shorts Studio each use a single unified 48px Studio Bar */}
+      {(page === 'dashboard' || page === 'clips') && (
         <AppHeader
           page={page}
           onNavigate={setPage}
@@ -995,6 +1104,7 @@ export function App() {
           onToggleSelect={handleToggleSelect}
           onSelectAll={(ids) => setSelectedIds(new Set(ids))}
           onClearSelection={() => setSelectedIds(new Set())}
+          onFrameClip={handleFrameClip}
           onEditClip={handleEditClip}
           onApproveClips={handleApproveClips}
           onRejectClips={handleRejectClips}
@@ -1009,13 +1119,55 @@ export function App() {
         />
       )}
 
-      {page === 'editor' && (
-        <EditorPage
+      {/* SECTION 1 — Framing Studio (Framing-only workspace: crops, layouts, split, PiP, backdrop, corners, speed) */}
+      {page === 'framing' && (
+        <FramingPage
           clips={clips}
           currentClip={currentClip}
           onSelectClip={selectEditorClip}
           onBackToClips={() => setPage('clips')}
           onGoToDashboard={() => setPage('dashboard')}
+          onProceedToShorts={() => {
+            if (currentClip) {
+              blueprintsByClipIdRef.current[currentClip.id] = framingHistory.present;
+            }
+            setPage('shorts');
+            notify(
+              `Framing applied (${framingHistory.present.aspect} · ${framingHistory.present.layout}) — ready to make short`
+            );
+          }}
+          blueprint={framingHistory.present}
+          onUpdateBlueprint={handleUpdateBlueprint}
+          canUndo={framingHistory.past.length > 0}
+          canRedo={framingHistory.future.length > 0}
+          onUndo={() => {
+            setFramingHistory((h) => undoHistory(h));
+            notify('Undid framing change');
+          }}
+          onRedo={() => {
+            setFramingHistory((h) => redoHistory(h));
+            notify('Redid framing change');
+          }}
+          onUpdateClipDuration={handleUpdateClipDuration}
+          theme={theme}
+          onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+          onOpenShortcuts={() => setShortcutsOpen(true)}
+          onNotify={notify}
+        />
+      )}
+
+      {/* SECTION 2 — Shorts Studio (Makes shorts according to Section 1's Framing Blueprint: templates, segments, captions, audio, SFX, outro, export) */}
+      {page === 'shorts' && (
+        <ShortsPage
+          clips={clips}
+          currentClip={currentClip}
+          onSelectClip={selectEditorClip}
+          onBackToFraming={() => setPage('framing')}
+          onBackToClips={() => setPage('clips')}
+          onGoToDashboard={() => setPage('dashboard')}
+          blueprint={framingHistory.present}
+          shorts={shortsConfig}
+          onUpdateShorts={handleUpdateShorts}
           settings={history.present}
           onUpdateSettings={handleUpdateEditorSettings}
           onSelectTemplatePreset={handleSelectTemplatePreset}
@@ -1024,19 +1176,16 @@ export function App() {
           canRedo={history.future.length > 0}
           onUndo={() => {
             setHistory((h) => undoHistory(h));
-            notify('Undid last change');
+            notify('Undid shorts edit');
           }}
           onRedo={() => {
             setHistory((h) => redoHistory(h));
-            notify('Redid change');
+            notify('Redid shorts edit');
           }}
           brandKit={brandKit}
           onUpdateBrandKit={handleUpdateBrandKit}
           customFonts={customFonts}
-          onUploadCustomFont={handleUploadCustomFont}
           onImportSrtCues={handleImportSrtCues}
-          onUpdateCueWord={handleUpdateCueWord}
-          onSetWordEmphasis={handleSetWordEmphasis}
           onUpdateClipDuration={handleUpdateClipDuration}
           onExportClip={handleExportClip}
           theme={theme}

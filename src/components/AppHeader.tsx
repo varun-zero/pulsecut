@@ -38,8 +38,12 @@ export function AppHeader({
       meta: clipCount > 0 ? String(clipCount) : undefined,
     },
     {
-      id: 'editor',
-      label: 'Editor',
+      id: 'framing',
+      label: 'Framing',
+    },
+    {
+      id: 'shorts',
+      label: 'Shorts',
     },
   ];
 

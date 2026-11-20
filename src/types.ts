@@ -1,16 +1,181 @@
-export type PageId = 'dashboard' | 'clips' | 'editor';
+export type PageId = 'dashboard' | 'clips' | 'framing' | 'shorts';
 
 export type EditorTabId = 'framing' | 'templates' | 'text' | 'media';
+export type ShortsTabId = 'templates' | 'text' | 'media';
 export type TextSubtabId = 'headline' | 'subs';
 export type StageViewModeId = 'framing' | 'editor';
 
-export type AspectRatioId = '9:16' | '4:5' | '1:1' | '16:9';
+export type AspectRatioId = '9:16' | '4:5' | '1:1' | '16:9' | '4:3';
 export type LayoutModeId = 'split' | 'solo' | 'trio' | 'pip' | 'centered' | 'widescreen';
 export type CanvasModeId = 'solid' | 'blur' | 'gradient' | 'padding' | 'image';
 export type FacecamPlacementId = 'bottom' | 'top' | 'split-top' | 'split-bottom' | 'pip-free';
 export type FrameAspectId = '9:16' | '4:3' | '16:9' | '1:1';
 export type VideoFitId = 'cover' | 'contain';
 export type SpeakerCropKey = 'primary' | 'secondary' | 'tertiary';
+export type PreviewResolutionId = 'auto' | 'half' | 'full';
+export type ExportResolutionId = '720p' | '1080p' | '2k' | '4k' | 'source';
+export type ExportEncoderId = 'auto' | 'nvenc' | 'videotoolbox' | 'qsv' | 'cpu';
+
+/** Normalized 0..1 source crop box (matching decompiled engine schema) */
+export interface NormalizedCrop {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export type PipShapeId = 'circle' | 'rounded' | 'rect';
+export type PipCornerId = 'tl' | 'tr' | 'bl' | 'br' | 'custom';
+
+export interface PipConfig {
+  shape: PipShapeId;
+  corner: PipCornerId;
+  x: number; // 0..100
+  y: number; // 0..100
+  scale: number; // 15..65
+  borderWidth: number; // 0..30
+  borderColor: string;
+  shadow: boolean;
+  flip: boolean;
+  radius: number; // 0..100
+}
+
+export type BackdropKindId = 'blur' | 'color' | 'gradient' | 'image';
+
+export interface BackdropConfig {
+  kind: BackdropKindId;
+  blur: number; // 0..100
+  dim: number; // 0..1
+  color: string;
+  from: string;
+  to: string;
+  angle: number; // 0..360
+  imgUrl: string;
+  imgName: string;
+  imgBlur: number; // 0..25
+  imgDim: number; // 0..0.7
+}
+
+export interface SlotMediaOverride {
+  id: string;
+  name: string;
+  url: string;
+  isVideo: boolean;
+}
+
+/**
+ * Complete Framing Blueprint authored in Section 1 (Framing Studio)
+ * and consumed read-only by Section 2 (Shorts Studio).
+ */
+export interface FramingBlueprint {
+  layout: LayoutModeId;
+  aspect: AspectRatioId;
+  /** Normalized 0..1 aspect-locked crop boxes per active layout slot */
+  crops: NormalizedCrop[];
+  /** Split vertical divider ratio (0.15..0.85, default 0.50) */
+  splitRatio: number;
+  /** Divider line between Split/Trio panes */
+  dividerWidth: number; // 0..30
+  dividerColor: string;
+  /** PiP overlay framing config */
+  pip: PipConfig;
+  /** Centered card controls */
+  centeredScale: number; // 0.3..2.0
+  centeredPanX: number; // -100..100
+  centeredPanY: number; // -100..100
+  centerShadow: number; // 0..100
+  /** Frame & Corners */
+  radius: number; // 0..200
+  padding: number; // 0..200
+  fillActive: boolean;
+  fillKind: 'solid' | 'gradient';
+  fillColor: string;
+  fillTo: string;
+  fillAngle: number; // 0..360
+  /** Video Backdrop */
+  backdrop: BackdropConfig;
+  /** Playback Speed (0.25..4.0) */
+  speed: number;
+  /** Optional per-slot media overrides indexed by slot index (0, 1, 2) */
+  slotMedia: Record<number, SlotMediaOverride>;
+}
+
+export interface ClipSegment {
+  id: string;
+  start: number;
+  end: number;
+}
+
+export type BuiltinSfxKind = 'whoosh' | 'pop' | 'boom' | 'ding' | 'swoosh';
+
+export interface SfxAsset {
+  id: string;
+  name: string;
+  builtin?: BuiltinSfxKind;
+  url?: string;
+}
+
+export interface SfxCue {
+  id: string;
+  sfxId: string;
+  name: string;
+  /** Source timeline timestamp in seconds */
+  time: number;
+  volume: number; // 0..1
+}
+
+export interface OutroTemplateConfig {
+  mode: 'template' | 'custom';
+  enabled: boolean;
+  duration: number; // 1.5..8s
+  animDuration: number; // 0.4..3s
+  bgColor: string;
+  text: string;
+  textColor: string;
+  platform: 'youtube' | 'instagram' | 'kick' | 'tiktok';
+  btnText: string;
+  btnColor: string;
+  logoDataUrl: string;
+  customUrl: string;
+  customName: string;
+  customIsVideo: boolean;
+}
+
+export interface DualWatermarkConfig {
+  secondaryEnabled: boolean;
+  secondaryText: string;
+  secondaryX: number;
+  secondaryY: number;
+  secondarySize: number;
+  secondaryOpacity: number;
+  customLogoUrl: string;
+  customLogoName: string;
+  customLogoScale: number;
+  useCustomLogo: boolean;
+}
+
+export interface HeadlineTimingConfig {
+  mode: 'always' | 'custom';
+  startSec: number;
+  endSec: number;
+  fade: boolean;
+  sfxIn: string;
+  sfxOut: string;
+}
+
+export interface ShortsProductionConfig {
+  multiSegmentEnabled: boolean;
+  segments: ClipSegment[];
+  musicOffsetSec: number;
+  musicDurationSec: number;
+  sfxLibrary: SfxAsset[];
+  sfxCues: SfxCue[];
+  outro: OutroTemplateConfig;
+  dualWatermark: DualWatermarkConfig;
+  headlineTiming: HeadlineTimingConfig;
+  exportResolution: ExportResolutionId;
+  exportEncoder: ExportEncoderId;
+}
 
 export interface FacecamSourceBox {
   /** Left edge in % of the source 16:9 video width (0..88) */
@@ -44,6 +209,7 @@ export interface SavedStylePreset {
   outerFillActive: boolean;
   outerGradient: string;
   playbackSpeed: number;
+  blueprint?: FramingBlueprint;
 }
 
 export interface TrackStates {
