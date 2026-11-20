@@ -894,12 +894,25 @@ dependencies = [
  "pulsecut-editor",
  "pulsecut-publish",
  "pulsecut-render",
+ "pulsecut-verify",
  "reqwest",
  "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "pulsecut-agent"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -994,6 +1007,14 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "pulsecut-verify"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

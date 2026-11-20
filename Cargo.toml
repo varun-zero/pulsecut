@@ -9,6 +9,8 @@ members = [
     "crates/ai",
     "crates/publish",
     "crates/editor",
+    "crates/verify",
+    "crates/agent",
     "crates/app",
 ]
 
@@ -40,6 +42,7 @@ pulsecut-render = { path = "crates/render" }
 pulsecut-ai = { path = "crates/ai" }
 pulsecut-publish = { path = "crates/publish" }
 pulsecut-editor = { path = "crates/editor" }
+pulsecut-verify = { path = "crates/verify" }
 
 [profile.release]
 lto = "thin"

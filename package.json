@@ -10,7 +10,7 @@
     "dev": "vite --port 3000 --host 0.0.0.0",
     "build": "vite build",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/lib/studioLogic.test.ts",
+    "test": "tsx --test src/lib/studioLogic.test.ts src/lib/framingAndShorts.test.ts src/lib/creatorCatalog.test.ts",
     "cargo:dev": "cargo run --manifest-path crates/app/Cargo.toml -- editor --addr 127.0.0.1:8756",
     "cargo:build": "cargo build --release --workspace"
   },

@@ -2,10 +2,11 @@
 /target/
 /out/
 /dist/
-!clips/
-!clips/*.mp4
 *.log
 *.tmp
+
+# Runtime audit state (regenerated; never committed)
+automation/ledger.json
 
 # Reference clones and research payloads (excluded from publishing)
 /research/

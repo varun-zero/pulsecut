@@ -39,6 +39,19 @@ pub trait Publisher: Send + Sync {
     async fn publish(&self, job: &PublishJob) -> Result<Vec<PublishReceipt>>;
 }
 
+/// Build the publisher backend selected by `PULSECUT_PUBLISHER`.
+/// Single source of truth shared by the CLI (`main.rs`) and HTTP API (`web.rs`).
+pub fn publisher(cfg: &pulsecut_core::config::Config) -> Box<dyn Publisher> {
+    match std::env::var("PULSECUT_PUBLISHER").unwrap_or_else(|_| "woopsocial".into()).as_str() {
+        "uploadpost" => Box::new(UploadPostPublisher::new(&cfg.publishing.uploadpost_base_url)),
+        "postiz" => Box::new(PostizPublisher::new(&cfg.publishing.postiz_base_url)),
+        "direct" => Box::new(YouTubePublisher::default()),
+        "tiktok_direct" => Box::new(TikTokPublisher::default()),
+        "instagram_direct" => Box::new(InstagramPublisher::default()),
+        _ => Box::new(WoopSocialPublisher::new(&cfg.publishing.woopsocial_base_url)),
+    }
+}
+
 /// Build the caption text once; every platform gets the same voice.
 pub fn caption(pkg: &ClipPackage) -> String {
     let mut text = pkg.title.clone();

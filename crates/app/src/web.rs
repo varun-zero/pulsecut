@@ -12,10 +12,7 @@ use pulsecut_core::edl::EditOp;
 use pulsecut_core::error::{PulseError, Result};
 use pulsecut_core::model::ClipStatus;
 use pulsecut_editor::{Job, JobStatus, JobStore, Store};
-use pulsecut_publish::{
-    InstagramPublisher, PostizPublisher, PublishJob, Publisher, TikTokPublisher,
-    UploadPostPublisher, WoopSocialPublisher, YouTubePublisher,
-};
+use pulsecut_publish::{publisher, PublishJob};
 use pulsecut_render::Renderer;
 use serde_json::{json, Value};
 use std::path::{Component, Path, PathBuf};
@@ -30,18 +27,6 @@ struct Shared {
     jobs: Mutex<JobStore>,
     renderer: Option<Renderer>,
     ai: Box<dyn AiBackend>,
-}
-
-/// Publisher backend selected by env var (same policy as the CLI `watch` loop).
-fn publisher(cfg: &Config) -> Box<dyn Publisher> {
-    match std::env::var("PULSECUT_PUBLISHER").unwrap_or_else(|_| "woopsocial".into()).as_str() {
-        "uploadpost" => Box::new(UploadPostPublisher::new(&cfg.publishing.uploadpost_base_url)),
-        "postiz" => Box::new(PostizPublisher::new(&cfg.publishing.postiz_base_url)),
-        "direct" => Box::new(YouTubePublisher::default()),
-        "tiktok_direct" => Box::new(TikTokPublisher::default()),
-        "instagram_direct" => Box::new(InstagramPublisher::default()),
-        _ => Box::new(WoopSocialPublisher::new(&cfg.publishing.woopsocial_base_url)),
-    }
 }
 
 pub async fn serve(addr: &str, cfg: Config) -> Result<()> {
@@ -620,44 +605,8 @@ fn resolve_ffprobe(ffmpeg: &Path) -> PathBuf {
     PathBuf::from(if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" })
 }
 
-/// Inspect top-level ISO-BMFF boxes and return `true` when `moov` appears
-/// before `mdat` (true `+faststart` streaming readiness).
-fn has_mp4_faststart(path: &Path) -> bool {
-    use std::io::{Read, Seek, SeekFrom};
-    let Ok(mut f) = std::fs::File::open(path) else { return false };
-    let Ok(file_len) = f.metadata().map(|m| m.len()) else { return false };
-    let mut pos: u64 = 0;
-    let mut header = [0u8; 8];
-    let mut ext = [0u8; 8];
-    while pos + 8 <= file_len {
-        if f.seek(SeekFrom::Start(pos)).is_err() || f.read_exact(&mut header).is_err() {
-            break;
-        }
-        let size32 = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as u64;
-        let box_type = &header[4..8];
-        if box_type == b"moov" {
-            return true;
-        }
-        if box_type == b"mdat" {
-            return false;
-        }
-        let box_size = if size32 == 1 {
-            if f.read_exact(&mut ext).is_err() {
-                break;
-            }
-            u64::from_be_bytes(ext)
-        } else if size32 == 0 {
-            break;
-        } else {
-            size32
-        };
-        if box_size < 8 {
-            break;
-        }
-        pos = pos.saturating_add(box_size);
-    }
-    false
-}
+/// De-duplicated: real implementation lives in `pulsecut_verify`.
+fn has_mp4_faststart(path: &Path) -> bool { pulsecut_verify::has_mp4_faststart(path) }
 
 /// Measure mean audio loudness (dB) via FFmpeg `volumedetect`.
 fn probe_mean_volume_db(ffmpeg: &Path, path: &Path) -> Option<f64> {
@@ -733,42 +682,25 @@ async fn verify_clip_endpoint(state: &Shared, id: &str) -> (u16, &'static str, V
     let acodec = a.and_then(|s| s.get("codec_name")).and_then(|x| x.as_str()).unwrap_or("").to_string();
     let fps = v.and_then(|s| s.get("r_frame_rate")).and_then(|x| x.as_str()).unwrap_or("").to_string();
 
-    // Exact 100-point rubric:
-    // h264(10) + audio(10) + aac(5) + canvas(15) + dur(10) + vbr(15) + abr(5) + fps(5) + decode(10) + faststart(10) + non_silent(5) = 100
-    let mut score = 0u32;
-    let mut reasons: Vec<String> = Vec::new();
-    let mut hard_failed = false;
-    let mut check = |cond: bool, pts: u32, hard: bool, msg: &str| {
-        if cond {
-            score += pts;
-        } else {
-            reasons.push(msg.to_string());
-            if hard {
-                hard_failed = true;
-            }
-        }
+    // Score via the shared, unit-tested rubric in `pulsecut_verify`
+    // (migrated from automation/verify_clip.py — single source of truth).
+    let metrics = pulsecut_verify::ProbeMetrics {
+        width: w, height: h, duration_s: dur, fps: fps.clone(),
+        video_bitrate: vbr, audio_bitrate: abr,
+        video_codec: vcodec.clone(), audio_codec: acodec.clone(), has_audio: a.is_some(),
     };
-    check(vcodec == "h264", 10, true, "video codec is not h264");
-    check(a.is_some(), 10, true, "no audio stream");
-    check(acodec == "aac", 5, true, "audio codec is not aac");
-    check((w == 1080 && h == 1920) || (w == 1920 && h == 1080) || (w == 1080 && h == 1080), 15, true, "canvas is not 1080x1920");
-    check((8.0..=60.0).contains(&dur), 10, true, "duration outside 8-60s");
-    check(vbr >= 2_000_000, 15, false, "video bitrate below 2 Mbps");
-    check(abr >= 96_000, 5, false, "audio bitrate below 96 kbps");
-    let fps_val = fps.split('/').next().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
-    let fps_den = fps.split('/').nth(1).and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
-    let fr = if fps_den > 0.0 { fps_val / fps_den } else { 0.0 };
-    check((20.0..=61.0).contains(&fr), 5, true, "fps outside 20-61");
     let dec = std::process::Command::new(&ffmpeg)
         .args(["-v", "error", "-i"]).arg(&pkg.video_path)
         .args(["-f", "null", "-"]).output();
     let clean = dec.as_ref().map(|o| o.status.success() && o.stderr.is_empty()).unwrap_or(false);
-    check(clean, 10, true, "ffmpeg decode reported errors");
     let faststart = has_mp4_faststart(Path::new(&pkg.video_path));
-    check(faststart, 10, false, "mp4 missing faststart (moov atom not before mdat)");
     let mean_volume_db = probe_mean_volume_db(&ffmpeg, Path::new(&pkg.video_path));
     let audible = mean_volume_db.map(|db| db > -50.0).unwrap_or(false);
-    check(audible, 5, true, "audio appears silent (mean_volume <= -50 dB)");
+    let extra = pulsecut_verify::ExtraSignals { decode_clean: clean, faststart, audible };
+    let verdict = pulsecut_verify::rubric(&metrics, &extra);
+    let score = verdict.score;
+    let reasons = verdict.reasons;
+    let hard_failed = verdict.hard_failed;
 
     let frames_dir = state.out.join("qa").join(id);
     let _ = std::fs::create_dir_all(&frames_dir);

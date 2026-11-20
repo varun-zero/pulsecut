@@ -17,10 +17,7 @@ use pulsecut_core::error::{PulseError, Result};
 use pulsecut_core::model::{ChatMessage, ClipPackage, ClipStatus, ClipWindow, HypeEvent, Platform, default_profiles};
 use pulsecut_detect::HypeDetector;
 use pulsecut_editor::Store;
-use pulsecut_publish::{
-    InstagramPublisher, PostizPublisher, PublishJob, PublishQueue, PublishRequest, Publisher,
-    TikTokPublisher, UploadPostPublisher, WoopSocialPublisher, YouTubePublisher,
-};
+use pulsecut_publish::{publisher, PublishJob, PublishQueue, PublishRequest, Publisher};
 use pulsecut_render::Renderer;
 use std::path::PathBuf;
 use std::process::Command as SysCommand;
@@ -97,17 +94,6 @@ async fn main() -> Result<()> {
 
 /// Publisher backend selected by env var; aggregators are the default because
 /// they hold the OAuth connections for all nine destinations.
-fn publisher(cfg: &Config) -> Box<dyn Publisher> {
-    match std::env::var("PULSECUT_PUBLISHER").unwrap_or_else(|_| "woopsocial".into()).as_str() {
-        "uploadpost" => Box::new(UploadPostPublisher::new(&cfg.publishing.uploadpost_base_url)),
-        "postiz" => Box::new(PostizPublisher::new(&cfg.publishing.postiz_base_url)),
-        "direct" => Box::new(YouTubePublisher::default()),
-        "tiktok_direct" => Box::new(TikTokPublisher::default()),
-        "instagram_direct" => Box::new(InstagramPublisher::default()),
-        _ => Box::new(WoopSocialPublisher::new(&cfg.publishing.woopsocial_base_url)),
-    }
-}
-
 /// Offline demo: generates a synthetic stream, injects synthetic chat, and
 /// runs the exact same pipeline as `watch`. Requires ffmpeg (PULSECUT_FFMPEG).
 async fn demo(config: PathBuf, seconds: u32) -> Result<()> {

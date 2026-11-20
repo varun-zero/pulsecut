@@ -6,9 +6,7 @@
 //! capture available forever.
 
 pub mod job;
-pub mod server;
 pub mod store;
 
 pub use job::{Job, JobStatus, JobStore};
-pub use server::{route, serve};
 pub use store::Store;

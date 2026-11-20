@@ -17,6 +17,7 @@ pulsecut-render.workspace = true
 pulsecut-ai.workspace = true
 pulsecut-publish.workspace = true
 pulsecut-editor.workspace = true
+pulsecut-verify.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
