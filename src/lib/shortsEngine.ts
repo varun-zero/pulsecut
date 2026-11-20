@@ -470,3 +470,80 @@ export function buildFullShortExportSpec(
     summaryLines,
   };
 }
+
+export interface SubtitleTimelineBlock {
+  id: string;
+  text: string;
+  startSec: number;
+  endSec: number;
+  leftPct: number;
+  widthPct: number;
+}
+
+/**
+ * Group word-level cues into clean, non-overlapping phrase blocks across 100%
+ * of the clip duration for the NLE CC track (prevents individual 0.25s words
+ * from colliding into unreadable overlapping pills or truncating past word 60).
+ */
+export function buildSubtitleTimelineBlocks(
+  words: readonly WordCue[],
+  durationSec: number
+): SubtitleTimelineBlock[] {
+  if (!words.length || durationSec <= 0) return [];
+
+  const rawGroups: Array<{ text: string; startSec: number; endSec: number }> = [];
+  let buf: WordCue[] = [];
+
+  const flush = () => {
+    if (!buf.length) return;
+    const startSec = Math.max(0, buf[0].start_ms / 1000);
+    const endSec = Math.min(durationSec, Math.max(startSec + 0.12, buf[buf.length - 1].end_ms / 1000));
+    rawGroups.push({
+      text: buf.map((w) => w.text.trim()).filter(Boolean).join(' '),
+      startSec,
+      endSec,
+    });
+    buf = [];
+  };
+
+  for (let i = 0; i < words.length; i += 1) {
+    const w = words[i];
+    if (!w.text.trim()) continue;
+    const prev = buf[buf.length - 1];
+    const gapMs = prev ? w.start_ms - prev.end_ms : 0;
+    const spanMs = buf.length > 0 ? w.end_ms - buf[0].start_ms : 0;
+
+    if (buf.length > 0 && (gapMs >= 380 || spanMs >= 2400 || buf.length >= 4)) {
+      flush();
+    }
+    buf.push(w);
+
+    const trimmed = w.text.trim();
+    if (trimmed.endsWith('.') || trimmed.endsWith('!') || trimmed.endsWith('?')) {
+      flush();
+    }
+  }
+  flush();
+
+  const gapPct = 0.2;
+  return rawGroups.map((g, idx) => {
+    const leftPct = clampNum((g.startSec / durationSec) * 100, 0, 99.4);
+    const nextStartPct =
+      idx + 1 < rawGroups.length
+        ? clampNum((rawGroups[idx + 1].startSec / durationSec) * 100, leftPct, 100)
+        : 100;
+    const maxAvail = Math.max(0.25, nextStartPct - leftPct - (idx + 1 < rawGroups.length ? gapPct : 0));
+    const naturalWidth = Math.max(0.4, ((g.endSec - g.startSec) / durationSec) * 100);
+    const widthPct = Math.min(naturalWidth, maxAvail, 100 - leftPct);
+
+    return {
+      id: `cc-${idx}-${Math.round(g.startSec * 1000)}`,
+      text: g.text,
+      startSec: g.startSec,
+      endSec: g.endSec,
+      leftPct: Number(leftPct.toFixed(3)),
+      widthPct: Number(Math.max(0.2, widthPct).toFixed(3)),
+    };
+  });
+}
+

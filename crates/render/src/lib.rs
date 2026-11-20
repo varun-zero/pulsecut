@@ -94,15 +94,18 @@ pub fn complex_filter(cfg: &RenderConfig, edl: &EditDecisionList) -> String {
     let base_crop = "crop=trunc(min(iw\\,ih*9/16)/2)*2:trunc(min(ih\\,iw*16/9)/2)*2:0:0";
 
     match (layout.as_str(), canvas.as_str()) {
-        ("pip", _) => format!(
-            "[0:v]{base_crop},scale={w}:{h},setsar=1[base];\
-             [0:v]crop=iw/3:ih/3:iw*0.58:ih*0.04,scale={iw}:{ih},setsar=1[inset];\
-             [base][inset]overlay=x={ox}:y={oy}:format=auto",
-            w = cfg.width, h = cfg.height,
-            iw = cfg.width / 3, ih = cfg.height / 4,
-            ox = cfg.width - cfg.width / 3 - 24,
-            oy = cfg.height - cfg.height / 4 - 140,
-        ),
+        ("pip", _) => {
+            let iw = ((cfg.width * 44 / 100) / 2) * 2;
+            let ih = ((iw * 9 / 16) / 2) * 2;
+            let ox = cfg.width.saturating_sub(iw + 28);
+            let oy = cfg.height.saturating_sub(ih + 240);
+            format!(
+                "[0:v]{base_crop},scale={w}:{h},setsar=1[base];\
+                 [0:v]crop=iw*0.28:ih*0.28:iw*0.02:ih*0.03,scale={iw}:{ih},setsar=1[inset];\
+                 [base][inset]overlay=x={ox}:y={oy}:format=auto",
+                w = cfg.width, h = cfg.height,
+            )
+        }
         ("split", _) => format!(
             "[0:v]crop=iw/2:ih:0:0,scale={w}:{half},setsar=1[top];\
              [0:v]crop=iw/2:ih:iw/2:0,scale={w}:{half},setsar=1[bottom];\
@@ -366,6 +369,7 @@ mod tests {
         assert!(needs_complex_filter(&edl));
         let f = complex_filter(&cfg, &edl);
         assert!(f.contains("[base][inset]overlay"));
+        assert!(f.contains("scale=474:266"), "PiP inset should be a landscape 16:9 rectangle: {f}");
         edl.push(EditOp::Layout { preset: "split".into() });
         let f = complex_filter(&cfg, &edl);
         assert!(f.contains("vstack=inputs=2"));

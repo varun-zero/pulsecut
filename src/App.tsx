@@ -16,6 +16,7 @@ import {
   DEFAULT_SPEAKER_CROPS,
   GRADIENT_PRESETS,
   getTemplatePreset,
+  TEMPLATE_PRESETS,
   WATERMARK_POSITIONS,
   type TemplatePreset,
 } from './presets';
@@ -24,8 +25,25 @@ import {
   getViralCaptionPreset,
   normalizeCaptionPresetId,
   registerCustomFontFile,
-  type ViralCaptionPreset,
+  registerGoogleFontByName,
+  VIRAL_CAPTION_PRESETS,
 } from './captionStyles';
+import {
+  addCaptionStyleToCatalog,
+  BUILTIN_LOGOS,
+  deleteCaptionStyleFromCatalog,
+  deleteTemplateFromCatalog,
+  EMPTY_CAPTION_CATALOG,
+  EMPTY_TEMPLATE_CATALOG,
+  resolveCaptionCatalog,
+  resolveTemplateCatalog,
+  upsertTemplateInCatalog,
+  type CaptionCatalogState,
+  type EditableCaptionPreset,
+  type EditableTemplatePreset,
+  type LogoAsset,
+  type TemplateCatalogState,
+} from './lib/creatorCatalog';
 import {
   buildConfigurePayload,
   createHistory,
@@ -251,7 +269,123 @@ export function App() {
   const [jobs, setJobs] = useState<JobItem[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [currentClipId, setCurrentClipId] = useState<string | null>(null);
-  const [customFonts, setCustomFonts] = useState<CustomFontEntry[]>([]);
+
+  const [templateCatalog, setTemplateCatalog] = useState<TemplateCatalogState>(() => {
+    try {
+      const raw = localStorage.getItem('pulsecut-custom-templates-v1');
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<TemplateCatalogState>;
+        return {
+          customTemplates: Array.isArray(parsed.customTemplates) ? parsed.customTemplates : [],
+          editedBuiltins: parsed.editedBuiltins && typeof parsed.editedBuiltins === 'object' ? parsed.editedBuiltins : {},
+          deletedIds: Array.isArray(parsed.deletedIds) ? parsed.deletedIds : [],
+        };
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return EMPTY_TEMPLATE_CATALOG;
+  });
+
+  const [captionCatalog, setCaptionCatalog] = useState<CaptionCatalogState>(() => {
+    try {
+      const raw = localStorage.getItem('pulsecut-caption-styles-v1');
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<CaptionCatalogState>;
+        return {
+          customStyles: Array.isArray(parsed.customStyles) ? parsed.customStyles : [],
+          deletedIds: Array.isArray(parsed.deletedIds) ? parsed.deletedIds : [],
+        };
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return EMPTY_CAPTION_CATALOG;
+  });
+
+  const [customLogos, setCustomLogos] = useState<LogoAsset[]>(() => {
+    try {
+      const raw = localStorage.getItem('pulsecut-logos-v1');
+      if (raw) {
+        const parsed = JSON.parse(raw) as LogoAsset[];
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return [];
+  });
+
+  const [customFonts, setCustomFonts] = useState<CustomFontEntry[]>(() => {
+    try {
+      const raw = localStorage.getItem('pulsecut-google-fonts-v1');
+      if (raw) {
+        const parsed = JSON.parse(raw) as CustomFontEntry[];
+        if (Array.isArray(parsed)) {
+          parsed.forEach((entry) => {
+            if (entry.fileName === 'Google Fonts') {
+              registerGoogleFontByName(entry.family);
+            }
+          });
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return [];
+  });
+
+  const builtinTemplateIds = useMemo(() => new Set(TEMPLATE_PRESETS.map((t) => t.id)), []);
+  const templates = useMemo(
+    () => resolveTemplateCatalog(TEMPLATE_PRESETS, templateCatalog),
+    [templateCatalog]
+  );
+  const captionPresets = useMemo(
+    () => resolveCaptionCatalog(VIRAL_CAPTION_PRESETS, captionCatalog),
+    [captionCatalog]
+  );
+  const logos = useMemo<LogoAsset[]>(
+    () => [...customLogos, ...BUILTIN_LOGOS],
+    [customLogos]
+  );
+  const canRestoreTemplates =
+    templateCatalog.deletedIds.length > 0 ||
+    Object.keys(templateCatalog.editedBuiltins).length > 0;
+  const canRestoreCaptions = captionCatalog.deletedIds.length > 0;
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('pulsecut-custom-templates-v1', JSON.stringify(templateCatalog));
+    } catch {
+      // ignore quota errors
+    }
+  }, [templateCatalog]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('pulsecut-caption-styles-v1', JSON.stringify(captionCatalog));
+    } catch {
+      // ignore quota errors
+    }
+  }, [captionCatalog]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('pulsecut-logos-v1', JSON.stringify(customLogos));
+    } catch {
+      // ignore quota errors
+    }
+  }, [customLogos]);
+
+  useEffect(() => {
+    try {
+      const googleOnly = customFonts.filter((f) => f.fileName === 'Google Fonts');
+      localStorage.setItem('pulsecut-google-fonts-v1', JSON.stringify(googleOnly));
+    } catch {
+      // ignore quota errors
+    }
+  }, [customFonts]);
 
   const [brandKit, setBrandKit] = useState<BrandKit>(DEFAULT_BRAND_KIT);
   const [history, setHistory] = useState<HistoryStack<EditorSettings>>(() =>
@@ -504,18 +638,50 @@ export function App() {
   );
 
   const handleSelectTemplatePreset = useCallback(
-    (preset: TemplatePreset) => {
-      const captionPreset = getViralCaptionPreset(preset.defaultCaptionStyle);
-      const safeSpec = getSafeZoneSpec('auto', preset.id);
+    (preset: EditableTemplatePreset) => {
+      const captionPreset = getViralCaptionPreset(preset.defaultCaptionStyle, captionPresets);
+      const safeSpec = getSafeZoneSpec(preset.defaultSafeZone || 'auto', preset.id);
+      const nextAspect = preset.defaultAspect || framingHistory.present.aspect;
+      const nextLayout = preset.defaultFullScreen ? 'solo' : preset.defaultLayout;
+
+      if (
+        preset.defaultAspect !== undefined ||
+        preset.defaultFullScreen !== undefined ||
+        preset.isCustom
+      ) {
+        setFramingHistory((prev) => {
+          const isFull = Boolean(preset.defaultFullScreen);
+          const nextBp: FramingBlueprint = {
+            ...prev.present,
+            aspect: nextAspect,
+            layout: nextLayout,
+            fullFrameSlots: isFull ? { 0: true } : {},
+            crops: isFull
+              ? [{ x: 0, y: 0, w: 1, h: 1 }]
+              : reconcileCrops(nextLayout, nextAspect, 16 / 9, prev.present.crops, {
+                  splitRatio: prev.present.splitRatio,
+                  pip: prev.present.pip,
+                }),
+          };
+          if (currentClipId) {
+            blueprintsByClipIdRef.current[currentClipId] = nextBp;
+          }
+          return pushHistory(prev, nextBp);
+        });
+      }
+
       handleUpdateEditorSettings(
         {
           template: preset.id,
           templateEnabled: true,
+          aspect: nextAspect,
+          layout: nextLayout,
           outerFill: preset.defaultOuterFill,
           font: preset.defaultHeadlineFont,
           headlineLayout: preset.defaultHeadlineLayout,
           headlineX: 50,
-          headlineY: 22,
+          headlineY: preset.defaultHeadlineY ?? 22,
+          headlineSize: preset.defaultHeadlineSize ?? history.present.headlineSize,
           headlineCasing: 'asis',
           streamerPlatform: preset.defaultStreamerPlatform,
           showStreamerBadge: preset.defaultStreamerPlatform !== 'none',
@@ -524,6 +690,7 @@ export function App() {
           kickStatusPill: 'none',
           captionStyle: captionPreset.id,
           subtitleFont: captionPreset.subtitleFont || preset.defaultSubtitleFont,
+          subtitleSize: preset.defaultSubtitleSize ?? history.present.subtitleSize,
           subtitleCasing: captionPreset.casing,
           subtitleWordsPerScreen: captionPreset.wordsPerScreen,
           subtitleBaseColor: captionPreset.baseColor,
@@ -536,19 +703,64 @@ export function App() {
           subtitleAnimation: captionPreset.animation,
           subtitleBgStyle: preset.defaultSubtitleBg,
           subtitleX: 50,
-          subtitleVerticalPos: safeSpec.autoAlignSubtitlePct,
-          safeZonePlatform: 'auto',
+          subtitleVerticalPos: preset.defaultSubtitleY ?? safeSpec.autoAlignSubtitlePct,
+          safeZonePlatform: preset.defaultSafeZone || 'auto',
           cardTheme: preset.id === 'x_light' ? 'light' : 'dark',
         },
         true
       );
-      notify(`Template applied: ${preset.fullName} (Framing preserved)`);
+      notify(
+        `Template applied: ${preset.fullName}${preset.defaultFullScreen ? ' (Full Screen 100%)' : ''}`
+      );
     },
-    [handleUpdateEditorSettings, notify]
+    [
+      captionPresets,
+      currentClipId,
+      framingHistory.present.aspect,
+      handleUpdateEditorSettings,
+      history.present.headlineSize,
+      history.present.subtitleSize,
+      notify,
+    ]
   );
 
+  const handleSaveTemplate = useCallback(
+    (saved: EditableTemplatePreset) => {
+      setTemplateCatalog((prev) => upsertTemplateInCatalog(prev, saved, builtinTemplateIds));
+      handleSelectTemplatePreset(saved);
+      notify(`Saved template "${saved.name}"`);
+    },
+    [builtinTemplateIds, handleSelectTemplatePreset, notify]
+  );
+
+  const handleDeleteTemplate = useCallback(
+    (id: string) => {
+      if (templates.length <= 1) {
+        notify('At least one template must remain active');
+        return;
+      }
+      const target = templates.find((t) => t.id === id);
+      setTemplateCatalog((prev) => deleteTemplateFromCatalog(prev, id, TEMPLATE_PRESETS));
+      if (history.present.template === id) {
+        const fallback = templates.find((t) => t.id !== id);
+        if (fallback) handleSelectTemplatePreset(fallback);
+      }
+      notify(`Deleted template "${target?.name || id}"`);
+    },
+    [handleSelectTemplatePreset, history.present.template, notify, templates]
+  );
+
+  const handleRestoreTemplates = useCallback(() => {
+    setTemplateCatalog((prev) => ({
+      ...prev,
+      editedBuiltins: {},
+      deletedIds: [],
+    }));
+    notify('Restored all built-in templates');
+  }, [notify]);
+
   const handleSelectCaptionPreset = useCallback(
-    (captionPreset: ViralCaptionPreset) => {
+    (captionPreset: EditableCaptionPreset) => {
       handleUpdateEditorSettings(
         {
           captionStyle: captionPreset.id,
@@ -571,6 +783,32 @@ export function App() {
     [handleUpdateEditorSettings, notify]
   );
 
+  const handleAddCaptionStyle = useCallback(
+    (style: EditableCaptionPreset) => {
+      setCaptionCatalog((prev) => addCaptionStyleToCatalog(prev, style));
+      notify(`Saved caption style "${style.name}"`);
+    },
+    [notify]
+  );
+
+  const handleDeleteCaptionStyle = useCallback(
+    (id: string) => {
+      if (captionPresets.length <= 1) {
+        notify('At least one caption style must remain');
+        return;
+      }
+      const target = captionPresets.find((c) => c.id === id);
+      setCaptionCatalog((prev) => deleteCaptionStyleFromCatalog(prev, id, VIRAL_CAPTION_PRESETS));
+      notify(`Deleted caption style "${target?.name || id}"`);
+    },
+    [captionPresets, notify]
+  );
+
+  const handleRestoreCaptions = useCallback(() => {
+    setCaptionCatalog((prev) => ({ ...prev, deletedIds: [] }));
+    notify('Restored all built-in caption styles');
+  }, [notify]);
+
   const handleUploadCustomFont = useCallback(
     async (file: File) => {
       try {
@@ -590,6 +828,86 @@ export function App() {
       }
     },
     [handleUpdateEditorSettings, notify, page]
+  );
+
+  const handleAddGoogleFont = useCallback(
+    (familyName: string) => {
+      const entry = registerGoogleFontByName(familyName);
+      setCustomFonts((prev) => {
+        const filtered = prev.filter(
+          (f) => f.family.toLowerCase() !== entry.family.toLowerCase()
+        );
+        return [...filtered, entry];
+      });
+      handleUpdateEditorSettings({ font: entry.family, subtitleFont: entry.family }, true);
+      notify(`Added Google Font "${entry.family}"`);
+    },
+    [handleUpdateEditorSettings, notify]
+  );
+
+  const handleDeleteCustomFont = useCallback(
+    (id: string) => {
+      setCustomFonts((prev) => prev.filter((f) => f.id !== id));
+      notify('Removed custom font');
+    },
+    [notify]
+  );
+
+  const handleUploadLogo = useCallback(
+    (file: File) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+        if (!dataUrl) return;
+        const cleanName = file.name.replace(/\.[^.]+$/, '') || 'Custom Logo';
+        const asset: LogoAsset = {
+          id: `logo-custom-${Date.now()}`,
+          name: cleanName,
+          dataUrl,
+          isCustom: true,
+        };
+        setCustomLogos((prev) => [asset, ...prev]);
+        setBrandKit((prev) => ({ ...prev, showWatermark: true }));
+        handleUpdateShorts({
+          dualWatermark: {
+            ...shortsConfig.dualWatermark,
+            useCustomLogo: true,
+            customLogoUrl: dataUrl,
+            customLogoName: cleanName,
+          },
+        });
+        notify(`Saved & applied logo "${cleanName}"`);
+      };
+      reader.readAsDataURL(file);
+    },
+    [handleUpdateShorts, notify, shortsConfig.dualWatermark]
+  );
+
+  const handleDeleteLogo = useCallback(
+    (id: string) => {
+      setCustomLogos((prev) => prev.filter((l) => l.id !== id));
+      notify('Deleted custom logo');
+    },
+    [notify]
+  );
+
+  const handleUpdateClipHashtags = useCallback(
+    (clipId: string, hashtags: string[]) => {
+      const normalized = Array.from(
+        new Set(hashtags.map((h) => h.replace(/^#/, '').trim().toLowerCase()).filter(Boolean))
+      );
+      setClips((prev) =>
+        prev.map((c) => (c.id === clipId ? { ...c, hashtags: normalized } : c))
+      );
+      if (!clipId.startsWith('local-clip-')) {
+        tryServerApi(`/api/clips/${clipId}/metadata`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ hashtags: normalized }),
+        }).catch(() => {});
+      }
+    },
+    []
   );
 
   // Dashboard: Real local browser file import OR real Rust backend /api/jobs submission
@@ -1091,6 +1409,7 @@ export function App() {
       {page === 'dashboard' && (
         <DashboardPage
           jobs={jobs}
+          templates={templates}
           onCreateJob={handleCreateJob}
           onRefreshJobs={handleRefreshJobs}
           onOpenClips={() => setPage('clips')}
@@ -1170,8 +1489,25 @@ export function App() {
           onUpdateShorts={handleUpdateShorts}
           settings={history.present}
           onUpdateSettings={handleUpdateEditorSettings}
+          templates={templates}
+          captionPresets={captionPresets}
+          logos={logos}
+          canRestoreTemplates={canRestoreTemplates}
+          canRestoreCaptions={canRestoreCaptions}
           onSelectTemplatePreset={handleSelectTemplatePreset}
+          onSaveTemplate={handleSaveTemplate}
+          onDeleteTemplate={handleDeleteTemplate}
+          onRestoreTemplates={handleRestoreTemplates}
           onSelectCaptionPreset={handleSelectCaptionPreset}
+          onAddCaptionStyle={handleAddCaptionStyle}
+          onDeleteCaptionStyle={handleDeleteCaptionStyle}
+          onRestoreCaptions={handleRestoreCaptions}
+          onUploadCustomFont={handleUploadCustomFont}
+          onAddGoogleFont={handleAddGoogleFont}
+          onDeleteCustomFont={handleDeleteCustomFont}
+          onUploadLogo={handleUploadLogo}
+          onDeleteLogo={handleDeleteLogo}
+          onUpdateClipHashtags={handleUpdateClipHashtags}
           canUndo={history.past.length > 0}
           canRedo={history.future.length > 0}
           onUndo={() => {

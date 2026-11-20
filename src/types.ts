@@ -233,9 +233,15 @@ export type ViralCaptionPresetId =
   | 'one-word-punch'
   | 'podcast-pill'
   | 'editorial-aesthetic'
-  | 'breaking-news';
+  | 'breaking-news'
+  | 'cyan-glow-pop'
+  | 'yellow-box-slam'
+  | 'crimson-rage'
+  | 'minimal-clean'
+  | 'subway-punch'
+  | (string & {});
 
-/** Supports both new viral preset IDs and legacy backend identifiers seamlessly */
+/** Supports both built-in/custom viral preset IDs and legacy backend identifiers seamlessly */
 export type CaptionStyleId = ViralCaptionPresetId | 'karaoke' | 'bold' | 'box' | 'accent';
 
 export type WordPacingId = '1' | '2-3' | '4-5';

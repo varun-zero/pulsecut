@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -25,7 +25,11 @@ import type {
   TrackStates,
 } from '../../types';
 import { formatSmpteTimecode, formatTimecode } from '../../lib/studioLogic';
-import { computeStitchedDuration, getActiveSegments } from '../../lib/shortsEngine';
+import {
+  buildSubtitleTimelineBlocks,
+  computeStitchedDuration,
+  getActiveSegments,
+} from '../../lib/shortsEngine';
 import { StudioSlider } from '../ui/Primitives';
 
 interface ShortsTimelineProps {
@@ -99,6 +103,11 @@ export function ShortsTimeline({
 }: ShortsTimelineProps) {
   const [trimLocked, setTrimLocked] = useState(false);
   const [skimSec, setSkimSec] = useState<number | null>(null);
+
+  const subtitleBlocks = useMemo(
+    () => buildSubtitleTimelineBlocks(clip?.words ?? [], durationSec),
+    [clip?.words, durationSec]
+  );
 
   const activeSegments = getActiveSegments(shorts, trimInSec, trimOutSec);
   const stitchedDur = computeStitchedDuration(activeSegments, playbackSpeed);
@@ -415,27 +424,22 @@ export function ShortsTimeline({
               onMouseLeave={() => setSkimSec(null)}
               className="relative flex-1 h-full rounded bg-[var(--pc-surface-2)] border border-[var(--pc-border-subtle)] overflow-hidden cursor-pointer"
             >
-              {clip && clip.words.length > 0 ? (
-                clip.words.slice(0, 60).map((w, idx) => {
-                  const left = durationSec > 0 ? (w.start_ms / 1000 / durationSec) * 100 : 0;
-                  const width =
-                    durationSec > 0
-                      ? Math.max(1.2, ((w.end_ms - w.start_ms) / 1000 / durationSec) * 100)
-                      : 5;
-                  return (
-                    <div
-                      key={`${w.start_ms}-${idx}`}
-                      style={{ left: `${left}%`, width: `${width}%` }}
-                      className={`absolute top-0.5 bottom-0.5 rounded-xs px-1 text-[9px] truncate flex items-center ${
-                        trackStates.ccVisible
-                          ? 'bg-violet-500/35 text-violet-100 border border-violet-400/30'
-                          : 'bg-zinc-600/20 text-zinc-400'
-                      }`}
-                    >
-                      {w.text}
-                    </div>
-                  );
-                })
+              {subtitleBlocks.length > 0 ? (
+                subtitleBlocks.map((block) => (
+                  <div
+                    key={block.id}
+                    data-testid="cc-timeline-block"
+                    title={`${block.text} (${formatTimecode(block.startSec)} – ${formatTimecode(block.endSec)})`}
+                    style={{ left: `${block.leftPct}%`, width: `${block.widthPct}%` }}
+                    className={`absolute top-0.5 bottom-0.5 rounded-xs px-1 text-[9px] truncate flex items-center overflow-hidden whitespace-nowrap ${
+                      trackStates.ccVisible
+                        ? 'bg-violet-500/35 text-violet-100 border border-violet-400/35'
+                        : 'bg-zinc-600/20 text-zinc-400'
+                    }`}
+                  >
+                    {block.text}
+                  </div>
+                ))
               ) : (
                 <span className="px-2 text-[10px] text-[var(--pc-muted)] leading-6">
                   No subtitles (Import .srt in Text tab)

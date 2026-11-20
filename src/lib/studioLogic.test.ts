@@ -295,8 +295,8 @@ test('2026 platform Safe Zone specs auto-match active template and expose exact 
 });
 
 test('viral typography, positioned ASS subtitles (white-stepped BorderStyle=3), and watermark/streamer parity', () => {
-  assert.equal(VIRAL_FONTS.length, 13);
-  assert.equal(VIRAL_CAPTION_PRESETS.length, 7);
+  assert.equal(VIRAL_FONTS.length, 23);
+  assert.equal(VIRAL_CAPTION_PRESETS.length, 12);
   assert.equal(VIRAL_CAPTION_PRESETS[0].baseColor, '#FFE600');
   assert.equal(normalizeCaptionPresetId('bold'), 'hormozi-classic');
   assert.equal(normalizeCaptionPresetId('karaoke_yellow'), 'hormozi-classic');

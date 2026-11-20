@@ -864,9 +864,20 @@ fn score_transcript_windows(
         let gap = words[i].start_ms - prev.end_ms;
         let sentence_break = prev.text.ends_with('.') || prev.text.ends_with('!') || prev.text.ends_with('?');
         if sentence_break || gap >= 550 {
+            // If a pause landed right before a trailing lowercase tail word
+            // (e.g. "sometimes." before "For example..."), advance to the next
+            // word so the clip begins cleanly on the new sentence.
+            let cand_idx = if !sentence_break
+                && is_trailing_sentence_tail(&words[i].text)
+                && i + 1 < words.len()
+            {
+                i + 1
+            } else {
+                i
+            };
             if let Some(&last_idx) = starts.last() {
-                if words[i].start_ms - words[last_idx].start_ms >= 3_500 {
-                    starts.push(i);
+                if words[cand_idx].start_ms - words[last_idx].start_ms >= 3_500 {
+                    starts.push(cand_idx);
                 }
             }
         }
@@ -878,8 +889,13 @@ fn score_transcript_windows(
         let mut next_ms = 0i64;
         for (i, w) in words.iter().enumerate() {
             if w.start_ms >= next_ms {
-                starts.push(i);
-                next_ms = w.start_ms + 8_000;
+                let cand_idx = if is_trailing_sentence_tail(&w.text) && i + 1 < words.len() {
+                    i + 1
+                } else {
+                    i
+                };
+                starts.push(cand_idx);
+                next_ms = words[cand_idx].start_ms + 8_000;
             }
         }
     }
@@ -990,6 +1006,56 @@ fn score_transcript_windows(
     out
 }
 
+/// True when a token looks like the dangling tail word of a previous sentence
+/// (starts lowercase and ends with sentence-closing punctuation, e.g. "sometimes.").
+fn is_trailing_sentence_tail(word: &str) -> bool {
+    let trimmed = word.trim();
+    let starts_lower = trimmed
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_lowercase())
+        .unwrap_or(false);
+    let ends_sentence = trimmed.ends_with('.') || trimmed.ends_with('!') || trimmed.ends_with('?');
+    starts_lower && ends_sentence
+}
+
+/// Capitalize the first character of a string while preserving the rest.
+fn capitalize_first(text: &str) -> String {
+    let trimmed = text.trim();
+    let mut chars = trimmed.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+        None => String::new(),
+    }
+}
+
+/// Truncate text to at most `max_chars` without chopping a word in half.
+fn truncate_word_boundary(text: &str, max_chars: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.trim_end_matches(|c: char| c == ',' || c == ';' || c == ':').to_string();
+    }
+    let mut out = String::new();
+    for word in trimmed.split_whitespace() {
+        let next_len = if out.is_empty() {
+            word.chars().count()
+        } else {
+            out.chars().count() + 1 + word.chars().count()
+        };
+        if next_len > max_chars {
+            break;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(word);
+    }
+    if out.is_empty() {
+        out = trimmed.chars().take(max_chars).collect();
+    }
+    out.trim_end_matches(|c: char| c == ',' || c == ';' || c == ':').to_string()
+}
+
 /// Derive a clean, punchy white-title headline from the clip's transcript when
 /// no LLM title was generated.
 fn fallback_metadata(
@@ -998,36 +1064,43 @@ fn fallback_metadata(
     clip_words: &[Word],
     video_title: Option<&str>,
 ) -> GeneratedMetadata {
-    let spoken_hook: String = clip_words
+    let effective_words = if clip_words.len() > 2 && is_trailing_sentence_tail(&clip_words[0].text) {
+        &clip_words[1..]
+    } else {
+        clip_words
+    };
+
+    let spoken_hook: String = effective_words
         .iter()
-        .take(8)
+        .take(9)
         .map(|w| w.text.trim())
         .filter(|w| !w.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
 
     let title = if spoken_hook.len() >= 10 {
-        let trimmed: String = spoken_hook.chars().take(52).collect();
-        trimmed.trim_end_matches(|c: char| c == ',' || c == ';').to_string()
+        capitalize_first(&truncate_word_boundary(&spoken_hook, 52))
     } else if let Some(vt) = video_title.filter(|t| !t.trim().is_empty()) {
-        format!("{} · Part {rank}", vt.trim().chars().take(42).collect::<String>())
+        format!("{} · Part {rank}", truncate_word_boundary(vt.trim(), 42))
     } else {
         let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or("clip");
         format!("Highlight {rank} · {stem}")
     };
 
-    let hook = title.chars().take(42).collect();
+    let hook = truncate_word_boundary(&title, 44);
     GeneratedMetadata {
         title,
         description: if spoken_hook.is_empty() {
             "Auto-clipped by PulseCut".into()
         } else {
-            clip_words
-                .iter()
-                .take(26)
-                .map(|w| w.text.as_str())
-                .collect::<Vec<_>>()
-                .join(" ")
+            capitalize_first(
+                &effective_words
+                    .iter()
+                    .take(26)
+                    .map(|w| w.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            )
         },
         hashtags: vec!["shorts".into(), "clips".into(), "viral".into()],
         hook,
@@ -1347,5 +1420,26 @@ mod tests {
         scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
         assert!(!scored.is_empty());
         assert!(scored[0].start_ms >= 35_000, "top clip should pick the viral hook + peak section");
+    }
+
+    #[test]
+    fn fallback_metadata_skips_trailing_tail_word_and_never_chops_mid_word() {
+        let words: Vec<Word> = [
+            "sometimes.", "For", "example,", "if", "I", "see", "something", "that", "really", "is", "awesome",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(idx, text)| Word {
+            text: (*text).into(),
+            start_ms: (idx as i64) * 300,
+            end_ms: (idx as i64) * 300 + 250,
+            confidence: 0.95,
+        })
+        .collect();
+
+        let meta = fallback_metadata(Path::new("talk.mp4"), 1, &words, None);
+        assert!(meta.title.starts_with("For example"), "should skip dangling tail word: {}", meta.title);
+        assert!(!meta.hook.ends_with("somethin"), "hook must not chop mid-word: {}", meta.hook);
+        assert!(meta.hook.chars().count() <= 44);
     }
 }

@@ -1,19 +1,28 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Check,
+  Copy,
+  ExternalLink,
   FileText,
+  Flame,
+  Hash,
+  ImagePlus,
   Layers,
   Music2,
+  Pencil,
   Play,
   Plus,
-  Sparkles,
+  RotateCcw,
   Trash2,
   Type,
   Upload,
   Volume2,
   Wand2,
+  X,
 } from 'lucide-react';
 import type {
   BrandKit,
+  CaptionAnimationId,
   ClipItem,
   CustomFontEntry,
   EditorSettings,
@@ -27,19 +36,25 @@ import type {
   TextSubtabId,
   TrackStates,
   WordCue,
+  WordPacingId,
 } from '../../types';
-import {
-  FEATURED_PRESETS,
-  getTemplatePreset,
-  type TemplatePreset,
-} from '../../presets';
-import {
-  VIRAL_CAPTION_PRESETS,
-  VIRAL_FONTS,
-  type ViralCaptionPreset,
-} from '../../captionStyles';
+import { VIRAL_FONTS } from '../../captionStyles';
 import { formatTimecode, parseSrtToWordCues } from '../../lib/studioLogic';
 import { autoSuggestMusicLevels, playSfxAsset } from '../../lib/shortsEngine';
+import {
+  auditionTrackMood,
+  detectVideoNiche,
+  filterMusicCatalog,
+  getHashtagPack,
+  MUSIC_MOOD_OPTIONS,
+  TRENDING_HASHTAG_PACKS,
+  type CopyrightFreeTrack,
+  type EditableCaptionPreset,
+  type EditableTemplatePreset,
+  type LogoAsset,
+  type MusicMoodId,
+  type VideoNicheId,
+} from '../../lib/creatorCatalog';
 import {
   Button,
   InspectorAccordion,
@@ -58,13 +73,30 @@ interface ShortsInspectorProps {
   trackStates: TrackStates;
   currentTimeSec: number;
   stitchedDurationSec: number;
+  templates: readonly EditableTemplatePreset[];
+  captionPresets: readonly EditableCaptionPreset[];
   customFonts: readonly CustomFontEntry[];
+  logos: readonly LogoAsset[];
+  canRestoreTemplates: boolean;
+  canRestoreCaptions: boolean;
   onUpdateSettings: (patch: Partial<EditorSettings>, recordHistory?: boolean) => void;
   onUpdateShorts: (patch: Partial<ShortsProductionConfig>) => void;
   onUpdateBrandKit: (next: BrandKit) => void;
   onToggleTrackState: (key: keyof TrackStates) => void;
-  onSelectTemplatePreset: (preset: TemplatePreset) => void;
-  onSelectCaptionPreset: (preset: ViralCaptionPreset) => void;
+  onSelectTemplatePreset: (preset: EditableTemplatePreset) => void;
+  onOpenTemplateEditor: (preset: EditableTemplatePreset | null) => void;
+  onDeleteTemplate: (id: string) => void;
+  onRestoreTemplates: () => void;
+  onSelectCaptionPreset: (preset: EditableCaptionPreset) => void;
+  onAddCaptionStyle: (preset: EditableCaptionPreset) => void;
+  onDeleteCaptionStyle: (id: string) => void;
+  onRestoreCaptions: () => void;
+  onUploadCustomFont: (file: File) => void;
+  onAddGoogleFont: (familyName: string) => void;
+  onDeleteCustomFont: (id: string) => void;
+  onUploadLogo: (file: File) => void;
+  onDeleteLogo: (id: string) => void;
+  onUpdateClipHashtags: (clipId: string, hashtags: string[]) => void;
   onOpenTemplateLibrary: () => void;
   onImportSrtCues: (clipId: string, cues: WordCue[]) => void;
   onAutoAlignSubtitles: () => void;
@@ -84,13 +116,30 @@ export function ShortsInspector({
   trackStates,
   currentTimeSec,
   stitchedDurationSec,
+  templates,
+  captionPresets,
   customFonts,
+  logos,
+  canRestoreTemplates,
+  canRestoreCaptions,
   onUpdateSettings,
   onUpdateShorts,
   onUpdateBrandKit,
   onToggleTrackState,
   onSelectTemplatePreset,
+  onOpenTemplateEditor,
+  onDeleteTemplate,
+  onRestoreTemplates,
   onSelectCaptionPreset,
+  onAddCaptionStyle,
+  onDeleteCaptionStyle,
+  onRestoreCaptions,
+  onUploadCustomFont,
+  onAddGoogleFont,
+  onDeleteCustomFont,
+  onUploadLogo,
+  onDeleteLogo,
+  onUpdateClipHashtags,
   onOpenTemplateLibrary,
   onImportSrtCues,
   onAutoAlignSubtitles,
@@ -100,17 +149,58 @@ export function ShortsInspector({
   onNotify,
 }: ShortsInspectorProps) {
   const [textSubtab, setTextSubtab] = useState<TextSubtabId>('headline');
+  const [googleFontDraft, setGoogleFontDraft] = useState('');
+  const [creatingCaption, setCreatingCaption] = useState(false);
+  const [newCapName, setNewCapName] = useState('');
+  const [newCapFont, setNewCapFont] = useState(settings.subtitleFont || 'Montserrat');
+  const [newCapBase, setNewCapBase] = useState(settings.subtitleBaseColor || '#FFFFFF');
+  const [newCapActive, setNewCapActive] = useState(settings.subtitleActiveColor || '#FFE600');
+  const [newCapStroke, setNewCapStroke] = useState(settings.subtitleStrokeWidth || 5);
+  const [newCapPacing, setNewCapPacing] = useState<WordPacingId>(settings.subtitleWordsPerScreen || '2-3');
+  const [newCapAnim, setNewCapAnim] = useState<CaptionAnimationId>(settings.subtitleAnimation || 'pop-scale');
+
+  const [musicMood, setMusicMood] = useState<MusicMoodId>('all');
+  const [viralOnlyMusic, setViralOnlyMusic] = useState(true);
+
+  const detectedNiche = useMemo(
+    () => detectVideoNiche(clip?.title || settings.headline || '', clip?.description || '', clip?.platform || ''),
+    [clip?.id, clip?.title, clip?.description, clip?.platform, settings.headline]
+  );
+  const [selectedNiche, setSelectedNiche] = useState<VideoNicheId>(detectedNiche);
+
+  useEffect(() => {
+    setSelectedNiche(detectedNiche);
+  }, [detectedNiche]);
+
   const srtInputRef = useRef<HTMLInputElement>(null);
+  const fontInputRef = useRef<HTMLInputElement>(null);
   const bgmInputRef = useRef<HTMLInputElement>(null);
   const sfxInputRef = useRef<HTMLInputElement>(null);
   const wmLogoInputRef = useRef<HTMLInputElement>(null);
   const outroFileInputRef = useRef<HTMLInputElement>(null);
 
-  const activeTemplate = getTemplatePreset(settings.template);
+  const activeTemplate =
+    templates.find((t) => t.id === settings.template) || templates[0];
+  const visibleTemplates = useMemo(() => {
+    const customAndFeatured = templates.filter((t) => t.isCustom || t.featured);
+    return customAndFeatured.length > 0 ? customAndFeatured : templates;
+  }, [templates]);
+
   const allFontFamilies = [
     ...VIRAL_FONTS.map((f) => f.family),
     ...customFonts.map((f) => f.family),
   ];
+
+  const filteredMusic = useMemo(
+    () => filterMusicCatalog(musicMood, viralOnlyMusic),
+    [musicMood, viralOnlyMusic]
+  );
+
+  const hashtagPack = useMemo(() => getHashtagPack(selectedNiche), [selectedNiche]);
+  const activeClipTags = useMemo(
+    () => new Set((clip?.hashtags || []).map((h) => h.replace(/^#/, '').toLowerCase())),
+    [clip?.hashtags]
+  );
 
   const handleSrtUpload = async (file: File) => {
     if (!clip) return;
@@ -157,6 +247,30 @@ export function ShortsInspector({
     );
   };
 
+  const handleApplyCatalogTrack = (track: CopyrightFreeTrack) => {
+    auditionTrackMood(track);
+    onUpdateSettings(
+      {
+        customAudioName: `${track.title} — ${track.artist}`,
+        audioBaseVol: track.mixPreset.audioBaseVol,
+        audioPeakVol: track.mixPreset.audioPeakVol,
+        riserDurationSec: track.mixPreset.riserDurationSec,
+        audioPeak: true,
+      },
+      true
+    );
+    onNotify(
+      `Applied "${track.title}" mix (${track.mixPreset.audioBaseVol}% → ${track.mixPreset.audioPeakVol}% riser)`
+    );
+  };
+
+  const handleCopyAttribution = (track: CopyrightFreeTrack) => {
+    const credit =
+      track.attributionText || `Music: ${track.title} by ${track.artist} (${track.source})`;
+    navigator.clipboard?.writeText(credit).catch(() => {});
+    onNotify(`Copied credit for "${track.title}"`);
+  };
+
   const handleSfxUpload = (file: File) => {
     const url = URL.createObjectURL(file);
     const asset: SfxAsset = {
@@ -166,6 +280,95 @@ export function ShortsInspector({
     };
     onUpdateShorts({ sfxLibrary: [asset, ...shorts.sfxLibrary] });
     onNotify(`Added SFX "${asset.name}" to project library`);
+  };
+
+  const handleToggleHashtag = (rawTag: string) => {
+    const clean = rawTag.replace(/^#/, '').toLowerCase();
+    if (!clip) {
+      navigator.clipboard?.writeText(`#${clean}`).catch(() => {});
+      onNotify(`Copied #${clean}`);
+      return;
+    }
+    const existing = clip.hashtags.map((h) => h.replace(/^#/, '').toLowerCase());
+    const next = existing.includes(clean)
+      ? existing.filter((t) => t !== clean)
+      : [...existing, clean];
+    onUpdateClipHashtags(clip.id, next);
+  };
+
+  const handleApplyTopHashtags = () => {
+    const topFive = hashtagPack.topViral.slice(0, 5);
+    if (clip) {
+      onUpdateClipHashtags(clip.id, topFive);
+    }
+    onNotify(`Applied ${topFive.length} ${hashtagPack.label} hashtags`);
+  };
+
+  const handlePutTagsOnVideo = () => {
+    const chosen =
+      clip && clip.hashtags.length > 0
+        ? clip.hashtags.slice(0, 3)
+        : hashtagPack.topViral.slice(0, 3);
+    const formatted = chosen.map((h) => `#${h.replace(/^#/, '')}`).join(' ');
+    onUpdateShorts({
+      dualWatermark: {
+        ...shorts.dualWatermark,
+        secondaryEnabled: true,
+        secondaryText: formatted,
+      },
+    });
+    onNotify(`Placed "${formatted}" onto video overlay`);
+  };
+
+  const handleCopyHashtags = () => {
+    const list =
+      clip && clip.hashtags.length > 0
+        ? clip.hashtags
+        : [...hashtagPack.topViral, ...hashtagPack.nicheTags.slice(0, 3)];
+    const formatted = list.map((h) => `#${h.replace(/^#/, '')}`).join(' ');
+    navigator.clipboard?.writeText(formatted).catch(() => {});
+    onNotify(`Copied ${list.length} hashtags to clipboard`);
+  };
+
+  const handleCreateCaptionStyle = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanName = newCapName.trim();
+    if (!cleanName) {
+      onNotify('Enter a name for the caption style');
+      return;
+    }
+    const created: EditableCaptionPreset = {
+      id: `custom-cap-${Date.now()}`,
+      name: cleanName,
+      tagline: `Custom ${newCapFont} · ${newCapPacing}w`,
+      isCustom: true,
+      headlineFont: newCapFont,
+      subtitleFont: newCapFont,
+      subtitleWeight: 900,
+      casing: 'upper',
+      wordsPerScreen: newCapPacing,
+      baseColor: newCapBase,
+      activeColor: newCapActive,
+      emphasisColor: newCapActive,
+      strokeWidth: newCapStroke,
+      strokeColor: '#000000',
+      dropShadow: true,
+      neonGlow: false,
+      animation: newCapAnim,
+      surfaceTreatment: 'outline',
+      sampleWords: ['VIRAL', 'STYLE'],
+    };
+    onAddCaptionStyle(created);
+    onSelectCaptionPreset(created);
+    setNewCapName('');
+    setCreatingCaption(false);
+  };
+
+  const handleAddGoogleFontSubmit = () => {
+    const trimmed = googleFontDraft.trim();
+    if (!trimmed) return;
+    onAddGoogleFont(trimmed);
+    setGoogleFontDraft('');
   };
 
   return (
@@ -213,47 +416,102 @@ export function ShortsInspector({
         {activeTab === 'templates' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-2">
-              <div>
+              <div className="min-w-0">
                 <h3 className="text-xs font-semibold text-[var(--pc-ink)] m-0">
-                  Short Format Template
+                  Short Format Templates
                 </h3>
-                <p className="text-[11px] text-[var(--pc-muted)] m-0 mt-0.5">
-                  Active: {activeTemplate.fullName}
+                <p className="text-[11px] text-[var(--pc-muted)] m-0 mt-0.5 truncate">
+                  Active: {activeTemplate?.fullName || 'Classic Short'}
                 </p>
               </div>
-              <Button variant="secondary" size="sm" onClick={onOpenTemplateLibrary}>
-                All Formats
-              </Button>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  data-testid="new-template-btn"
+                  onClick={() => onOpenTemplateEditor(null)}
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>New</span>
+                </Button>
+                <Button variant="secondary" size="sm" onClick={onOpenTemplateLibrary}>
+                  All ({templates.length})
+                </Button>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
-              {FEATURED_PRESETS.map((preset) => {
+              {visibleTemplates.map((preset) => {
                 const active = settings.template === preset.id;
                 return (
-                  <button
+                  <div
                     key={preset.id}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => onSelectTemplatePreset(preset)}
-                    className={`p-2.5 rounded-lg border text-left cursor-pointer transition-colors ${
+                    data-testid={`template-card-${preset.id}`}
+                    className={`rounded-lg border transition-colors flex flex-col justify-between ${
                       active
                         ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)] text-[var(--pc-ink)]'
-                        : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                        : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:border-[var(--pc-muted)]'
                     }`}
                   >
-                    <div className="text-xs font-semibold text-[var(--pc-ink)] truncate">
-                      {preset.name}
+                    <button
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => onSelectTemplatePreset(preset)}
+                      className="p-2 pb-1.5 text-left cursor-pointer bg-transparent border-0 w-full"
+                    >
+                      <div className="text-xs font-semibold text-[var(--pc-ink)] truncate">
+                        {preset.name}
+                      </div>
+                      <div className="text-[10px] font-mono-tabular text-[var(--pc-muted)] mt-0.5 truncate">
+                        {preset.defaultAspect || '9:16'} ·{' '}
+                        {preset.defaultFullScreen ? 'Full' : preset.defaultLayout}
+                      </div>
+                    </button>
+                    <div className="px-2 pb-1.5 flex items-center justify-between gap-1">
+                      <span className="text-[9.5px] text-[var(--pc-muted)] truncate">
+                        {preset.isCustom ? 'Custom' : preset.category}
+                      </span>
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <button
+                          type="button"
+                          aria-label={`Edit ${preset.name}`}
+                          title={`Edit ${preset.name}`}
+                          onClick={() => onOpenTemplateEditor(preset)}
+                          className="h-5 w-5 rounded grid place-items-center text-[var(--pc-sub)] hover:text-[var(--pc-ink)] hover:bg-[var(--pc-surface)] bg-transparent border-0 cursor-pointer"
+                        >
+                          <Pencil className="w-2.5 h-2.5" />
+                        </button>
+                        {templates.length > 1 && (
+                          <button
+                            type="button"
+                            aria-label={`Delete ${preset.name}`}
+                            title={`Delete ${preset.name}`}
+                            onClick={() => onDeleteTemplate(preset.id)}
+                            className="h-5 w-5 rounded grid place-items-center text-[var(--pc-sub)] hover:text-[var(--pc-error)] hover:bg-[var(--pc-surface)] bg-transparent border-0 cursor-pointer"
+                          >
+                            <Trash2 className="w-2.5 h-2.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-[10.5px] text-[var(--pc-muted)] mt-0.5 truncate">
-                      {preset.category}
-                    </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
 
+            {canRestoreTemplates && (
+              <button
+                type="button"
+                onClick={onRestoreTemplates}
+                className="w-full h-7 rounded-md border border-dashed border-[var(--pc-border)] bg-transparent text-[11px] text-[var(--pc-sub)] hover:text-[var(--pc-ink)] inline-flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Restore Deleted / Built-in Templates</span>
+              </button>
+            )}
+
             {/* Streamer / Platform Attribution */}
-            <InspectorAccordion title="Platform Credit & Card" defaultOpen>
+            <InspectorAccordion title="Platform Credit & Card" defaultOpen={false}>
               <div className="space-y-2.5">
                 <StudioSwitch
                   checked={settings.showStreamerBadge}
@@ -312,12 +570,128 @@ export function ShortsInspector({
                 )}
               </div>
             </InspectorAccordion>
+
+            {/* Trending Hashtags by Video Type */}
+            <InspectorAccordion
+              title="Trending Hashtags"
+              badge={clip?.hashtags.length ? `${clip.hashtags.length} active` : hashtagPack.label}
+              defaultOpen
+            >
+              <div className="space-y-2.5" data-testid="trending-hashtags-panel">
+                <label className="block space-y-1">
+                  <span className="text-[11px] text-[var(--pc-sub)]">Video Type / Niche</span>
+                  <select
+                    aria-label="Video type for trending hashtags"
+                    data-testid="hashtag-niche-select"
+                    value={selectedNiche}
+                    onChange={(e) => setSelectedNiche(e.target.value as VideoNicheId)}
+                    className="w-full h-8 px-2 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs text-[var(--pc-ink)]"
+                  >
+                    {TRENDING_HASHTAG_PACKS.map((pack) => (
+                      <option key={pack.id} value={pack.id}>
+                        {pack.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <p className="text-[11px] text-[var(--pc-muted)] m-0 leading-snug">
+                  {hashtagPack.description} — click tags to add/remove from this clip.
+                </p>
+
+                <div className="space-y-1.5">
+                  <div className="text-[10.5px] font-medium text-[var(--pc-sub)] flex items-center gap-1">
+                    <Flame className="w-3 h-3 text-amber-400" />
+                    <span>High-Velocity Viral Tags</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {hashtagPack.topViral.map((tag) => {
+                      const active = activeClipTags.has(tag.toLowerCase());
+                      return (
+                        <button
+                          key={tag}
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => handleToggleHashtag(tag)}
+                          className={`h-6 px-2 rounded text-[11px] font-mono-tabular border cursor-pointer transition-colors inline-flex items-center gap-1 ${
+                            active
+                              ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)] text-[var(--pc-ink)]'
+                              : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                          }`}
+                        >
+                          <span>#{tag}</span>
+                          {active && <Check className="w-2.5 h-2.5 text-[var(--pc-accent)]" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="text-[10.5px] font-medium text-[var(--pc-sub)] flex items-center gap-1">
+                    <Hash className="w-3 h-3 text-[var(--pc-muted)]" />
+                    <span>Niche Discovery Tags</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {hashtagPack.nicheTags.map((tag) => {
+                      const active = activeClipTags.has(tag.toLowerCase());
+                      return (
+                        <button
+                          key={tag}
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => handleToggleHashtag(tag)}
+                          className={`h-6 px-2 rounded text-[11px] font-mono-tabular border cursor-pointer transition-colors inline-flex items-center gap-1 ${
+                            active
+                              ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)] text-[var(--pc-ink)]'
+                              : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                          }`}
+                        >
+                          <span>#{tag}</span>
+                          {active && <Check className="w-2.5 h-2.5 text-[var(--pc-accent)]" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-1.5 pt-1">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    data-testid="apply-top-hashtags-btn"
+                    onClick={handleApplyTopHashtags}
+                  >
+                    Apply Top 5
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={handlePutTagsOnVideo}>
+                    On Video
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={handleCopyHashtags}>
+                    <Copy className="w-3 h-3" />
+                    <span>Copy</span>
+                  </Button>
+                </div>
+              </div>
+            </InspectorAccordion>
           </div>
         )}
 
-        {/* ================= TEXT TAB (HEADLINE HOOK + SUBTITLES .SRT) ================= */}
+        {/* ================= TEXT TAB (HEADLINE HOOK + SUBTITLES .SRT + FONT MANAGER) ================= */}
         {activeTab === 'text' && (
           <div className="space-y-3">
+            <input
+              ref={fontInputRef}
+              type="file"
+              accept=".ttf,.otf,.woff,.woff2"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) onUploadCustomFont(f);
+                e.target.value = '';
+              }}
+            />
+
             <SegmentedControl<TextSubtabId>
               ariaLabel="Text section"
               size="sm"
@@ -363,7 +737,7 @@ export function ShortsInspector({
 
                 <div className="grid grid-cols-2 gap-2">
                   <label className="space-y-1 text-[11px] text-[var(--pc-sub)]">
-                    <span>Font</span>
+                    <span>Font ({allFontFamilies.length})</span>
                     <select
                       value={settings.font}
                       onChange={(e) => onUpdateSettings({ font: e.target.value }, true)}
@@ -401,8 +775,17 @@ export function ShortsInspector({
                   onChange={(headlineSize) => onUpdateSettings({ headlineSize }, false)}
                 />
 
+                <StudioSlider
+                  label="Hook Vertical Position"
+                  value={settings.headlineY}
+                  min={8}
+                  max={48}
+                  valueLabel={`${settings.headlineY}%`}
+                  onChange={(headlineY) => onUpdateSettings({ headlineY }, false)}
+                />
+
                 {/* Decompiled Headline Custom Timing & In/Out SFX */}
-                <InspectorAccordion title="Hook Timing & Entry SFX" defaultOpen>
+                <InspectorAccordion title="Hook Timing & Entry SFX" defaultOpen={false}>
                   <div className="space-y-2.5">
                     <SegmentedControl<'always' | 'custom'>
                       ariaLabel="Headline timing mode"
@@ -541,31 +924,185 @@ export function ShortsInspector({
                   </Button>
                 </div>
 
-                {/* Viral Caption Style Presets */}
-                <div className="grid grid-cols-2 gap-1.5">
-                  {VIRAL_CAPTION_PRESETS.map((cp) => {
+                {/* Caption Styles Header + Add Custom Style */}
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <span className="text-[11px] font-semibold text-[var(--pc-ink)]">
+                    Caption Styles ({captionPresets.length})
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {canRestoreCaptions && (
+                      <button
+                        type="button"
+                        onClick={onRestoreCaptions}
+                        title="Restore built-in caption styles"
+                        className="h-6 px-1.5 rounded border border-[var(--pc-border)] bg-transparent text-[10.5px] text-[var(--pc-sub)] hover:text-[var(--pc-ink)] inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <RotateCcw className="w-2.5 h-2.5" />
+                        <span>Reset</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      data-testid="toggle-new-caption-style-btn"
+                      onClick={() => {
+                        setNewCapFont(settings.subtitleFont || 'Montserrat');
+                        setNewCapBase(settings.subtitleBaseColor || '#FFFFFF');
+                        setNewCapActive(settings.subtitleActiveColor || '#FFE600');
+                        setCreatingCaption((v) => !v);
+                      }}
+                      className="h-6 px-2 rounded border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-[10.5px] font-medium text-[var(--pc-ink)] hover:border-[var(--pc-accent)] inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>New Style</span>
+                    </button>
+                  </div>
+                </div>
+
+                {creatingCaption && (
+                  <form
+                    onSubmit={handleCreateCaptionStyle}
+                    data-testid="new-caption-style-form"
+                    className="p-2.5 rounded-lg border border-[var(--pc-accent)]/50 bg-[var(--pc-surface-2)] space-y-2"
+                  >
+                    <input
+                      type="text"
+                      required
+                      data-testid="new-caption-style-name"
+                      value={newCapName}
+                      onChange={(e) => setNewCapName(e.target.value)}
+                      placeholder="Style name (e.g. Gold Outline)"
+                      className="w-full h-7 px-2 rounded border border-[var(--pc-border)] bg-[var(--pc-surface)] text-xs text-[var(--pc-ink)]"
+                    />
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <select
+                        value={newCapFont}
+                        onChange={(e) => setNewCapFont(e.target.value)}
+                        className="h-7 px-1.5 rounded border border-[var(--pc-border)] bg-[var(--pc-surface)] text-[11px] text-[var(--pc-ink)]"
+                      >
+                        {allFontFamilies.map((f) => (
+                          <option key={f} value={f}>
+                            {f}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={newCapPacing}
+                        onChange={(e) => setNewCapPacing(e.target.value as WordPacingId)}
+                        className="h-7 px-1.5 rounded border border-[var(--pc-border)] bg-[var(--pc-surface)] text-[11px] text-[var(--pc-ink)]"
+                      >
+                        <option value="1">1 Word Punch</option>
+                        <option value="2-3">2–3 Words</option>
+                        <option value="4-5">4–5 Words</option>
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5 items-center">
+                      <label className="flex items-center gap-1 text-[10.5px] text-[var(--pc-sub)]">
+                        <span>Base</span>
+                        <input
+                          type="color"
+                          value={newCapBase}
+                          onChange={(e) => setNewCapBase(e.target.value)}
+                          className="h-6 w-7 rounded border border-[var(--pc-border)] bg-transparent cursor-pointer"
+                        />
+                      </label>
+                      <label className="flex items-center gap-1 text-[10.5px] text-[var(--pc-sub)]">
+                        <span>Active</span>
+                        <input
+                          type="color"
+                          value={newCapActive}
+                          onChange={(e) => setNewCapActive(e.target.value)}
+                          className="h-6 w-7 rounded border border-[var(--pc-border)] bg-transparent cursor-pointer"
+                        />
+                      </label>
+                      <select
+                        value={newCapAnim}
+                        onChange={(e) => setNewCapAnim(e.target.value as CaptionAnimationId)}
+                        className="h-6 px-1 rounded border border-[var(--pc-border)] bg-[var(--pc-surface)] text-[10.5px] text-[var(--pc-ink)]"
+                      >
+                        <option value="pop-scale">Pop</option>
+                        <option value="karaoke-fill">Karaoke</option>
+                        <option value="box-highlight">Box</option>
+                        <option value="slide-up">Slide</option>
+                        <option value="none">Static</option>
+                      </select>
+                    </div>
+                    <StudioSlider
+                      label="Outline Stroke"
+                      value={newCapStroke}
+                      min={0}
+                      max={8}
+                      valueLabel={`${newCapStroke}px`}
+                      onChange={setNewCapStroke}
+                    />
+                    <div className="flex items-center justify-end gap-1.5">
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setCreatingCaption(false)}>
+                        Cancel
+                      </Button>
+                      <Button type="submit" variant="primary" size="sm" data-testid="save-caption-style-btn">
+                        Save Style
+                      </Button>
+                    </div>
+                  </form>
+                )}
+
+                {/* Viral Caption Style Presets Grid (with Delete) */}
+                <div className="grid grid-cols-2 gap-1.5 max-h-56 overflow-y-auto studio-scroll pr-0.5">
+                  {captionPresets.map((cp) => {
                     const active = settings.captionStyle === cp.id;
                     return (
-                      <button
+                      <div
                         key={cp.id}
-                        type="button"
-                        onClick={() => onSelectCaptionPreset(cp)}
-                        className={`px-2 py-1.5 rounded-md border text-left cursor-pointer ${
+                        className={`rounded-md border flex items-stretch justify-between ${
                           active
                             ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)] text-[var(--pc-ink)]'
-                            : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                            : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:border-[var(--pc-muted)]'
                         }`}
                       >
-                        <div className="text-[11px] font-semibold text-[var(--pc-ink)] truncate">
-                          {cp.name}
-                        </div>
-                        <div className="text-[10px] text-[var(--pc-muted)] truncate">
-                          {cp.subtitleFont}
-                        </div>
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => onSelectCaptionPreset(cp)}
+                          className="px-2 py-1.5 text-left cursor-pointer bg-transparent border-0 min-w-0 flex-1"
+                        >
+                          <div className="text-[11px] font-semibold text-[var(--pc-ink)] truncate">
+                            {cp.name}
+                          </div>
+                          <div className="text-[9.5px] text-[var(--pc-muted)] truncate flex items-center gap-1 mt-0.5">
+                            <span
+                              className="w-2 h-2 rounded-full shrink-0 border border-white/20"
+                              style={{ backgroundColor: cp.activeColor }}
+                            />
+                            <span className="truncate">{cp.subtitleFont}</span>
+                          </div>
+                        </button>
+                        {captionPresets.length > 1 && (
+                          <button
+                            type="button"
+                            aria-label={`Delete caption style ${cp.name}`}
+                            onClick={() => onDeleteCaptionStyle(cp.id)}
+                            className="px-1.5 text-[var(--pc-muted)] hover:text-[var(--pc-error)] bg-transparent border-0 cursor-pointer shrink-0"
+                          >
+                            <Trash2 className="w-2.5 h-2.5" />
+                          </button>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
+
+                <label className="block space-y-1 text-[11px] text-[var(--pc-sub)]">
+                  <span>Subtitle Font ({allFontFamilies.length})</span>
+                  <select
+                    value={settings.subtitleFont}
+                    onChange={(e) => onUpdateSettings({ subtitleFont: e.target.value }, true)}
+                    className="w-full h-7 px-2 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs text-[var(--pc-ink)]"
+                  >
+                    {allFontFamilies.map((f) => (
+                      <option key={f} value={f}>
+                        {f}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
                 <StudioSlider
                   label="Caption Size"
@@ -608,10 +1145,76 @@ export function ShortsInspector({
                 )}
               </div>
             )}
+
+            {/* Custom Fonts Manager (Upload TTF/OTF + Add Google Font Live) */}
+            <InspectorAccordion
+              title="Fonts Library"
+              badge={`${allFontFamilies.length} fonts`}
+              defaultOpen={false}
+            >
+              <div className="space-y-2.5">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => fontInputRef.current?.click()}
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Upload Font (.ttf / .otf / .woff2)</span>
+                </Button>
+
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    data-testid="google-font-input"
+                    value={googleFontDraft}
+                    onChange={(e) => setGoogleFontDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddGoogleFontSubmit();
+                      }
+                    }}
+                    placeholder="Add Google Font (e.g. Orbitron)"
+                    className="flex-1 h-7 px-2 rounded border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs text-[var(--pc-ink)]"
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    data-testid="add-google-font-btn"
+                    onClick={handleAddGoogleFontSubmit}
+                  >
+                    Add
+                  </Button>
+                </div>
+
+                {customFonts.length > 0 && (
+                  <div className="space-y-1 pt-1">
+                    <div className="text-[10.5px] text-[var(--pc-muted)]">Added Custom Fonts</div>
+                    {customFonts.map((cf) => (
+                      <div
+                        key={cf.id}
+                        className="flex items-center justify-between px-2 py-1 rounded bg-[var(--pc-surface-2)] border border-[var(--pc-border)] text-xs"
+                      >
+                        <span className="truncate text-[var(--pc-ink)]">{cf.family}</span>
+                        <button
+                          type="button"
+                          aria-label={`Remove font ${cf.family}`}
+                          onClick={() => onDeleteCustomFont(cf.id)}
+                          className="text-[var(--pc-sub)] hover:text-[var(--pc-error)] bg-transparent border-0 p-0 cursor-pointer"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </InspectorAccordion>
           </div>
         )}
 
-        {/* ================= MEDIA TAB (BGM RISER, SFX, DUAL WATERMARK, OUTRO) ================= */}
+        {/* ================= MEDIA TAB (BGM + COPYRIGHT-FREE MUSIC + SFX + LOGOS LIBRARY + OUTRO) ================= */}
         {activeTab === 'media' && (
           <div className="divide-y divide-[var(--pc-border-subtle)]">
             {/* 1. Master Video Audio */}
@@ -623,7 +1226,7 @@ export function ShortsInspector({
               />
             </InspectorAccordion>
 
-            {/* 2. Background Music + Auto-Suggest Levels + Riser Surge */}
+            {/* 2. Background Music + Copyright-Free Viral Music Catalog */}
             <InspectorAccordion
               title="Background Music (A2)"
               badge={settings.customAudioName ? 'Loaded' : undefined}
@@ -663,6 +1266,117 @@ export function ShortsInspector({
                     <Wand2 className="w-3.5 h-3.5" />
                     <span>Auto</span>
                   </Button>
+                </div>
+
+                {/* Curated Copyright-Free Viral Music Browser */}
+                <div
+                  data-testid="copyright-free-music-browser"
+                  className="pt-2 border-t border-[var(--pc-border-subtle)] space-y-2"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold text-[var(--pc-ink)]">
+                      Copyright-Free Viral Music
+                    </span>
+                    <button
+                      type="button"
+                      aria-pressed={viralOnlyMusic}
+                      data-testid="music-viral-only-toggle"
+                      onClick={() => setViralOnlyMusic((v) => !v)}
+                      className={`h-6 px-2 rounded border text-[10.5px] font-medium inline-flex items-center gap-1 cursor-pointer ${
+                        viralOnlyMusic
+                          ? 'bg-amber-500/15 border-amber-500/50 text-amber-300'
+                          : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)]'
+                      }`}
+                    >
+                      <Flame className="w-3 h-3" />
+                      <span>Viral Only</span>
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap gap-1">
+                    {MUSIC_MOOD_OPTIONS.map((m) => {
+                      const active = musicMood === m.id;
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          data-testid={`music-mood-${m.id}`}
+                          onClick={() => setMusicMood(m.id)}
+                          className={`h-6 px-2 rounded text-[10.5px] font-medium border cursor-pointer transition-colors ${
+                            active
+                              ? 'bg-[var(--pc-cta-bg)] text-[var(--pc-cta-fg)] border-transparent'
+                              : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto studio-scroll pr-0.5">
+                    {filteredMusic.map((track) => (
+                      <div
+                        key={track.id}
+                        className="p-2 rounded-lg bg-[var(--pc-surface-2)] border border-[var(--pc-border)] space-y-1.5"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-[11.5px] font-semibold text-[var(--pc-ink)] truncate">
+                              {track.title}
+                            </div>
+                            <div className="text-[10px] font-mono-tabular text-[var(--pc-muted)] truncate">
+                              {track.artist} · {track.bpm} BPM ·{' '}
+                              {track.license === 'No Attribution (YT Safe)' ? 'YT Safe' : 'CC BY'}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            aria-label={`Preview ${track.title}`}
+                            title="Audition mood tempo"
+                            onClick={() => auditionTrackMood(track)}
+                            className="h-6 w-6 rounded border border-[var(--pc-border)] bg-[var(--pc-surface)] text-[var(--pc-accent)] grid place-items-center cursor-pointer shrink-0"
+                          >
+                            <Play className="w-3 h-3 fill-current" />
+                          </button>
+                        </div>
+                        <div className="text-[10px] text-[var(--pc-sub)] leading-snug">
+                          {track.bestFor}
+                        </div>
+                        <div className="flex items-center justify-between gap-1.5 pt-0.5">
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleApplyCatalogTrack(track)}
+                              className="h-6 px-2 rounded border border-[var(--pc-border)] bg-[var(--pc-surface)] text-[10.5px] font-medium text-[var(--pc-ink)] hover:border-[var(--pc-accent)] cursor-pointer"
+                            >
+                              Apply Mix
+                            </button>
+                            {track.attributionText && (
+                              <button
+                                type="button"
+                                onClick={() => handleCopyAttribution(track)}
+                                title="Copy required CC BY credit for YouTube description"
+                                className="h-6 px-1.5 rounded border border-[var(--pc-border)] bg-transparent text-[10px] text-[var(--pc-sub)] hover:text-[var(--pc-ink)] inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <Copy className="w-2.5 h-2.5" />
+                                <span>Credit</span>
+                              </button>
+                            )}
+                          </div>
+                          <a
+                            href={track.downloadUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] font-medium text-[var(--pc-accent)] hover:underline inline-flex items-center gap-0.5"
+                          >
+                            <span>Get Track</span>
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 <StudioSlider
@@ -706,7 +1420,7 @@ export function ShortsInspector({
             <InspectorAccordion
               title="Sound Effects (SFX)"
               badge={shorts.sfxCues.length ? `${shorts.sfxCues.length} placed` : undefined}
-              defaultOpen
+              defaultOpen={false}
             >
               <input
                 ref={sfxInputRef}
@@ -774,7 +1488,7 @@ export function ShortsInspector({
                           type="button"
                           aria-label={`Remove ${cue.name}`}
                           onClick={() => onRemoveSfxCue(cue.id)}
-                          className="text-[var(--pc-sub)] hover:text-[var(--pc-err)] bg-transparent border-0 p-0 cursor-pointer"
+                          className="text-[var(--pc-sub)] hover:text-[var(--pc-error)] bg-transparent border-0 p-0 cursor-pointer"
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
@@ -785,8 +1499,8 @@ export function ShortsInspector({
               </div>
             </InspectorAccordion>
 
-            {/* 4. Dual Logo & Watermark */}
-            <InspectorAccordion title="Logo & Dual Watermark">
+            {/* 4. Logos Library & Dual Watermark */}
+            <InspectorAccordion title="Logos & Dual Watermark" badge={`${logos.length} logos`} defaultOpen>
               <input
                 ref={wmLogoInputRef}
                 type="file"
@@ -794,26 +1508,17 @@ export function ShortsInspector({
                 className="hidden"
                 onChange={(e) => {
                   const f = e.target.files?.[0];
-                  if (f) {
-                    onUpdateShorts({
-                      dualWatermark: {
-                        ...shorts.dualWatermark,
-                        useCustomLogo: true,
-                        customLogoUrl: URL.createObjectURL(f),
-                        customLogoName: f.name,
-                      },
-                    });
-                    onNotify(`Loaded watermark image: ${f.name}`);
-                  }
+                  if (f) onUploadLogo(f);
                   e.target.value = '';
                 }}
               />
-              <div className="space-y-2.5">
+              <div className="space-y-2.5" data-testid="logos-library-panel">
                 <StudioSwitch
                   checked={brandKit.showWatermark}
                   label="Show Primary Watermark"
                   onChange={(showWatermark) => onUpdateBrandKit({ ...brandKit, showWatermark })}
                 />
+
                 {brandKit.showWatermark && (
                   <>
                     <SegmentedControl<'handle' | 'image'>
@@ -823,7 +1528,7 @@ export function ShortsInspector({
                       value={shorts.dualWatermark.useCustomLogo ? 'image' : 'handle'}
                       options={[
                         { value: 'handle', label: 'Handle Text' },
-                        { value: 'image', label: 'Custom Logo' },
+                        { value: 'image', label: 'Logo Asset' },
                       ]}
                       onChange={(mode) =>
                         onUpdateShorts({
@@ -834,16 +1539,103 @@ export function ShortsInspector({
                         })
                       }
                     />
+
                     {shorts.dualWatermark.useCustomLogo ? (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => wmLogoInputRef.current?.click()}
-                      >
-                        <Upload className="w-3.5 h-3.5" />
-                        <span>{shorts.dualWatermark.customLogoName || 'Upload PNG Logo'}</span>
-                      </Button>
+                      <div className="space-y-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => wmLogoInputRef.current?.click()}
+                        >
+                          <ImagePlus className="w-3.5 h-3.5" />
+                          <span>Upload Logo (PNG / SVG)</span>
+                        </Button>
+
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {logos.map((logo) => {
+                            const active = shorts.dualWatermark.customLogoUrl === logo.dataUrl;
+                            return (
+                              <div
+                                key={logo.id}
+                                className={`rounded-md border p-1.5 flex flex-col gap-1.5 ${
+                                  active
+                                    ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)]'
+                                    : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)]'
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onUpdateBrandKit({ ...brandKit, showWatermark: true });
+                                    onUpdateShorts({
+                                      dualWatermark: {
+                                        ...shorts.dualWatermark,
+                                        useCustomLogo: true,
+                                        customLogoUrl: logo.dataUrl,
+                                        customLogoName: logo.name,
+                                      },
+                                    });
+                                    onNotify(`Applied logo: ${logo.name}`);
+                                  }}
+                                  className="flex items-center gap-2 text-left bg-transparent border-0 p-0 cursor-pointer w-full"
+                                >
+                                  <img
+                                    src={logo.dataUrl}
+                                    alt={logo.name}
+                                    className="w-7 h-7 rounded object-contain bg-black/40 p-0.5 shrink-0"
+                                  />
+                                  <span className="text-[10.5px] font-medium text-[var(--pc-ink)] truncate">
+                                    {logo.name}
+                                  </span>
+                                </button>
+                                <div className="flex items-center justify-between gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      onUpdateShorts({
+                                        outro: {
+                                          ...shorts.outro,
+                                          enabled: true,
+                                          mode: 'template',
+                                          logoDataUrl: logo.dataUrl,
+                                        },
+                                      });
+                                      onNotify(`Set "${logo.name}" as Outro Card logo`);
+                                    }}
+                                    className="text-[9.5px] text-[var(--pc-sub)] hover:text-[var(--pc-ink)] bg-transparent border-0 p-0 cursor-pointer"
+                                  >
+                                    Use in Outro
+                                  </button>
+                                  {logo.isCustom && (
+                                    <button
+                                      type="button"
+                                      aria-label={`Delete logo ${logo.name}`}
+                                      onClick={() => onDeleteLogo(logo.id)}
+                                      className="text-[var(--pc-sub)] hover:text-[var(--pc-error)] bg-transparent border-0 p-0 cursor-pointer"
+                                    >
+                                      <Trash2 className="w-2.5 h-2.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <StudioSlider
+                          label="Logo Size"
+                          value={shorts.dualWatermark.customLogoScale}
+                          min={8}
+                          max={50}
+                          valueLabel={`${shorts.dualWatermark.customLogoScale}%`}
+                          onChange={(customLogoScale) =>
+                            onUpdateShorts({
+                              dualWatermark: { ...shorts.dualWatermark, customLogoScale },
+                            })
+                          }
+                        />
+                      </div>
                     ) : (
                       <input
                         type="text"
@@ -853,6 +1645,7 @@ export function ShortsInspector({
                         className="w-full h-8 px-2.5 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs text-[var(--pc-ink)]"
                       />
                     )}
+
                     <StudioSlider
                       label="Opacity"
                       value={brandKit.watermarkOpacity}

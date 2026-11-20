@@ -37,6 +37,7 @@ interface ShortsStageProps {
   settings: EditorSettings;
   brandKit: BrandKit;
   customFonts: readonly CustomFontEntry[];
+  activeTemplateName?: string;
   currentTimeSec: number;
   stitchedTimeSec: number;
   previewRes: PreviewResolutionId;
@@ -62,6 +63,7 @@ export function ShortsStage({
   settings,
   brandKit,
   customFonts,
+  activeTemplateName,
   currentTimeSec,
   stitchedTimeSec,
   previewRes,
@@ -288,7 +290,8 @@ export function ShortsStage({
               style={{
                 left: `${settings.headlineX}%`,
                 top: `${settings.headlineY}%`,
-                maxWidth: `${settings.headlineMaxWidth}%`,
+                width: `${settings.headlineMaxWidth}%`,
+                maxWidth: '94%',
                 transform: 'translate(-50%, -50%)',
                 fontFamily: `"${headlineFont.family}", sans-serif`,
                 fontSize: `${Math.max(11, Math.round(settings.headlineSize * 0.62))}px`,
@@ -330,14 +333,15 @@ export function ShortsStage({
               style={{
                 left: `${settings.subtitleX}%`,
                 top: `${settings.subtitleVerticalPos}%`,
-                maxWidth: `${settings.subtitleMaxWidth}%`,
+                width: `${settings.subtitleMaxWidth}%`,
+                maxWidth: '94%',
                 transform: 'translate(-50%, -50%)',
                 fontFamily: `"${subtitleFont.family}", sans-serif`,
                 fontSize: `${Math.max(12, Math.round(settings.subtitleSize * 0.68))}px`,
                 lineHeight: settings.subtitleLineHeight,
                 textAlign: settings.subtitleAlign,
               }}
-              className="absolute z-20 cursor-move px-1"
+              className="absolute z-20 cursor-move px-1 flex justify-center"
             >
               <div
                 className={`inline-flex flex-wrap justify-center gap-x-1.5 gap-y-0.5 ${
@@ -349,8 +353,12 @@ export function ShortsStage({
                 }`}
               >
                 {activeChunk.tokens.map((tok, idx) => {
+                  const currentMs = currentTimeSec * 1000;
+                  const beforeChunkStart =
+                    activeChunk.tokens.length > 0 && currentMs < activeChunk.tokens[0].start_ms;
                   const isActive =
-                    currentTimeSec * 1000 >= tok.start_ms && currentTimeSec * 1000 <= tok.end_ms;
+                    (currentMs >= tok.start_ms && currentMs <= tok.end_ms) ||
+                    (beforeChunkStart && idx === 0);
                   const color =
                     tok.emphasisColor ||
                     (settings.subtitleBgStyle === 'white-stepped'
@@ -559,7 +567,7 @@ export function ShortsStage({
       <div className="shrink-0 text-[11px] text-[var(--pc-muted)] flex items-center gap-2">
         <span>Drag headline, subtitles, or watermarks directly on canvas</span>
         <span aria-hidden="true">·</span>
-        <span className="font-mono-tabular">{templatePreset.name}</span>
+        <span className="font-mono-tabular">{activeTemplateName || templatePreset.name}</span>
       </div>
     </div>
   );

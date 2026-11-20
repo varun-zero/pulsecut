@@ -149,6 +149,97 @@ export const VIRAL_FONTS: readonly ViralFontDefinition[] = [
     defaultWeight: 700,
     sampleNote: 'Modern social captions',
   },
+  {
+    id: 'lilita-one',
+    family: 'Lilita One',
+    cssFamily: '"Lilita One", cursive',
+    ttfFile: 'LilitaOne-Regular.ttf',
+    category: 'Comic',
+    defaultWeight: 400,
+    sampleNote: 'Thick bubbly Shorts captions',
+  },
+  {
+    id: 'titan-one',
+    family: 'Titan One',
+    cssFamily: '"Titan One", cursive',
+    ttfFile: 'TitanOne-Regular.ttf',
+    category: 'Comic',
+    defaultWeight: 400,
+    sampleNote: 'Ultra-bold reaction text',
+  },
+  {
+    id: 'russo-one',
+    family: 'Russo One',
+    cssFamily: '"Russo One", sans-serif',
+    ttfFile: 'RussoOne-Regular.ttf',
+    category: 'Viral',
+    defaultWeight: 400,
+    sampleNote: 'Gaming & esports highlights',
+  },
+  {
+    id: 'barlow-condensed',
+    family: 'Barlow Condensed',
+    cssFamily: '"Barlow Condensed", sans-serif',
+    ttfFile: 'BarlowCondensed-ExtraBold.ttf',
+    category: 'Hook',
+    defaultWeight: 800,
+    sampleNote: 'Tall documentary hooks',
+  },
+  {
+    id: 'syne',
+    family: 'Syne',
+    cssFamily: '"Syne", sans-serif',
+    ttfFile: 'Syne-ExtraBold.ttf',
+    category: 'Editorial',
+    defaultWeight: 800,
+    sampleNote: 'Wide creative studio title',
+  },
+  {
+    id: 'bricolage-grotesque',
+    family: 'Bricolage Grotesque',
+    cssFamily: '"Bricolage Grotesque", sans-serif',
+    ttfFile: 'BricolageGrotesque-ExtraBold.ttf',
+    category: 'Social',
+    defaultWeight: 800,
+    sampleNote: 'Trendy 2026 creator sans',
+  },
+  {
+    id: 'chakra-petch',
+    family: 'Chakra Petch',
+    cssFamily: '"Chakra Petch", sans-serif',
+    ttfFile: 'ChakraPetch-Bold.ttf',
+    category: 'Viral',
+    defaultWeight: 700,
+    sampleNote: 'Tech, AI & sci-fi clips',
+  },
+  {
+    id: 'righteous',
+    family: 'Righteous',
+    cssFamily: '"Righteous", cursive',
+    ttfFile: 'Righteous-Regular.ttf',
+    category: 'Hook',
+    defaultWeight: 400,
+    sampleNote: 'Retro bold podcast title',
+  },
+  {
+    id: 'playfair-display',
+    family: 'Playfair Display',
+    cssFamily: '"Playfair Display", Georgia, serif',
+    ttfFile: 'PlayfairDisplay-BoldItalic.ttf',
+    category: 'Editorial',
+    defaultWeight: 700,
+    italic: true,
+    sampleNote: 'Luxury & quote reels',
+  },
+  {
+    id: 'space-mono',
+    family: 'Space Mono',
+    cssFamily: '"Space Mono", monospace',
+    ttfFile: 'SpaceMono-Bold.ttf',
+    category: 'Editorial',
+    defaultWeight: 700,
+    sampleNote: 'Code, finance & facts',
+  },
 ] as const;
 
 export function getViralFont(family: string, customFonts: readonly CustomFontEntry[] = []): {
@@ -212,6 +303,31 @@ export async function registerCustomFontFile(file: File): Promise<CustomFontEntr
     id: `custom-${Date.now()}-${cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
     family: cleanName,
     fileName: file.name,
+    category: 'Custom',
+  };
+}
+
+/**
+ * Dynamically injects a Google Font stylesheet by family name so creators can add
+ * any Google Font on demand inside the app.
+ */
+export function registerGoogleFontByName(familyName: string): CustomFontEntry {
+  const clean = familyName.trim();
+  if (typeof document !== 'undefined' && clean) {
+    const encoded = encodeURIComponent(clean).replace(/%20/g, '+');
+    const id = `pc-gfont-${clean.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+    if (!document.getElementById(id)) {
+      const link = document.createElement('link');
+      link.id = id;
+      link.rel = 'stylesheet';
+      link.href = `https://fonts.googleapis.com/css2?family=${encoded}:wght@600;700;800;900&display=swap`;
+      document.head.appendChild(link);
+    }
+  }
+  return {
+    id: `gfont-${Date.now()}-${clean.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+    family: clean,
+    fileName: `${clean.replace(/\s+/g, '')}-Bold.ttf`,
     category: 'Custom',
   };
 }
@@ -385,9 +501,110 @@ export const VIRAL_CAPTION_PRESETS: readonly ViralCaptionPreset[] = [
     surfaceTreatment: 'ticker',
     sampleWords: ['BREAKING', 'NOW'],
   },
+  {
+    id: 'cyan-glow-pop',
+    name: 'Cyan Tech Pop',
+    tagline: 'Chakra Petch · Electric Cyan',
+    headlineFont: 'Chakra Petch',
+    subtitleFont: 'Chakra Petch',
+    subtitleWeight: 700,
+    casing: 'upper',
+    wordsPerScreen: '2-3',
+    baseColor: '#FFFFFF',
+    activeColor: '#38BDF8',
+    emphasisColor: '#22D3EE',
+    strokeWidth: 4,
+    strokeColor: '#000000',
+    dropShadow: true,
+    neonGlow: true,
+    animation: 'pop-scale',
+    surfaceTreatment: 'outline',
+    sampleWords: ['NEXT', 'LEVEL'],
+  },
+  {
+    id: 'yellow-box-slam',
+    name: 'Yellow Box Slam',
+    tagline: 'Lilita One · High-Contrast Gold',
+    headlineFont: 'Lilita One',
+    subtitleFont: 'Lilita One',
+    subtitleWeight: 400,
+    casing: 'upper',
+    wordsPerScreen: '2-3',
+    baseColor: '#FFFFFF',
+    activeColor: '#FACC15',
+    emphasisColor: '#4ADE80',
+    strokeWidth: 5,
+    strokeColor: '#000000',
+    dropShadow: true,
+    neonGlow: false,
+    animation: 'box-highlight',
+    surfaceTreatment: 'pill',
+    sampleWords: ['WATCH', 'THIS'],
+  },
+  {
+    id: 'crimson-rage',
+    name: 'Crimson Rage',
+    tagline: 'Russo One · Red Alert Impact',
+    headlineFont: 'Russo One',
+    subtitleFont: 'Russo One',
+    subtitleWeight: 400,
+    casing: 'upper',
+    wordsPerScreen: '1',
+    baseColor: '#FFFFFF',
+    activeColor: '#EF4444',
+    emphasisColor: '#FFE600',
+    strokeWidth: 5,
+    strokeColor: '#000000',
+    dropShadow: true,
+    neonGlow: true,
+    animation: 'pop-scale',
+    surfaceTreatment: 'outline',
+    sampleWords: ['NO', 'WAY!'],
+  },
+  {
+    id: 'minimal-clean',
+    name: 'Minimal Clean',
+    tagline: 'Bricolage · Clean White Shadow',
+    headlineFont: 'Bricolage Grotesque',
+    subtitleFont: 'Bricolage Grotesque',
+    subtitleWeight: 800,
+    casing: 'asis',
+    wordsPerScreen: '4-5',
+    baseColor: '#FFFFFF',
+    activeColor: '#FDE047',
+    emphasisColor: '#FFFFFF',
+    strokeWidth: 2,
+    strokeColor: '#09090B',
+    dropShadow: true,
+    neonGlow: false,
+    animation: 'slide-up',
+    surfaceTreatment: 'clean',
+    sampleWords: ['simple', 'clean'],
+  },
+  {
+    id: 'subway-punch',
+    name: 'Subway Punch',
+    tagline: 'Titan One · Storytime Bold',
+    headlineFont: 'Titan One',
+    subtitleFont: 'Titan One',
+    subtitleWeight: 400,
+    casing: 'upper',
+    wordsPerScreen: '1',
+    baseColor: '#FFFFFF',
+    activeColor: '#A3E635',
+    emphasisColor: '#F97316',
+    strokeWidth: 6,
+    strokeColor: '#000000',
+    dropShadow: true,
+    neonGlow: false,
+    animation: 'pop-scale',
+    surfaceTreatment: 'outline',
+    sampleWords: ['STORY', 'TIME'],
+  },
 ] as const;
 
 export function normalizeCaptionPresetId(id: CaptionStyleId | string | undefined): ViralCaptionPresetId {
+  if (id && id.startsWith('custom-cap-')) return id;
   switch (id) {
     case 'hormozi-classic':
     case 'beast-comic':
@@ -396,6 +613,11 @@ export function normalizeCaptionPresetId(id: CaptionStyleId | string | undefined
     case 'podcast-pill':
     case 'editorial-aesthetic':
     case 'breaking-news':
+    case 'cyan-glow-pop':
+    case 'yellow-box-slam':
+    case 'crimson-rage':
+    case 'minimal-clean':
+    case 'subway-punch':
       return id;
     case 'bold':
     case 'karaoke_yellow':
@@ -412,9 +634,20 @@ export function normalizeCaptionPresetId(id: CaptionStyleId | string | undefined
   }
 }
 
-export function getViralCaptionPreset(id: CaptionStyleId | string | undefined): ViralCaptionPreset {
+export function getViralCaptionPreset(
+  id: CaptionStyleId | string | undefined,
+  extraPresets: readonly ViralCaptionPreset[] = []
+): ViralCaptionPreset {
+  if (id) {
+    const customMatch = extraPresets.find((p) => p.id === id);
+    if (customMatch) return customMatch;
+  }
   const normalized = normalizeCaptionPresetId(id);
-  return VIRAL_CAPTION_PRESETS.find((p) => p.id === normalized) ?? VIRAL_CAPTION_PRESETS[0];
+  return (
+    extraPresets.find((p) => p.id === normalized) ??
+    VIRAL_CAPTION_PRESETS.find((p) => p.id === normalized) ??
+    VIRAL_CAPTION_PRESETS[0]
+  );
 }
 
 export const WORD_PACING_OPTIONS: readonly { id: WordPacingId; label: string; maxWords: number }[] = [

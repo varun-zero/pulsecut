@@ -227,6 +227,39 @@ pub fn fit_font_size(text: &str, base: i64, canvas_w: i64) -> i64 {
     }
 }
 
+/// Wrap a headline into 1 or 2 balanced lines on word boundaries so longer
+/// hooks stay large and punchy inside the 9:16 safe zone instead of shrinking
+/// onto one cramped line.
+pub fn wrap_headline_lines(text: &str, max_chars_per_line: usize) -> Vec<String> {
+    let cleaned = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cleaned.is_empty() {
+        return Vec::new();
+    }
+    if cleaned.chars().count() <= max_chars_per_line {
+        return vec![cleaned];
+    }
+    let words: Vec<&str> = cleaned.split_whitespace().collect();
+    if words.len() < 2 {
+        return vec![cleaned];
+    }
+    let total_chars = cleaned.chars().count();
+    let target = total_chars / 2;
+    let mut best_split = 1usize;
+    let mut best_diff = usize::MAX;
+    let mut acc = 0usize;
+    for (idx, w) in words.iter().enumerate().take(words.len() - 1) {
+        acc += if idx == 0 { w.chars().count() } else { 1 + w.chars().count() };
+        let diff = acc.abs_diff(target);
+        if diff < best_diff {
+            best_diff = diff;
+            best_split = idx + 1;
+        }
+    }
+    let line1 = words[..best_split].join(" ");
+    let line2 = words[best_split..].join(" ");
+    vec![line1, line2]
+}
+
 pub fn escape_drawtext(text: &str) -> String {
     text.chars()
         .map(|c| match c {
@@ -244,9 +277,16 @@ pub fn font_prefix(cfg: &RenderConfig) -> String {
     if !cfg.font_file.is_empty() {
         return format!("fontfile='{}':", super::filter_path(std::path::Path::new(&cfg.font_file)));
     }
-    let windows_font = "C:/Windows/Fonts/arial.ttf";
-    if cfg!(windows) && std::path::Path::new(windows_font).exists() {
-        return format!("fontfile='{}':", super::filter_path(std::path::Path::new(windows_font)));
+    if cfg!(windows) {
+        for candidate in [
+            "C:/Windows/Fonts/arialbd.ttf",
+            "C:/Windows/Fonts/segoeuib.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+        ] {
+            if std::path::Path::new(candidate).exists() {
+                return format!("fontfile='{}':", super::filter_path(std::path::Path::new(candidate)));
+            }
+        }
     }
     String::new()
 }
@@ -279,13 +319,23 @@ pub fn apply_visual(
     }
     if t.headline {
         if let Some(text) = &overlays.headline {
-            filter.push_str(&format!(
-                ",drawtext={}text='{}':fontcolor=white:fontsize={}:x=(w-text_w)/2:y={}:borderw=4:bordercolor=black:shadowcolor=black@0.85:shadowx=0:shadowy=4",
-                font,
-                escape_drawtext(text),
-                fit_font_size(text, (cfg.subtitle_size as f64 * 0.92) as i64, cfg.width as i64),
-                top + 14
-            ));
+            let lines = wrap_headline_lines(text, 24);
+            let longest = lines
+                .iter()
+                .max_by_key(|l| l.chars().count())
+                .map(String::as_str)
+                .unwrap_or(text.as_str());
+            let fs = fit_font_size(longest, (cfg.subtitle_size as f64 * 0.94) as i64, w);
+            let line_step = ((fs as f64) * 1.24).round() as i64;
+            for (idx, line) in lines.iter().enumerate() {
+                filter.push_str(&format!(
+                    ",drawtext={}text='{}':fontcolor=white:fontsize={}:x=(w-text_w)/2:y={}:borderw=4:bordercolor=black:shadowcolor=black@0.85:shadowx=0:shadowy=4",
+                    font,
+                    escape_drawtext(line),
+                    fs,
+                    top + 20 + (idx as i64) * line_step
+                ));
+            }
         }
     }
     if t.ticker {
@@ -426,5 +476,15 @@ mod tests {
         assert_eq!(short, 64);            // short text keeps base size
         assert!(long < short, "long hook should shrink: {long}");
         assert!(long >= 26, "long hook should stay legible: {long}");
+    }
+
+    #[test]
+    fn wrap_headline_splits_long_titles_into_two_balanced_lines() {
+        assert_eq!(wrap_headline_lines("wait for it", 24), vec!["wait for it"]);
+        let lines = wrap_headline_lines("Why is that? How can we speak powerfully", 24);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].chars().count() <= 24);
+        assert!(lines[1].chars().count() <= 24);
+        assert_eq!(lines.join(" "), "Why is that? How can we speak powerfully");
     }
 }

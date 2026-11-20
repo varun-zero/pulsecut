@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import type { JobItem } from '../types';
 import { FEATURED_PRESETS, getTemplatePreset } from '../presets';
+import type { EditableTemplatePreset } from '../lib/creatorCatalog';
 import { detectVideoSource, validateIngestInput } from '../lib/studioLogic';
 import {
   Button,
@@ -27,6 +28,7 @@ import { InstagramIcon, KickLogoIcon, YouTubeShortsIcon } from '../components/ui
 
 interface DashboardPageProps {
   jobs: JobItem[];
+  templates?: readonly EditableTemplatePreset[];
   onCreateJob: (payload: {
     url: string;
     sourceTitle: string;
@@ -43,6 +45,7 @@ interface DashboardPageProps {
 
 export function DashboardPage({
   jobs,
+  templates,
   onCreateJob,
   onRefreshJobs,
   onOpenClips,
@@ -136,7 +139,15 @@ export function DashboardPage({
     }
   };
 
-  const activePresetObj = getTemplatePreset(selectedTemplate);
+  const dashboardPresets = useMemo<readonly EditableTemplatePreset[]>(() => {
+    if (!templates || templates.length === 0) return FEATURED_PRESETS;
+    const featured = templates.filter((t) => t.isCustom || t.featured);
+    return featured.length > 0 ? featured : templates;
+  }, [templates]);
+
+  const activePresetObj =
+    (templates && templates.find((t) => t.id === selectedTemplate)) ||
+    getTemplatePreset(selectedTemplate);
 
   return (
     <main className="max-w-[1380px] mx-auto px-6 py-7">
@@ -390,7 +401,7 @@ export function DashboardPage({
                 </span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {FEATURED_PRESETS.map((preset) => {
+                {dashboardPresets.map((preset) => {
                   const active = selectedTemplate === preset.id;
                   return (
                     <button
@@ -412,7 +423,7 @@ export function DashboardPage({
                           {preset.name}
                         </div>
                         <div className="text-[10.5px] text-[var(--pc-muted)] truncate mt-0.5 capitalize">
-                          {preset.defaultLayout} · {preset.defaultSafeZone === 'youtube-shorts' ? 'YT Safe' : preset.defaultSafeZone === 'instagram-reels' ? 'IG Safe' : preset.category}
+                          {preset.defaultAspect || '9:16'} · {preset.defaultFullScreen ? 'Full' : preset.defaultLayout}
                         </div>
                       </div>
                     </button>

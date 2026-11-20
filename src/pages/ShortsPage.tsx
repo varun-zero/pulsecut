@@ -27,8 +27,12 @@ import type {
   TrackStates,
   WordCue,
 } from '../types';
-import { type TemplatePreset } from '../presets';
-import { getSafeZoneSpec, type ViralCaptionPreset } from '../captionStyles';
+import { getSafeZoneSpec } from '../captionStyles';
+import {
+  type EditableCaptionPreset,
+  type EditableTemplatePreset,
+  type LogoAsset,
+} from '../lib/creatorCatalog';
 import { clampTrimWindow, formatShortDuration } from '../lib/studioLogic';
 import {
   computeMusicOffset,
@@ -43,6 +47,7 @@ import {
 } from '../lib/shortsEngine';
 import { Button } from '../components/ui/Primitives';
 import { TemplateLibraryModal } from '../components/editor/TemplateLibraryModal';
+import { TemplateEditorModal } from '../components/editor/TemplateEditorModal';
 import { ShortsStage } from '../components/studio/ShortsStage';
 import { ShortsTimeline } from '../components/studio/ShortsTimeline';
 import { ShortsInspector } from '../components/studio/ShortsInspector';
@@ -60,8 +65,25 @@ interface ShortsPageProps {
   onUpdateShorts: (patch: Partial<ShortsProductionConfig>) => void;
   settings: EditorSettings;
   onUpdateSettings: (patch: Partial<EditorSettings>, recordHistory?: boolean) => void;
-  onSelectTemplatePreset: (preset: TemplatePreset) => void;
-  onSelectCaptionPreset: (preset: ViralCaptionPreset) => void;
+  templates: readonly EditableTemplatePreset[];
+  captionPresets: readonly EditableCaptionPreset[];
+  logos: readonly LogoAsset[];
+  canRestoreTemplates: boolean;
+  canRestoreCaptions: boolean;
+  onSelectTemplatePreset: (preset: EditableTemplatePreset) => void;
+  onSaveTemplate: (preset: EditableTemplatePreset) => void;
+  onDeleteTemplate: (id: string) => void;
+  onRestoreTemplates: () => void;
+  onSelectCaptionPreset: (preset: EditableCaptionPreset) => void;
+  onAddCaptionStyle: (preset: EditableCaptionPreset) => void;
+  onDeleteCaptionStyle: (id: string) => void;
+  onRestoreCaptions: () => void;
+  onUploadCustomFont: (file: File) => void;
+  onAddGoogleFont: (familyName: string) => void;
+  onDeleteCustomFont: (id: string) => void;
+  onUploadLogo: (file: File) => void;
+  onDeleteLogo: (id: string) => void;
+  onUpdateClipHashtags: (clipId: string, hashtags: string[]) => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -90,8 +112,25 @@ export function ShortsPage({
   onUpdateShorts,
   settings,
   onUpdateSettings,
+  templates,
+  captionPresets,
+  logos,
+  canRestoreTemplates,
+  canRestoreCaptions,
   onSelectTemplatePreset,
+  onSaveTemplate,
+  onDeleteTemplate,
+  onRestoreTemplates,
   onSelectCaptionPreset,
+  onAddCaptionStyle,
+  onDeleteCaptionStyle,
+  onRestoreCaptions,
+  onUploadCustomFont,
+  onAddGoogleFont,
+  onDeleteCustomFont,
+  onUploadLogo,
+  onDeleteLogo,
+  onUpdateClipHashtags,
   canUndo,
   canRedo,
   onUndo,
@@ -115,6 +154,8 @@ export function ShortsPage({
   const [activeTab, setActiveTab] = useState<ShortsTabId>('templates');
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [templateLibraryOpen, setTemplateLibraryOpen] = useState(false);
+  const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<EditableTemplatePreset | null>(null);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -723,6 +764,9 @@ export function ShortsPage({
                 settings={settings}
                 brandKit={brandKit}
                 customFonts={customFonts}
+                activeTemplateName={
+                  templates.find((t) => t.id === settings.template)?.name
+                }
                 currentTimeSec={currentTimeSec}
                 stitchedTimeSec={stitchedTimeSec}
                 previewRes={previewRes}
@@ -819,13 +863,33 @@ export function ShortsPage({
           trackStates={trackStates}
           currentTimeSec={currentTimeSec}
           stitchedDurationSec={stitchedDurationSec}
+          templates={templates}
+          captionPresets={captionPresets}
           customFonts={customFonts}
+          logos={logos}
+          canRestoreTemplates={canRestoreTemplates}
+          canRestoreCaptions={canRestoreCaptions}
           onUpdateSettings={onUpdateSettings}
           onUpdateShorts={onUpdateShorts}
           onUpdateBrandKit={onUpdateBrandKit}
           onToggleTrackState={(k) => setTrackStates((prev) => ({ ...prev, [k]: !prev[k] }))}
           onSelectTemplatePreset={onSelectTemplatePreset}
+          onOpenTemplateEditor={(tpl) => {
+            setEditingTemplate(tpl);
+            setTemplateEditorOpen(true);
+          }}
+          onDeleteTemplate={onDeleteTemplate}
+          onRestoreTemplates={onRestoreTemplates}
           onSelectCaptionPreset={onSelectCaptionPreset}
+          onAddCaptionStyle={onAddCaptionStyle}
+          onDeleteCaptionStyle={onDeleteCaptionStyle}
+          onRestoreCaptions={onRestoreCaptions}
+          onUploadCustomFont={onUploadCustomFont}
+          onAddGoogleFont={onAddGoogleFont}
+          onDeleteCustomFont={onDeleteCustomFont}
+          onUploadLogo={onUploadLogo}
+          onDeleteLogo={onDeleteLogo}
+          onUpdateClipHashtags={onUpdateClipHashtags}
           onOpenTemplateLibrary={() => setTemplateLibraryOpen(true)}
           onImportSrtCues={onImportSrtCues}
           onAutoAlignSubtitles={handleAutoAlignSubtitles}
@@ -842,12 +906,42 @@ export function ShortsPage({
       {/* Modals */}
       <TemplateLibraryModal
         open={templateLibraryOpen}
+        templates={templates}
         activeTemplateId={settings.template}
+        canRestoreDefaults={canRestoreTemplates}
         onSelect={(preset) => {
           onSelectTemplatePreset(preset);
           setTemplateLibraryOpen(false);
         }}
+        onCreateNew={() => {
+          setEditingTemplate(null);
+          setTemplateEditorOpen(true);
+        }}
+        onEdit={(preset) => {
+          setEditingTemplate(preset);
+          setTemplateEditorOpen(true);
+        }}
+        onDelete={onDeleteTemplate}
+        onRestoreDefaults={onRestoreTemplates}
         onClose={() => setTemplateLibraryOpen(false)}
+      />
+
+      <TemplateEditorModal
+        open={templateEditorOpen}
+        initialTemplate={editingTemplate}
+        captionPresets={captionPresets}
+        customFonts={customFonts}
+        currentSettings={settings}
+        currentBlueprint={blueprint}
+        onSave={(saved) => {
+          onSaveTemplate(saved);
+          setTemplateEditorOpen(false);
+          setEditingTemplate(null);
+        }}
+        onClose={() => {
+          setTemplateEditorOpen(false);
+          setEditingTemplate(null);
+        }}
       />
 
       <ShortsExportModal

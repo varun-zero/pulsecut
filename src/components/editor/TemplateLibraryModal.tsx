@@ -1,24 +1,32 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { LayoutTemplate, Search, X } from 'lucide-react';
-import {
-  TEMPLATE_CATEGORIES,
-  TEMPLATE_PRESETS,
-  type TemplateCategory,
-  type TemplatePreset,
-} from '../../presets';
+import { LayoutTemplate, Pencil, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react';
+import { TEMPLATE_CATEGORIES, TEMPLATE_PRESETS, type TemplateCategory } from '../../presets';
+import type { EditableTemplatePreset } from '../../lib/creatorCatalog';
 import { Button, TemplateMiniPreview } from '../ui/Primitives';
 
 interface TemplateLibraryModalProps {
   open: boolean;
+  templates?: readonly EditableTemplatePreset[];
   activeTemplateId: string;
-  onSelect: (preset: TemplatePreset) => void;
+  canRestoreDefaults?: boolean;
+  onSelect: (preset: EditableTemplatePreset) => void;
+  onCreateNew?: () => void;
+  onEdit?: (preset: EditableTemplatePreset) => void;
+  onDelete?: (id: string) => void;
+  onRestoreDefaults?: () => void;
   onClose: () => void;
 }
 
 export function TemplateLibraryModal({
   open,
+  templates = TEMPLATE_PRESETS,
   activeTemplateId,
+  canRestoreDefaults = false,
   onSelect,
+  onCreateNew,
+  onEdit,
+  onDelete,
+  onRestoreDefaults,
   onClose,
 }: TemplateLibraryModalProps) {
   const [category, setCategory] = useState<TemplateCategory>('All');
@@ -35,14 +43,14 @@ export function TemplateLibraryModal({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return TEMPLATE_PRESETS.filter((preset) => {
+    return templates.filter((preset) => {
       if (category !== 'All' && preset.category !== category) return false;
       if (!q) return true;
       return `${preset.name} ${preset.fullName} ${preset.description} ${preset.category}`
         .toLowerCase()
         .includes(q);
     });
-  }, [category, query]);
+  }, [templates, category, query]);
 
   if (!open) return null;
 
@@ -66,18 +74,40 @@ export function TemplateLibraryModal({
                 Template Library
               </h2>
               <p className="text-xs text-[var(--pc-sub)] m-0 mt-0.5">
-                {TEMPLATE_PRESETS.length} whole-video treatments with precalibrated framing, safe zones, and captions.
+                {templates.length} active templates — click to apply, edit aspect/caption placement, or delete.
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            aria-label="Close template library"
-            onClick={onClose}
-            className="h-8 w-8 rounded-md grid place-items-center text-[var(--pc-sub)] hover:text-[var(--pc-ink)] hover:bg-[var(--pc-surface-2)] bg-transparent border-0 cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            {canRestoreDefaults && onRestoreDefaults && (
+              <Button variant="ghost" size="sm" onClick={onRestoreDefaults}>
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Restore Built-ins</span>
+              </Button>
+            )}
+            {onCreateNew && (
+              <Button
+                variant="primary"
+                size="sm"
+                data-testid="library-new-template-btn"
+                onClick={() => {
+                  onClose();
+                  onCreateNew();
+                }}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>New Template</span>
+              </Button>
+            )}
+            <button
+              type="button"
+              aria-label="Close template library"
+              onClick={onClose}
+              className="h-8 w-8 rounded-md grid place-items-center text-[var(--pc-sub)] hover:text-[var(--pc-ink)] hover:bg-[var(--pc-surface-2)] bg-transparent border-0 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Category Tabs & Search */}
@@ -114,47 +144,83 @@ export function TemplateLibraryModal({
           </div>
         </div>
 
-        {/* Grid */}
+        {/* Grid (sibling action buttons — zero nested <button> tags) */}
         <div className="flex-1 overflow-y-auto studio-scroll p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
           {filtered.map((preset) => {
             const active = preset.id === activeTemplateId;
             return (
-              <button
+              <div
                 key={preset.id}
-                type="button"
-                aria-pressed={active}
-                onClick={() => {
-                  onSelect(preset);
-                  onClose();
-                }}
-                className={`p-3.5 rounded-xl border text-left flex items-start gap-3.5 cursor-pointer transition-colors ${
+                className={`rounded-xl border flex flex-col justify-between transition-colors ${
                   active
                     ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)]'
                     : 'bg-[var(--pc-surface-2)]/60 border-[var(--pc-border)] hover:border-[var(--pc-muted)]'
                 }`}
               >
-                <TemplateMiniPreview preset={preset} active={active} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[13px] font-semibold text-[var(--pc-ink)] truncate">
+                <button
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => {
+                    onSelect(preset);
+                    onClose();
+                  }}
+                  className="p-3.5 pb-2 text-left flex items-start gap-3.5 cursor-pointer bg-transparent border-0 w-full"
+                >
+                  <TemplateMiniPreview preset={preset} active={active} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] font-semibold text-[var(--pc-ink)] truncate">
                       {preset.fullName}
-                    </span>
+                    </div>
+                    <div className="text-[11px] font-mono-tabular text-[var(--pc-muted)] mt-0.5 truncate">
+                      {preset.defaultAspect || '9:16'} ·{' '}
+                      {preset.defaultFullScreen ? 'Full Screen' : preset.defaultLayout}
+                      {preset.isCustom ? ' · Custom' : ''}
+                    </div>
+                    <p className="text-xs text-[var(--pc-sub)] mt-1.5 mb-0 line-clamp-2 leading-relaxed">
+                      {preset.description}
+                    </p>
                   </div>
-                  <div className="text-[11px] font-mono-tabular text-[var(--pc-muted)] mt-0.5">
-                    {preset.category} · {preset.defaultLayout}
+                </button>
+
+                <div className="px-3.5 py-2 border-t border-[var(--pc-border-subtle)] flex items-center justify-between gap-2">
+                  <span className="text-[10.5px] text-[var(--pc-muted)] truncate">
+                    {preset.category}
+                  </span>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {onEdit && (
+                      <button
+                        type="button"
+                        aria-label={`Edit ${preset.name}`}
+                        onClick={() => {
+                          onClose();
+                          onEdit(preset);
+                        }}
+                        className="h-6 px-2 rounded border border-[var(--pc-border)] bg-[var(--pc-surface)] text-[11px] text-[var(--pc-sub)] hover:text-[var(--pc-ink)] inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Pencil className="w-3 h-3" />
+                        <span>Edit</span>
+                      </button>
+                    )}
+                    {onDelete && templates.length > 1 && (
+                      <button
+                        type="button"
+                        aria-label={`Delete ${preset.name}`}
+                        onClick={() => onDelete(preset.id)}
+                        className="h-6 w-6 rounded border border-[var(--pc-border)] bg-[var(--pc-surface)] text-[var(--pc-sub)] hover:text-[var(--pc-error)] grid place-items-center cursor-pointer"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
-                  <p className="text-xs text-[var(--pc-sub)] mt-1.5 mb-0 line-clamp-2 leading-relaxed">
-                    {preset.description}
-                  </p>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
 
         <div className="px-5 py-3 border-t border-[var(--pc-border)] bg-[var(--pc-surface-2)]/50 flex items-center justify-between shrink-0">
           <span className="text-xs text-[var(--pc-muted)]">
-            Selecting a template updates framing, caption style, and layout automatically.
+            Selecting a template updates framing, aspect ratio, caption style, and layout automatically.
           </span>
           <Button variant="secondary" size="sm" onClick={onClose}>
             Close

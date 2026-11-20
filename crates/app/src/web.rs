@@ -887,9 +887,21 @@ async fn publish_clip(state: &Shared, id: &str, body: &str) -> (u16, &'static st
             }))
         }
         Err(e) => {
-            let _ = state.store.lock().unwrap().set_status(id, ClipStatus::Failed);
-            json_out(502, json!({"ok": false, "error": e.to_string(), "hint":
-                "set the platform token env var (e.g. PULSECUT_WOOPSOCIAL_TOKEN / PULSECUT_IG_TOKEN + PULSECUT_IG_USER_ID / PULSECUT_YOUTUBE_TOKEN)"}))
+            let msg = e.to_string();
+            let lower = msg.to_ascii_lowercase();
+            let is_missing_config = lower.contains("missing ")
+                || lower.contains("token")
+                || lower.contains("not set")
+                || lower.contains("env var");
+            if !is_missing_config {
+                let _ = state.store.lock().unwrap().set_status(id, ClipStatus::Failed);
+            }
+            json_out(502, json!({
+                "ok": false,
+                "error": msg,
+                "status_preserved": is_missing_config,
+                "hint": "set the platform token env var (e.g. PULSECUT_WOOPSOCIAL_TOKEN / PULSECUT_IG_TOKEN + PULSECUT_IG_USER_ID / PULSECUT_YOUTUBE_TOKEN)"
+            }))
         }
     }
 }

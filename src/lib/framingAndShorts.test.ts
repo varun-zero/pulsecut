@@ -16,6 +16,7 @@ import {
 import {
   autoSuggestMusicLevels,
   buildFullShortExportSpec,
+  buildSubtitleTimelineBlocks,
   computeMusicOffset,
   computeMusicRiserVolume,
   computeOutroAnimationFrame,
@@ -265,4 +266,23 @@ test('ShortsEngine: full stitched export spec fuses Section 1 Framing Blueprint 
   assert.ok(spec.ffmpegFiltergraph.includes('vstack=inputs=2'));
   assert.ok(spec.ffmpegCommand.includes('h264_nvenc'));
   assert.ok(spec.assScript.includes('PlayResY: 1350'));
+});
+
+test('ShortsEngine: buildSubtitleTimelineBlocks covers >60 words across full clip with zero overlaps', () => {
+  const words = Array.from({ length: 120 }, (_, i) => ({
+    text: i % 8 === 7 ? `word${i}.` : `word${i}`,
+    start_ms: i * 350,
+    end_ms: i * 350 + 280,
+  }));
+  const blocks = buildSubtitleTimelineBlocks(words, 45);
+  assert.ok(blocks.length >= 25 && blocks.length <= 45, `Expected ~30 phrase blocks, got ${blocks.length}`);
+  assert.ok(blocks[blocks.length - 1].startSec > 38, 'Must cover past word 60 through end of clip');
+
+  for (let i = 0; i < blocks.length - 1; i += 1) {
+    const rightEdge = blocks[i].leftPct + blocks[i].widthPct;
+    assert.ok(
+      rightEdge <= blocks[i + 1].leftPct + 0.001,
+      `Block ${i} (${rightEdge}%) overlaps block ${i + 1} (${blocks[i + 1].leftPct}%)`
+    );
+  }
 });
