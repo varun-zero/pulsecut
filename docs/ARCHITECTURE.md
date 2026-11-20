@@ -64,44 +64,6 @@ chat ──> ChatMessage ──> HypeDetector ──> HypeEvent ──> ClipWind
 | Hold-then-move speaker-locked reframe | Clips Kitty (AGPL → idea only) | `crates/render/src/framing.rs` — rustface/SeetaFace detection + hysteretic pan + ffmpeg sendcmd |
 | Rolling-buffer audio loudness | SparkReel / stream-sentry audio signal | `crates/capture/src/audio.rs` → `HypeDetector::tick` |
 
-## YIZERGE feature pass — REA evidence and mapping
-
-Static analysis of `C:\Users\varun\AppData\Local\Programs\YIZERGE\resources\app.asar`
-(SHA-256 `f1195a9d…`, Evidence `ev_fe185ccd…`, summary `ev_070ff867…`) observed:
-an Electron app with 2 BrowserWindows, 1 preload, 1 context bridge, **17 literal
-IPC channels**, 16 dynamic channel operations, 26 main handlers, 12 renderer
-transmissions (0 paired, 12 ambiguous), and 0 sender-validation observations.
-`ev_29e9377…` located a literal **`engine:call`** channel as renderer `invoke`
-(`out/preload/index.js` line 1) and main `handle` + inline handler
-(`out/main/index.js` line 139); `source:progress`, `project:saving`,
-`menu:ready`, `beta:lockout`, `app:*` and `window:*` were also observed.
-Tracing `engine:call` (`ev_0165498…`) produced 4 terminal paths, all labeled
-`static-relationship-inference` with `contains_inference: true`, and **0 native
-handoffs**. Coverage is explicitly partial: 2 Electron sources not fully
-examined, 1 renderer bundle exceeded the analyzer heap, 12,482 semantic unknowns.
-
-**Inference (medium confidence):** `engine:call` is the editor→engine command
-bridge; `source:progress` is a progress event channel. Competing explanation:
-the real command set may travel in dynamic arguments, which REA could not resolve.
-
-Ported into PulseCut without copying any source:
-
-| Observed capability | PulseCut implementation |
-|---|---|
-| Editor→engine command bridge | `POST /api/engine/call` allowlist (`templates`, `layouts`, `metadata`, `probe`) in `crates/app/src/web.rs` |
-| Progress / project persistence | `GET /api/jobs/{id}`, `GET /api/projects/state`, `POST /api/projects/save` |
-| Split / PiP-style compositions | `EditOp::Layout` → ffmpeg `vstack` / `overlay` in `complex_filter()` |
-| Blur / solid / padding canvas | `EditOp::Canvas` → `gblur` background + overlay, or pad colour |
-| Outro cards, social/handle cards | `EditOp::Outro`, `EditOp::SocialCard` → timed `drawtext`/`drawbox` |
-| Audio peak / riser | `EditOp::AudioPeak` → `volume='if(lt(t,…),0.25,peak)':eval=frame` |
-| 10 ready-made formats + shortcuts | `templates.rs` library, keyboard shortcuts in dashboard |
-
-**Unknowns retained:** the selection data's `"feature":"make"` was not observed
-as a literal and no feature was attributed to it (REA unknown
-`unk_bc4122eb…` remains open). Runtime registration, reachability and native
-behaviour of YIZERGE remain unproven; nothing here claims original-source
-recovery or feature equivalence.
-
 ## Design decisions that matter
 
 1. **Never hold raw video in RAM.** Segments live on disk; the buffer keeps

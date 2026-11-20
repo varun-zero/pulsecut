@@ -529,7 +529,7 @@ test('Reaction PiP facecam source box clamping, crop transform math, and FFmpeg 
   assert.ok(splitParity.ffmpegFiltergraph.includes('[cam][main]vstack=inputs=2'));
 });
 
-test('YIZERGE Studio features: SMPTE timecode, SRT/VTT importer, Score riser volume, 4:5 export, Trio & speed FFmpeg parity', () => {
+test('Studio features: SMPTE timecode, SRT/VTT importer, Score riser volume, 4:5 export, Trio & speed FFmpeg parity', () => {
   // 1. SMPTE HH:MM:SS:FF formatting at 30fps
   assert.equal(formatSmpteTimecode(0), '00:00:00:00');
   assert.equal(formatSmpteTimecode(34.5, 30), '00:00:34:15');

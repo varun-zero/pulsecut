@@ -392,7 +392,7 @@ export const ASPECT_RATIOS: readonly { id: AspectRatioId; label: string; dimensi
   { id: '4:3', label: '4:3', dimensions: '1440 × 1080' },
 ];
 
-/** All 6 Studio framing layouts (1:1 YIZERGE + Reaction PiP parity) */
+/** All 6 studio framing layouts */
 export const LAYOUT_MODES: readonly {
   id: LayoutModeId;
   label: string;

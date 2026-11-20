@@ -39,7 +39,7 @@ interface InteractiveBoxDescriptor {
 }
 
 /**
- * YIZERGE 1-to-1 Interactive Source Framing Canvas.
+ * Interactive source framing canvas.
  * Displays the widescreen 16:9 source video with color-coded, draggable &
  * 4-corner-resizable crop boxes (`Top Speaker`, `Bottom Speaker`, `Speaker 3`,
  * `Main Speaker`, or `Streamer Facecam`) mapped 1:1 to Live Preview & FFmpeg export.
@@ -329,7 +329,7 @@ export function FramingCanvas({
         </div>
       ) : (
         <>
-          {/* Centered 16:9 Source Canvas matching YIZERGE Framing Mode */}
+          {/* Centered 16:9 source canvas */}
           <div
             ref={sourceFrameRef}
             data-testid="framing-source-canvas"

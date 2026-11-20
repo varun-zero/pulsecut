@@ -198,7 +198,7 @@ export function computeMusicRiserVolume(
   return base;
 }
 
-/** Auto-Suggest Levels matching YIZERGE's music level recommender */
+/** Auto-suggested music levels for the current clip */
 export function autoSuggestMusicLevels(clipDurationSec: number): {
   audioBaseVol: number;
   audioPeakVol: number;

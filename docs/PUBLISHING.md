@@ -493,8 +493,8 @@ metadata:       local Ollama first -> if confidence < threshold or local unavail
 - Meta Pages posts: https://developers.facebook.com/documentation/pages-api/posts
 - WoopSocial: https://woopsocial.com/ · docs https://docs.woopsocial.com/api-reference/overview
 - Upload-Post: https://www.upload-post.com/ · docs https://docs.upload-post.com/
-- Postiz: https://github.com/gitroomhq/postiz-app · https://docs.postiz.com
-- Mixpost: https://github.com/inovector/mixpost · https://docs.mixpost.app/lite/
+- Postiz: https://docs.postiz.com · https://docs.postiz.com
+- Mixpost: https://docs.mixpost.app/lite/ · https://docs.mixpost.app/lite/
 - Ollama API: https://docs.ollama.com/api/introduction
 - OpenRouter API: https://openrouter.ai/docs/api_reference/overview · OpenAPI https://openrouter.ai/openapi.json
 - Bluesky API reference: https://docs.bsky.app/docs/api/app-bsky-video-upload-video (redirects to https://endpoints.bsky.app)

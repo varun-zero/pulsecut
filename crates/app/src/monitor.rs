@@ -659,14 +659,19 @@ impl MonitorManager {
         if let Some(handle) = map.get(id) {
             let mut st = handle.state.lock().unwrap();
             let now = now_ms();
+            // Snapshot these before mutably borrowing st.spikes below.
+            let hype_score = st.hype_score;
+            let z_score = st.z_score;
+            let current_rate = st.current_rate;
+            let baseline_rate = st.baseline_rate;
             st.clips_triggered += 1;
             st.last_clip_job_id = Some(job_id.clone());
             st.spikes.push_front(SpikeRecord {
                 ts_ms: now,
-                hype_score: st.hype_score.max(100),
-                z_score: st.z_score,
-                rate: st.current_rate,
-                baseline: st.baseline_rate,
+                hype_score: hype_score.max(100),
+                z_score,
+                rate: current_rate,
+                baseline: baseline_rate,
                 reasons: req.reasons,
                 job_id: job_id.clone(),
                 manual: true,

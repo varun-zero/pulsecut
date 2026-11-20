@@ -2,7 +2,7 @@
 # Starts the Rust backend (dashboard + API on 8756) and the React frontend (3000),
 # then opens http://127.0.0.1:3000/ in your browser.
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 
 $env:PULSECUT_FFMPEG = "C:\Users\varun\AppData\Local\Programs\YIZERGE\ffmpeg.exe"

@@ -1,175 +1,112 @@
+<div align="center">
+
+<img src="public/favicon.svg" alt="PulseCut" width="92" height="92" />
+
 # PulseCut
 
-Local-first, Rust-based clipping pipeline that watches live chat, detects the
-moment chat goes crazy, cuts the last ~40 seconds with post-roll, and produces
-ready-to-post vertical shorts with karaoke captions, titles, hashtags and
-templates — then publishes them across platforms.
+### *Turn any livestream into scroll-stopping shorts — locally.*
 
-It also ships an **all-in-one web dashboard** (3 pages: Dashboard / Clips /
-Editor) with a paste-a-link VOD pipeline, style controls and a non-destructive
-editor. The UI's "Calm Premium" visual language is adapted from
-`zhouxiaoka/autoclip` (MIT, 10.7k stars) — see `docs/UI_SPEC.md` and
-`THIRD_PARTY_NOTICES.md`.
+**Rust · React · FFmpeg · AI · 100% local-first**
 
-The **Editor page mirrors the YIZERGE editor's layout and behaviour while
-keeping PulseCut's own theme colours**: top menu + Framing/Framing-Editor
-toolbar, split preview with the "No Video Loaded" state, working layout buttons
-and transport, a 4-track timeline (CC/V1/A1/A2), and a right-side Framing /
-Templates / Text / Media tabbed panel with a template chooser modal (**18 styles**,
-categories and search). Radius/padding sliders, card theme, verified badge,
-typography controls, audio track, outro media, watermark and sticky
-"Live 9:16 Preview / Export 9:16 Video" actions are all wired. This is a
-hand-written HTML/CSS/JS implementation of the observed layout, not copied source.
+[![Rust](https://img.shields.io/badge/Rust-1.98-orange.svg)](https://www.rust-lang.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#quick-start)
 
-A second feature pass added the desktop-editor capabilities found by static
-REA analysis of the installed YIZERGE app (`app.asar`): **PiP / split layouts,
-blur / solid / padding canvas, outro cards, social/handle cards, audio peak,
-10 ready-made templates, keyboard shortcuts, and a unified `engine:call`-style
-API** (`POST /api/engine/call`). See `docs/ARCHITECTURE.md` for the
-Evidence-anchored mapping and its explicit limits.
+</div>
 
-It is built by studying 13 open-source projects (all cloned into
-`research/repos/`) and reimplementing their best ideas in one Rust workspace.
-See [`docs/REPOS.md`](docs/REPOS.md) for the per-repo feature/license map and
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how each idea maps to code.
+---
 
-## What it does
+## Why PulseCut?
 
-- **Live capture** – streamlink resolves the HLS URL, ffmpeg writes 4-second
-  MPEG-TS segments into a bounded rolling buffer (default 150 s).
-- **Chat spike detection** – Twitch IRC, YouTube Live Chat API, Kick bridge.
-  Robust velocity (median + MAD), unique-chatter ratio, emote bursts, hype
-  keywords and optional audio energy are fused and gated. One clip per moment.
-- **Intelligent cut** – event time T becomes `[T-40s, T+15s]`, snapped to ASR
-  pause boundaries when transcripts are available, with min/max clamping.
-- **Packaging** – 9:16 reframe, word-synced ASS karaoke captions, platform safe
-  zones, AI-generated title/description/hashtags, four platform profiles
-  (Shorts, Reels, TikTok, X).
-- **Native face-tracking reframe** – BSD-2 `rustface` (pure-Rust SeetaFace)
-  detects faces at 2 fps, a hysteretic hold-then-move controller pans the 9:16
-  crop to keep the speaker centred, and ffmpeg `sendcmd` applies the timeline
-  during the encode. Fully local; falls back to a centred crop if no face is
-  found. Enable with `"render": { "framing": "face" }`.
-- **Ready-made templates** – 18 built-in looks (the original set plus
-  `smartphone`, `x_terminal`, `youtube_shorts`, `minimal_cinema`,
-  `shorts_progress`, `post_hook`, `centered_canvas`, `wide_16x9`). Each template
-  controls the canvas colour, card, headline, ticker, watermark and caption
-  preset **and** fills title/hook patterns and merges its own hashtag set.
-  Select one in `pulsecut.json` or via an EDL `Template` op in the editor.
-- **After-clip editor** – non-destructive edit decision list (trim, split,
-  crop, caption override, hook, reorder, mute) with a local HTTP API.
-- **Automation to posting** – approval-gated publish queue, then WoopSocial /
-  Upload-Post (9 platforms in one upload), self-hosted Postiz, or direct APIs
-  for YouTube (`videos.insert`), TikTok (Content Posting API v2) and Instagram
-  Reels (Graph API resumable upload).
+PulseCut watches a livestream's chat and audio, detects the moments that *actually* make people react, and cuts them into ready-to-post vertical shorts — with auto-framing, captions and hooks — all on your own machine. No cloud pipeline, no per-clip cost, no waiting.
 
-## Google AI Studio
+```
+  ┌──────────────┐   ┌───────────────┐   ┌──────────────┐   ┌──────────────┐
+  │  LIVE STREAM │──▶│ SPIKE DETECT  │──▶│  AUTO CLIP   │──▶│  PUBLISH 9+  │
+  │ Kick/Twitch/ │   │ chat + audio  │   │ frame+caption│   │ platforms    │
+  │ YouTube/IG   │   │ + viewer rate │   │ + hook/outro │   │ (or download)│
+  └──────────────┘   └───────────────┘   └──────────────┘   └──────────────┘
+       100% on your machine
+```
 
-The repository root contains a standalone `index.html` (generated by
-`python scripts/export_static_ui.py`). Open that file in Google AI Studio to
-preview and edit the dashboard UI without the Rust backend — API calls fall
-back to local demo data when no server is available. `package.json` is included
-for tooling; `npm start` runs the real Rust server on port 3000.
+## Features
+
+### Live capture & spike detection
+- **Direct link monitoring** — paste a Kick / Twitch / YouTube / Instagram URL; PulseCut connects to the chat source directly (no browser extension needed) and watches continuously.
+- **Adaptive baseline** — learns what "normal" chat looks like for that stream (rolling median/MAD of message rate, viewer-count prior, hype-word and emoji density) and fires only when chat genuinely spikes above it.
+- **Live monitor dashboard** — a real-time spike graph, per-stream config (threshold, lookback, cooldown, auto-clip on/off), pause/resume, and manual clip triggers.
+- **Browser extension** optional — for manual "clip the last 30s" while you're already watching, with an in-page HUD showing live hype score.
+
+### AI that finds the good parts
+- **Word-level transcription** — local `faster-whisper` (CTranslate2) with word timestamps, plus cloud Whisper (Groq/OpenAI) and native subtitle (VTT/json3) fallbacks.
+- **Viral-moment discovery** — an LLM scores candidate windows on **Hook / Emotional spike / Value / Shareability**, snaps boundaries to spoken words, and fuses that with audio contrast. Falls back to a multi-signal scorer (pacing, payoff, keywords) when no AI backend is configured.
+- **Rich metadata** — title, description, hashtags and hook generated per clip; hashtags by detected video niche.
+
+### Framing Studio
+- Drag-and-resize, aspect-locked crop boxes on the **full-resolution source** (not the cropped export).
+- Layouts: **Solo / Split / Trio / PiP / Centered / 16:9 clip**, with swap slots and full-screen (100%) main video.
+- PiP facecam: **16:9 / 4:3 / Free rect / 1:1**, rounded/sharp/circle, corner placement, width, border, shadow, flip.
+- Backdrop (blur / color / gradient / image), corners, outer margin fill and padding, playback speed, per-slot media overrides, framing presets.
+- Live 2D compositor preview that matches the rendered output.
+
+### Shorts Studio
+- Multi-segment stitching from several highlights into one short.
+- Music (auto-suggested duck/riser levels), copyright-free catalog, SFX library, outro cards, dual watermarks.
+- Subtitle timeline with word-synced karaoke styling, safe zones per platform, custom fonts.
+
+### Quality & verification
+- Max-quality source download (up to 1080p), **H.264 / CRF 16 / AAC 256k** encode, `+faststart` MP4.
+- **100-point vitality rubric** — codec, canvas, duration, bitrate, audio loudness, clean decode and faststart, with QA frame extraction for visual review.
+- Objective viral score + human-readable reason carried through every clip.
+
+### Publishing
+- Direct APIs for **YouTube Shorts, TikTok, Instagram Reels**, or one aggregator token (WoopSocial / Upload-Post / Postiz) for **9+ platforms**.
+- Safety gates: every clip must be **verified → captioned → approved** before it can publish; duplicate publishes are blocked.
+
+### Automation agent
+- A Rust CLI (`pulsecut-agent`) and Python compatibility shim drive the whole workflow: `doctor → monitor → clip → verify → caption → approve → publish`, with an append-only audit ledger.
 
 ## Quick start
 
 ```powershell
-cd C:\Users\varun\pulsecut
-cargo build --release
-.\target\release\pulsecut.exe init
+# 1. Backend (API + dashboard on :8756) and frontend (:3000)
+.\scripts\START-LOCAL.ps1
+
+# 2. Or start just the backend
+cargo run --release -p pulsecut -- editor --addr 127.0.0.1:8756
 ```
 
-Requires `ffmpeg` on PATH (or set `PULSECUT_FFMPEG`). Optional: `streamlink`,
-`whisper.cpp`/`faster-whisper`, Ollama.
-
-Watch a Twitch stream:
-
-```powershell
-$env:RUST_LOG = "info"
-.\target\release\pulsecut.exe watch --platform twitch --channel some_streamer --link https://www.twitch.tv/some_streamer
-```
-
-Then, in another terminal:
-
-```powershell
-.\target\release\pulsecut.exe editor --addr 127.0.0.1:8756
-# Dashboard: http://127.0.0.1:8756/   (Dashboard / Clips / Editor)
-# API:       http://127.0.0.1:8756/api/clips
-# Paste a link on the Dashboard to download + clip a VOD; style it on Clips;
-# trim / hook / approve it on Editor.
-```
-
-See [`QUICKSTART.md`](QUICKSTART.md) for YouTube, Kick and publishing setup.
+Open **http://127.0.0.1:3000** (or the built-in dashboard at **http://127.0.0.1:8756**), paste a stream URL, and watch the live monitor. Generate shorts, review them in Framing / Shorts Studios, then approve and publish.
 
 ## Tests
 
 ```powershell
-cargo test --workspace
+cargo test --workspace          # Rust unit + integration tests
+npm test                        # 5 TypeScript logic suites
+npm run build                   # production frontend build
 ```
-
-56 unit tests cover the detector, EDL, rolling buffer, ASS generation, chat
-parsers, AI response parsing, publish queue, editor API routing, the template
-engine, audio RMS metering, face tracking and the new layout/canvas/audio EDL
-ops. Five offline **integration/e2e tests** (61 total)
-generates a synthetic 16:9 video with audio, segments it, measures audio
-energy, fires the detector on synthetic chat, extracts the clip and renders a
-verified 1080×1920 short with captions and a template:
-
-```powershell
-$env:PULSECUT_FFMPEG = "C:\path\to\ffmpeg.exe"
-cargo test -p pulsecut --test e2e -- --nocapture
-cargo test -p pulsecut-render --test face -- --nocapture   # real face detection
-```
-
-### Rust automation agent (migrated from Python)
-
-The automation controller and clip verifier now live in Rust; the Python files
-in `automation/` are thin compatibility shims:
-
-- `crates/agent` → binary `pulsecut-agent` — full migration of `agent.py`
-  (`doctor`, `status`, `run`, `verify`, `inspect`, `configure`, `caption`,
-  `approve`, `reject`, `delete`, `publish`, `qa`, `full`). Build:
-  `cargo build --release -p pulsecut-agent`.
-- `crates/verify` → `pulsecut-verify` library — the 100-point vitality rubric,
-  migrated from `verify_clip.py` and de-duplicated from `web.rs`; both the HTTP
-  `/verify` endpoint and the agent share this single, unit-tested source.
-- `automation/agent.py` execs the Rust binary; `python automation/agent.py ...`
-  still works for the runbook.
-
-The verification rubric now has Rust unit tests (`cargo test -p pulsecut-verify`).
 
 ## Configuration
 
-`pulsecut.json` is generated by `init`. Every field has a default. Secrets are
-never stored in it — they come from environment variables:
+`pulsecut.json` holds all defaults (capture, detection, render, AI, publishing). Secrets are read from `PULSECUT_*` environment variables and never stored in the repo. See [QUICKSTART.md](QUICKSTART.md) and [docs/PUBLISHING.md](docs/PUBLISHING.md).
 
-| Variable | Purpose |
+## Project layout
+
+| Path | Purpose |
 |---|---|
-| `PULSECUT_FFMPEG` | ffmpeg path |
-| `PULSECUT_WHISPER` | whisper binary path |
-| `PULSECUT_OLLAMA_URL` / `PULSECUT_OLLAMA_MODEL` | local LLM |
-| `OPENROUTER_API_KEY` | cloud LLM fallback |
-| `PULSECUT_YOUTUBE_KEY` | YouTube Live Chat API |
-| `PULSECUT_KICK_CHAT_RELAY` | local Kick bridge URL |
-| `PULSECUT_PUBLISHER` | `woopsocial` (default), `uploadpost`, `postiz`, `direct` |
-| `PULSECUT_WOOPSOCIAL_TOKEN` / `PULSECUT_UPLOADPOST_TOKEN` / `PULSECUT_POSTIZ_TOKEN` | publisher credentials |
-| `PULSECUT_AUTO_APPROVE` | `true` to skip the human gate (opt-in) |
-
-Key detector knobs: `lookback_ms` (40000), `postroll_ms` (15000),
-`zscore_threshold` (3.0), `mad_floor` (2.0), `min_unique_ratio` (0.30),
-`cooldown_secs` (45), `confidence_threshold` (0.62).
-
-## Docs
-
-- `docs/REPOS.md` – 13-repo inventory, license verdict, cherry-pick list
-- `docs/SPIKE_DETECTION.md` – full detection/window spec and testing strategy
-- `docs/PUBLISHING.md` – per-platform APIs, quotas, 3-tier strategy, security
-- `docs/ARCHITECTURE.md` – crate map, data flow, design decisions, limits
-- `TODO.md` – build plan and status
+| `crates/` | Rust workspace: core, capture, chat, detect, render, ai, publish, editor, verify, agent, app |
+| `src/` | React frontend (studios, live monitor, clip library, dashboard) |
+| `automation/` | Automation controller, verifier, chat monitor and local whisper CLI |
+| `tools/extension/` | Optional browser extension for manual clipping |
+| `tools/kick-chat-bridge/` | Local Kick chat relay for direct monitoring |
+| `docs/` | Architecture, spike detection, publishing reference |
+| `models/` | Bundled face-detection model |
 
 ## License
 
-AGPL-3.0-or-later because the design incorporates ideas from AGPL-licensed
-projects. See [`LICENSE`](LICENSE) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
-Research clones are read-only references; their licenses remain intact in
-`research/repos/`.
+AGPL-3.0-or-later. See [LICENSE](LICENSE).
+
+<div align="center">
+  <sub>Built for creators who want the clip, not the cloud bill.</sub>
+</div>

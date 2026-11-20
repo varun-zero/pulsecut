@@ -16,10 +16,8 @@ Cloned into a scratch directory outside the project and read as reference materi
 
 | Repo | What it does | What we take / what we reject |
 |---|---|---|
-| `VadlapatiKarthik/autoclipper` (`backend/app/services/twitch.py`) | `CHAT_COUNTS` list, `BASELINE=10`/30s, `THRESHOLD=2.5`, clip `now-15..now+15` | This is exactly the naive approach we reject in §1. No dedup, no baseline learning, no unique-chatter concept. |
 | `Redtee-hue/stream-highlight-bot` (`analysis/scoring.py`, `analysis/audio.py`, `config.py`) | Weighted `Detection` pooling with `group_window`, dedupe-by-source, `min_score`, `cooldown`, `pre_seconds/post_seconds/min_seconds/max_seconds`, ambient-RMS tracker with `0.98/0.02` EWMA and `jump_db=9` | Good: grouping, cooldown, dedupe-by-source, duration clamping, slow ambient tracker. We adopt the structure but replace the single raw-threshold with normalized multi-signal fusion and add NMS + boundary snapping + confidence. |
 | `rrahul0904/live-content-intelligence` (`docs/DETECTION_ENGINE.md`) | 7 normalized signals (`chat_velocity`, `keyword_intensity`, `emote_burst`, `sentiment_intensity`, `audio_spike`, `viewer_spike`, `silence_burst`), `score = 100*Σwᵢxᵢ/Σwᵢ`, trigger on `score ≥ threshold`, cooldown, idempotency key, cold-start presets, safe learning with calibration versions | Adopted: normalized 0..1 signals, weighted fusion, presets, idempotency key, "never mutate historical scores" rule, second-stage confidence ranker. We add robust MAD, unique-chatter burst, postroll confirmation, NMS, and boundary snapping. |
-| `ColinGPT9/clips-studio`, `onurozkir/stream-sentry` | Large TS/Python control planes; clip/render/publish state machines, transactional outbox, approval binding | Out of scope here; relevant to `ARCHITECTURE.md`/`PUBLISHING.md`, not detection. We borrow only the idea that an approval must be bound to a final artifact. |
 
 Licenses: see `TODO.md` discipline — MIT/Apache code may be adapted with attribution;
 AGPL code may be learned from but not copied into a proprietary derivative. **This

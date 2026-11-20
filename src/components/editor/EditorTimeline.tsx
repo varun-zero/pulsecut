@@ -152,7 +152,7 @@ export function EditorTimeline({
 
   return (
     <div className="shrink-0 flex flex-col gap-2">
-      {/* YIZERGE Integrated LAYOUT + Playback Transport Strip */}
+      {/* Integrated layout + playback transport strip */}
       <div
         data-testid="layout-transport-bar"
         className="rounded-xl bg-[var(--pc-surface)] border border-[var(--pc-border)] px-3 py-1.5 flex flex-wrap items-center justify-between gap-2"
@@ -240,7 +240,7 @@ export function EditorTimeline({
         </div>
       </div>
 
-      {/* YIZERGE Pro 4-Track NLE Timeline */}
+      {/* Pro 4-track NLE timeline */}
       <div
         data-testid="editor-timeline"
         className="rounded-xl bg-[var(--pc-surface)] border border-[var(--pc-border)] px-3 py-2 flex flex-col gap-2"

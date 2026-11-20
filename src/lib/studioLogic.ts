@@ -344,7 +344,7 @@ export function parseSrtToWordCues(rawContent: string): WordCue[] {
 }
 
 /**
- * Computes real-time background music gain (0..1) for the YIZERGE Score audio riser:
+ * Computes real-time background music gain (0..1) for the score audio riser:
  * sits at `baseVolPct` under the speaker's voice, then ramps linearly up to `peakVolPct`
  * over the final `riserSec` seconds before `trimOutSec`.
  */

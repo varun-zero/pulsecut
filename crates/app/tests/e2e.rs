@@ -155,9 +155,9 @@ async fn synthetic_video_end_to_end() {
 }
 
 #[tokio::test]
-async fn yizerge_style_features_render_with_real_ffmpeg() {
+async fn pro_features_render_with_real_ffmpeg() {
     let Some(ff) = ffmpeg() else { eprintln!("SKIP: PULSECUT_FFMPEG not set"); return; };
-    let dir = temp_dir("yizerge");
+    let dir = temp_dir("features");
     let src = dir.join("in.mp4");
     run(Command::new(&ff).args([
         "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25:duration=6",
@@ -170,7 +170,7 @@ async fn yizerge_style_features_render_with_real_ffmpeg() {
     cfg.burn_captions = false;
     cfg.template = "tiktok_hook".into();
     let renderer = Renderer::new(cfg).unwrap();
-    let mut edl = EditDecisionList::new("yizerge");
+    let mut edl = EditDecisionList::new("features");
     edl.push(EditOp::Layout { preset: "pip".into() });
     edl.push(EditOp::Outro { text: "Follow for more".into(), duration_ms: 2000 });
     edl.push(EditOp::SocialCard { handle: "@test".into(), style: "verified".into() });
