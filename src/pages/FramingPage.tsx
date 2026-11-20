@@ -11,6 +11,8 @@ import {
   Grid3x3,
   HelpCircle,
   Image as ImageIcon,
+  Lock,
+  Maximize2,
   Monitor,
   Moon,
   Pause,
@@ -25,6 +27,7 @@ import {
   Sun,
   Trash2,
   Undo2,
+  Unlock,
   Upload,
   User,
   X,
@@ -36,6 +39,7 @@ import type {
   FramingBlueprint,
   LayoutModeId,
   NormalizedCrop,
+  PipAspectId,
   PipCornerId,
   PipShapeId,
 } from '../types';
@@ -46,6 +50,7 @@ import {
   OUTER_FILL_SWATCHES,
 } from '../presets';
 import {
+  clampCrop,
   clampNum,
   computeSplitPresetRatio,
   defaultCropsForLayout,
@@ -155,6 +160,8 @@ export function FramingPage({
   const croppableSlots = getCroppableSlots(blueprint.layout, blueprint.aspect, {
     splitRatio: blueprint.splitRatio,
     pip: blueprint.pip,
+    crops: blueprint.crops,
+    sourceAr,
   });
 
   // Reset active slot when layout changes
@@ -245,7 +252,7 @@ export function FramingPage({
       splitRatio: blueprint.splitRatio,
       pip: blueprint.pip,
     });
-    patchBlueprint({ layout, aspect: nextAspect, crops: nextCrops }, true);
+    patchBlueprint({ layout, aspect: nextAspect, crops: nextCrops, fullFrameSlots: {} }, true);
     onNotify(`Framing layout set to ${LAYOUT_MODES.find((m) => m.id === layout)?.label ?? layout}`);
   };
 
@@ -253,6 +260,8 @@ export function FramingPage({
     const nextCrops = reconcileCrops(blueprint.layout, aspect, sourceAr, blueprint.crops, {
       splitRatio: blueprint.splitRatio,
       pip: blueprint.pip,
+      fullFrameSlots: blueprint.fullFrameSlots,
+      freeCrop: blueprint.freeCrop,
     });
     patchBlueprint({ aspect, crops: nextCrops }, true);
     onNotify(`Output aspect ratio set to ${aspect}`);
@@ -263,6 +272,8 @@ export function FramingPage({
     const nextCrops = reconcileCrops(blueprint.layout, blueprint.aspect, sourceAr, blueprint.crops, {
       splitRatio: clamped,
       pip: blueprint.pip,
+      fullFrameSlots: blueprint.fullFrameSlots,
+      freeCrop: blueprint.freeCrop,
     });
     patchBlueprint({ splitRatio: clamped, crops: nextCrops }, recordHistory);
   };
@@ -272,13 +283,62 @@ export function FramingPage({
     const nextCrops = reconcileCrops(blueprint.layout, blueprint.aspect, sourceAr, blueprint.crops, {
       splitRatio: blueprint.splitRatio,
       pip: nextPip,
+      fullFrameSlots: blueprint.fullFrameSlots,
+      freeCrop: blueprint.freeCrop,
     });
     patchBlueprint({ pip: nextPip, crops: nextCrops }, recordHistory);
   };
 
   const handleChangeCrop = (idx: number, nextCrop: NormalizedCrop, recordHistory = false) => {
     const nextCrops = blueprint.crops.map((c, i) => (i === idx ? nextCrop : c));
-    patchBlueprint({ crops: nextCrops }, recordHistory);
+    const wasFull = Boolean(blueprint.fullFrameSlots?.[idx]);
+    const stillFull = nextCrop.w >= 0.985 && nextCrop.h >= 0.985;
+    if (wasFull && !stillFull) {
+      const nextFull = { ...(blueprint.fullFrameSlots ?? {}), [idx]: false };
+      patchBlueprint({ crops: nextCrops, fullFrameSlots: nextFull }, recordHistory);
+    } else {
+      patchBlueprint({ crops: nextCrops }, recordHistory);
+    }
+  };
+
+  const handleToggleFullFrameSlot = (slotIdx: number) => {
+    const currentlyFull = Boolean(blueprint.fullFrameSlots?.[slotIdx]);
+    const nextFull = { ...(blueprint.fullFrameSlots ?? {}), [slotIdx]: !currentlyFull };
+    const defaults = defaultCropsForLayout(blueprint.layout, blueprint.aspect, sourceAr, {
+      splitRatio: blueprint.splitRatio,
+      pip: blueprint.pip,
+    });
+    const nextCrops = blueprint.crops.map((c, i) => {
+      if (i !== slotIdx) return c;
+      return !currentlyFull ? { x: 0, y: 0, w: 1, h: 1 } : (defaults[i] ?? c);
+    });
+    patchBlueprint({ crops: nextCrops, fullFrameSlots: nextFull }, true);
+    onNotify(!currentlyFull ? 'Selected whole full-screen video (100%)' : 'Switched slot back to cropped region');
+  };
+
+  const handleToggleFreeCrop = () => {
+    const nextFree = !blueprint.freeCrop;
+    if (nextFree) {
+      const nextPip =
+        blueprint.layout === 'pip' && blueprint.pip.shape !== 'circle'
+          ? { ...blueprint.pip, aspect: 'free' as PipAspectId }
+          : blueprint.pip;
+      patchBlueprint({ freeCrop: true, pip: nextPip }, true);
+      onNotify('Free rectangular crop unlocked — drag any corner or edge');
+    } else {
+      const nextPip =
+        blueprint.layout === 'pip' && blueprint.pip.aspect === 'free'
+          ? { ...blueprint.pip, aspect: '16:9' as PipAspectId }
+          : blueprint.pip;
+      const nextCrops = reconcileCrops(blueprint.layout, blueprint.aspect, sourceAr, blueprint.crops, {
+        splitRatio: blueprint.splitRatio,
+        pip: nextPip,
+        fullFrameSlots: blueprint.fullFrameSlots,
+        freeCrop: false,
+      });
+      patchBlueprint({ freeCrop: false, pip: nextPip, crops: nextCrops }, true);
+      onNotify('Locked crop regions to output slot aspect ratios');
+    }
   };
 
   const handleSwapCrops = () => {
@@ -295,6 +355,8 @@ export function FramingPage({
     patchBlueprint(
       {
         crops: reset,
+        fullFrameSlots: {},
+        freeCrop: false,
         splitRatio: 0.5,
         centeredScale: 1,
         centeredPanX: 0,
@@ -576,13 +638,56 @@ export function FramingPage({
               <div className="flex-1 min-h-0 p-4 grid grid-cols-1 lg:grid-cols-[minmax(0,1.45fr)_minmax(240px,0.75fr)] gap-4 items-center overflow-hidden">
                 {/* Pane A: 16:9 Source Canvas with Draggable Aspect-Locked Crop Boxes */}
                 <div className="h-full min-h-0 flex flex-col">
-                  <div className="flex items-center justify-between pb-2 shrink-0">
+                  <div className="flex items-center justify-between gap-2 pb-2 shrink-0 flex-wrap">
                     <span className="text-xs font-medium text-[var(--pc-sub)]">
-                      Source Frame · Drag &amp; resize aspect-locked crop regions
+                      Source Frame · {blueprint.freeCrop ? 'Free rectangular crop & edge resize' : 'Drag & resize crop regions'}
                     </span>
-                    <span className="text-[11px] font-mono-tabular text-[var(--pc-muted)]">
-                      {sourceDims.width}×{sourceDims.height}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {blueprint.layout !== 'centered' && (() => {
+                        const targetFullIdx =
+                          blueprint.layout === 'split' || blueprint.layout === 'trio'
+                            ? activeSlotIndex
+                            : 0;
+                        const isTargetFull = Boolean(blueprint.fullFrameSlots?.[targetFullIdx]);
+                        return (
+                          <>
+                            <button
+                              type="button"
+                              data-testid="toggle-full-screen-btn"
+                              aria-pressed={isTargetFull}
+                              onClick={() => handleToggleFullFrameSlot(targetFullIdx)}
+                              title="Select whole full-screen source video (100%) over backdrop"
+                              className={`h-6 px-2 rounded-md border text-[11px] font-medium inline-flex items-center gap-1 cursor-pointer transition-colors ${
+                                isTargetFull
+                                  ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)] text-[var(--pc-ink)]'
+                                  : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                              }`}
+                            >
+                              <Maximize2 className="w-3 h-3" />
+                              <span>Full Screen (100%)</span>
+                            </button>
+                            <button
+                              type="button"
+                              data-testid="toggle-free-crop-btn"
+                              aria-pressed={Boolean(blueprint.freeCrop)}
+                              onClick={handleToggleFreeCrop}
+                              title="Unlock independent width & height rectangular resizing"
+                              className={`h-6 px-2 rounded-md border text-[11px] font-medium inline-flex items-center gap-1 cursor-pointer transition-colors ${
+                                blueprint.freeCrop
+                                  ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)] text-[var(--pc-ink)]'
+                                  : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                              }`}
+                            >
+                              {blueprint.freeCrop ? <Unlock className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
+                              <span>Free Rect</span>
+                            </button>
+                          </>
+                        );
+                      })()}
+                      <span className="text-[11px] font-mono-tabular text-[var(--pc-muted)] pl-1">
+                        {sourceDims.width}×{sourceDims.height}
+                      </span>
+                    </div>
                   </div>
                   <div className="flex-1 min-h-0 flex items-center justify-center">
                     <SourceCropCanvas
@@ -838,8 +943,14 @@ export function FramingPage({
 
                 {blueprint.layout === 'pip' && (
                   <div className="space-y-3">
+                    <StudioSwitch
+                      checked={Boolean(blueprint.fullFrameSlots?.[0])}
+                      label="Full Screen Main Video (100%)"
+                      onChange={() => handleToggleFullFrameSlot(0)}
+                    />
+
                     <div>
-                      <div className="text-[11px] text-[var(--pc-sub)] mb-1.5">Camera Shape</div>
+                      <div className="text-[11px] text-[var(--pc-sub)] mb-1.5">Facecam Style</div>
                       <SegmentedControl<PipShapeId>
                         ariaLabel="PiP shape"
                         size="sm"
@@ -847,12 +958,31 @@ export function FramingPage({
                         value={blueprint.pip.shape}
                         options={[
                           { value: 'rounded', label: 'Rounded' },
+                          { value: 'rect', label: 'Sharp' },
                           { value: 'circle', label: 'Circle' },
-                          { value: 'rect', label: '16:9 Rect' },
                         ]}
                         onChange={(shape) => handleUpdatePip({ shape }, true)}
                       />
                     </div>
+
+                    {blueprint.pip.shape !== 'circle' && (
+                      <div>
+                        <div className="text-[11px] text-[var(--pc-sub)] mb-1.5">Facecam Ratio</div>
+                        <SegmentedControl<PipAspectId>
+                          ariaLabel="Facecam aspect ratio"
+                          size="sm"
+                          fullWidth
+                          value={blueprint.pip.aspect ?? '16:9'}
+                          options={[
+                            { value: '16:9', label: '16:9' },
+                            { value: '4:3', label: '4:3' },
+                            { value: 'free', label: 'Free Rect' },
+                            { value: '1:1', label: '1:1' },
+                          ]}
+                          onChange={(aspect) => handleUpdatePip({ aspect }, true)}
+                        />
+                      </div>
+                    )}
 
                     <div>
                       <div className="text-[11px] text-[var(--pc-sub)] mb-1.5">Corner Placement</div>
@@ -904,17 +1034,17 @@ export function FramingPage({
                     )}
 
                     <StudioSlider
-                      label="PiP Scale"
+                      label="Facecam Width"
                       value={blueprint.pip.scale}
                       min={15}
-                      max={65}
+                      max={80}
                       valueLabel={`${blueprint.pip.scale}%`}
                       onChange={(scale) => handleUpdatePip({ scale }, false)}
                     />
 
                     {blueprint.pip.shape === 'rounded' && (
                       <StudioSlider
-                        label="PiP Corner Radius"
+                        label="Corner Radius"
                         value={blueprint.pip.radius}
                         min={0}
                         max={60}
@@ -1399,33 +1529,65 @@ export function FramingPage({
                         { key: 'w', label: 'W %', val: activeCrop.w * 100 },
                         { key: 'h', label: 'H %', val: activeCrop.h * 100 },
                       ] as const
-                    ).map((field) => (
-                      <label
-                        key={field.key}
-                        className="flex flex-col gap-1 text-[11px] text-[var(--pc-sub)]"
-                      >
-                        <span>{field.label}</span>
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={1}
-                          value={Math.round(field.val)}
-                          onChange={(e) => {
-                            const num = clampNum(Number(e.target.value) || 0, 0, 100) / 100;
-                            const raw = { ...activeCrop, [field.key]: num };
-                            const slotAr = getSlotAspect(activeSlotMeta, blueprint.aspect);
-                            const nextCrop =
-                              field.key === 'w' || field.key === 'h'
-                                ? fitCropToAspect(raw, slotAr, sourceAr)
-                                : { ...activeCrop, [field.key]: clampNum(num, 0, 1 - (field.key === 'x' ? activeCrop.w : activeCrop.h)) };
-                            handleChangeCrop(activeSlotIndex, nextCrop, true);
-                          }}
-                          className="h-7 px-2 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs font-mono-tabular text-[var(--pc-ink)]"
-                        />
-                      </label>
-                    ))}
+                    ).map((field) => {
+                      const activeIsFree = Boolean(
+                        blueprint.freeCrop ||
+                          (blueprint.layout === 'pip' &&
+                            activeSlotIndex === 1 &&
+                            blueprint.pip.shape !== 'circle' &&
+                            (blueprint.pip.aspect ?? '16:9') === 'free')
+                      );
+                      return (
+                        <label
+                          key={field.key}
+                          className="flex flex-col gap-1 text-[11px] text-[var(--pc-sub)]"
+                        >
+                          <span>{field.label}</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={Math.round(field.val)}
+                            onChange={(e) => {
+                              const num = clampNum(Number(e.target.value) || 0, 0, 100) / 100;
+                              const raw = { ...activeCrop, [field.key]: num };
+                              const slotAr = getSlotAspect(activeSlotMeta, blueprint.aspect);
+                              const nextCrop =
+                                field.key === 'w' || field.key === 'h'
+                                  ? activeIsFree
+                                    ? clampCrop(raw)
+                                    : fitCropToAspect(raw, slotAr, sourceAr)
+                                  : {
+                                      ...activeCrop,
+                                      [field.key]: clampNum(
+                                        num,
+                                        0,
+                                        1 - (field.key === 'x' ? activeCrop.w : activeCrop.h)
+                                      ),
+                                    };
+                              handleChangeCrop(activeSlotIndex, nextCrop, true);
+                            }}
+                            className="h-7 px-2 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs font-mono-tabular text-[var(--pc-ink)]"
+                          />
+                        </label>
+                      );
+                    })}
                   </div>
+
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => handleToggleFullFrameSlot(activeSlotIndex)}
+                  >
+                    <Maximize2 className="w-3 h-3" />
+                    <span>
+                      {blueprint.fullFrameSlots?.[activeSlotIndex]
+                        ? 'Restore Cropped Region'
+                        : `Use Whole Full Screen (100%) for ${activeSlotMeta.label}`}
+                    </span>
+                  </Button>
 
                   <div className="text-[11px] font-mono-tabular text-[var(--pc-muted)]">
                     Pixel region: {Math.round(activeCrop.w * sourceDims.width)}×

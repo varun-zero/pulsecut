@@ -434,12 +434,20 @@ async fn transcribe_full_video(
     section_offset_ms: i64,
     duration_ms: i64,
 ) -> Vec<Word> {
-    // 1. Local Whisper CLI
+    // 1. Local Whisper CLI (PULSECUT_WHISPER env overrides pulsecut.json whisper_binary)
+    let whisper_override = std::env::var("PULSECUT_WHISPER")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+    let whisper_explicit = whisper_override.as_deref().unwrap_or(&cfg.ai.whisper_binary);
     if let Some(whisper_bin) = resolve_binary(
-        &cfg.ai.whisper_binary,
+        whisper_explicit,
         "PULSECUT_WHISPER",
         &["whisper-cli", "whisper-cli.exe", "whisper", "whisper.exe", "faster-whisper"],
     ) {
+        let whisper_model = std::env::var("PULSECUT_WHISPER_MODEL")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| cfg.ai.whisper_model.clone());
         let wav = dir.join("full_audio.wav");
         let extracted = Command::new(ffmpeg_bin)
             .args(["-y", "-v", "error", "-i"])
@@ -450,7 +458,7 @@ async fn transcribe_full_video(
             .map(|s| s.success())
             .unwrap_or(false);
         if extracted && wav.is_file() {
-            let cli = WhisperCli::new(whisper_bin, cfg.ai.whisper_model.clone(), dir.join("whisper"));
+            let cli = WhisperCli::new(whisper_bin, whisper_model, dir.join("whisper"));
             match cli.transcribe(&wav, 0).await {
                 Ok(words) if !words.is_empty() => {
                     tracing::info!("full-video transcription via local whisper: {} words", words.len());
@@ -1126,7 +1134,7 @@ where
     let resolved_template_id = if template_id.trim().is_empty() { "default" } else { template_id };
     let template = pulsecut_render::get_template(resolved_template_id)
         .unwrap_or_else(|| pulsecut_render::get_template("default").unwrap_or_else(|| pulsecut_render::template_library().remove(0)));
-    let renderer = Renderer::new(cfg.render.clone())?;
+    let renderer = Renderer::with_ffmpeg(cfg.render.clone(), ffmpeg_bin.clone());
     let platform = detect_platform(url, &opts);
     let channel = extract_channel(url, &opts);
     let mut packages = Vec::new();

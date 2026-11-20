@@ -10,14 +10,20 @@ shape, so it is a drop-in for PULSECUT_WHISPER.
 faster-whisper is ~4x faster than whisper.cpp on CPU and downloads its model from
 HuggingFace on first use (no separate model file needed). Model via -m or
 PULSECUT_WHISPER_MODEL (e.g. small.en, base.en, large-v3-turbo).
+VAD filtering is enabled by default (disable with PULSECUT_WHISPER_VAD=0) to
+prevent hallucinations during silence/music and speed up CPU transcription.
 """
-import argparse, json, os, sys
+import argparse
+import json
+import os
+import sys
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
+
 
 def main():
     ap = argparse.ArgumentParser(add_help=False)
@@ -32,16 +38,22 @@ def main():
     if not media:
         print("whisper_cli: no input media", file=sys.stderr)
         return 2
+    if not os.path.isfile(media):
+        print(f"whisper_cli: media file not found: {media}", file=sys.stderr)
+        return 2
 
     from faster_whisper import WhisperModel
+
     model = WhisperModel(
         args.model,
         device=os.environ.get("PULSECUT_WHISPER_DEVICE", "cpu"),
         compute_type=os.environ.get("PULSECUT_WHISPER_COMPUTE", "int8"),
     )
+    vad_enabled = os.environ.get("PULSECUT_WHISPER_VAD", "1").strip().lower() not in ("0", "false", "no", "off")
     segments, info = model.transcribe(
         media,
         word_timestamps=True,
+        vad_filter=vad_enabled,
         language=os.environ.get("PULSECUT_WHISPER_LANG") or None,
     )
 
@@ -49,21 +61,44 @@ def main():
     for seg in segments:
         ws = []
         for w in (seg.words or []):
-            item = {"word": w.word, "start": round(w.start, 3), "end": round(w.end, 3),
-                    "probability": round(getattr(w, "probability", 0.9), 3)}
+            token = (w.word or "").strip()
+            if not token:
+                continue
+            item = {
+                "word": token,
+                "start": round(float(w.start), 3),
+                "end": round(float(w.end), 3),
+                "probability": round(float(getattr(w, "probability", 0.9)), 3),
+            }
             ws.append(item)
             words.append(item)
-        segs.append({"id": seg.id, "text": seg.text,
-                     "start": round(seg.start, 3), "end": round(seg.end, 3), "words": ws})
+        segs.append({
+            "id": seg.id,
+            "text": (seg.text or "").strip(),
+            "start": round(float(seg.start), 3),
+            "end": round(float(seg.end), 3),
+            "words": ws,
+        })
 
     os.makedirs(args.outdir, exist_ok=True)
     stem = os.path.splitext(os.path.basename(media))[0]
     out_path = os.path.join(args.outdir, stem + ".json")
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump({"text": " ".join(s["text"] for s in segs), "words": words,
-                   "segments": segs, "language": info.language}, f, ensure_ascii=False)
+    tmp_path = out_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "text": " ".join(s["text"] for s in segs if s["text"]),
+                "words": words,
+                "segments": segs,
+                "language": getattr(info, "language", "en"),
+            },
+            f,
+            ensure_ascii=False,
+        )
+    os.replace(tmp_path, out_path)
     print(out_path)
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

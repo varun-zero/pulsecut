@@ -18,7 +18,7 @@ use pulsecut_publish::{
 };
 use pulsecut_render::Renderer;
 use serde_json::{json, Value};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -52,7 +52,9 @@ pub async fn serve(addr: &str, cfg: Config) -> Result<()> {
         out: out.clone(),
         store: Mutex::new(Store::open(out.join("editor"))?),
         jobs: Mutex::new(JobStore::open(out.join("editor"))?),
-        renderer: Renderer::new(cfg.render.clone()).ok(),
+        renderer: pulsecut_capture::ffmpeg(&cfg.capture.ffmpeg_path)
+            .ok()
+            .map(|ff| Renderer::with_ffmpeg(cfg.render.clone(), ff)),
         ai: resilient_backend(&cfg),
     });
 
@@ -73,32 +75,39 @@ pub async fn serve(addr: &str, cfg: Config) -> Result<()> {
                 let n = match socket.read(&mut tmp).await { Ok(n) => n, Err(_) => return };
                 if n == 0 { break; }
                 buf.extend_from_slice(&tmp[..n]);
-                if let Some(text) = std::str::from_utf8(&buf).ok() {
-                    if let Some(hpos) = text.find("\r\n\r\n") {
-                        if len == 0 {
-                            for line in text[..hpos].split("\r\n") {
-                                if let Some((k, v)) = line.split_once(':') {
-                                    if k.eq_ignore_ascii_case("content-length") {
-                                        len = v.trim().parse().unwrap_or(0);
-                                    }
+                if let Some(hpos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    if len == 0 {
+                        let header_text = String::from_utf8_lossy(&buf[..hpos]);
+                        for line in header_text.split("\r\n") {
+                            if let Some((k, v)) = line.split_once(':') {
+                                if k.eq_ignore_ascii_case("content-length") {
+                                    len = v.trim().parse().unwrap_or(0);
                                 }
                             }
                         }
-                        if buf.len() >= hpos + 4 + len { break; }
                     }
+                    if buf.len() >= hpos + 4 + len { break; }
                 }
                 if buf.len() > 2_000_000 { break; }
             }
             if buf.is_empty() { return; }
-            let raw = String::from_utf8_lossy(&buf).into_owned();
-            let mut lines = raw.split("\r\n");
-            let request = lines.next().unwrap_or("");
+            let header_end = buf.windows(4).position(|w| w == b"\r\n\r\n");
+            let head_bytes = match header_end {
+                Some(pos) => &buf[..pos],
+                None => &buf[..],
+            };
+            let head_str = String::from_utf8_lossy(head_bytes);
+            let request = head_str.split("\r\n").next().unwrap_or("");
             let mut parts = request.split_whitespace();
             let method = parts.next().unwrap_or("GET").to_string();
             let path = parts.next().unwrap_or("/").to_string();
             let body = if len > 0 {
-                match raw.find("\r\n\r\n") {
-                    Some(pos) => raw[pos + 4..(pos + 4 + len).min(raw.len())].to_string(),
+                match header_end {
+                    Some(pos) => {
+                        let start = pos + 4;
+                        let end = (start + len).min(buf.len());
+                        String::from_utf8_lossy(&buf[start..end]).into_owned()
+                    }
                     None => String::new(),
                 }
             } else { String::new() };
@@ -110,6 +119,10 @@ pub async fn serve(addr: &str, cfg: Config) -> Result<()> {
                 204 => "No Content",
                 400 => "Bad Request",
                 404 => "Not Found",
+                409 => "Conflict",
+                412 => "Precondition Failed",
+                500 => "Internal Server Error",
+                502 => "Bad Gateway",
                 _ => "OK",
             };
             let head = format!(
@@ -176,10 +189,18 @@ async fn handle(state: Arc<Shared>, method: &str, path: &str, body: &str) -> (u1
                 None => json_out(404, json!({"error": "job not found"})),
             }
         }
-        // QA frames produced by the verify endpoint.
+        // QA frames produced by the verify endpoint (path-traversal hardened).
         _ if path.starts_with("/api/qa/") => {
             let rest = path.trim_start_matches("/api/qa/");
-            let file = state.out.join("qa").join(rest);
+            let rel = Path::new(rest);
+            let safe = !rest.is_empty()
+                && !rest.contains('\\')
+                && rest.ends_with(".jpg")
+                && rel.components().all(|c| matches!(c, Component::Normal(_)));
+            if !safe {
+                return json_out(400, json!({"error": "invalid qa frame path"}));
+            }
+            let file = state.out.join("qa").join(rel);
             if file.is_file() {
                 match tokio::fs::read(&file).await {
                     Ok(bytes) => (200, "image/jpeg", bytes),
@@ -585,8 +606,94 @@ async fn rerender(state: &Shared, id: &str, body: &str) -> (u16, &'static str, V
 // Automation-agent hooks: verification, metadata, publishing
 // ---------------------------------------------------------------------------
 
+fn resolve_ffprobe(ffmpeg: &Path) -> PathBuf {
+    if let Ok(env_path) = std::env::var("PULSECUT_FFPROBE") {
+        let p = PathBuf::from(env_path.trim());
+        if !env_path.trim().is_empty() && p.is_file() {
+            return p;
+        }
+    }
+    let sibling = ffmpeg.with_file_name(if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" });
+    if sibling.is_file() {
+        return sibling;
+    }
+    PathBuf::from(if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" })
+}
+
+/// Inspect top-level ISO-BMFF boxes and return `true` when `moov` appears
+/// before `mdat` (true `+faststart` streaming readiness).
+fn has_mp4_faststart(path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let Ok(file_len) = f.metadata().map(|m| m.len()) else { return false };
+    let mut pos: u64 = 0;
+    let mut header = [0u8; 8];
+    let mut ext = [0u8; 8];
+    while pos + 8 <= file_len {
+        if f.seek(SeekFrom::Start(pos)).is_err() || f.read_exact(&mut header).is_err() {
+            break;
+        }
+        let size32 = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as u64;
+        let box_type = &header[4..8];
+        if box_type == b"moov" {
+            return true;
+        }
+        if box_type == b"mdat" {
+            return false;
+        }
+        let box_size = if size32 == 1 {
+            if f.read_exact(&mut ext).is_err() {
+                break;
+            }
+            u64::from_be_bytes(ext)
+        } else if size32 == 0 {
+            break;
+        } else {
+            size32
+        };
+        if box_size < 8 {
+            break;
+        }
+        pos = pos.saturating_add(box_size);
+    }
+    false
+}
+
+/// Measure mean audio loudness (dB) via FFmpeg `volumedetect`.
+fn probe_mean_volume_db(ffmpeg: &Path, path: &Path) -> Option<f64> {
+    let out = std::process::Command::new(ffmpeg)
+        .args(["-hide_banner", "-v", "info", "-i"])
+        .arg(path)
+        .args(["-af", "volumedetect", "-vn", "-sn", "-dn", "-f", "null", "-"])
+        .output()
+        .ok()?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    for line in stderr.lines() {
+        if let Some(pos) = line.find("mean_volume:") {
+            let after = line[pos + "mean_volume:".len()..].trim();
+            if let Some(token) = after.split_whitespace().next() {
+                if let Ok(db) = token.parse::<f64>() {
+                    return Some(db);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn default_token_env_for_publisher() -> &'static str {
+    match std::env::var("PULSECUT_PUBLISHER").unwrap_or_else(|_| "woopsocial".into()).as_str() {
+        "uploadpost" => "PULSECUT_UPLOADPOST_TOKEN",
+        "postiz" => "PULSECUT_POSTIZ_TOKEN",
+        "direct" => "PULSECUT_YOUTUBE_TOKEN",
+        "tiktok_direct" => "PULSECUT_TIKTOK_TOKEN",
+        "instagram_direct" => "PULSECUT_IG_TOKEN",
+        _ => "PULSECUT_WOOPSOCIAL_TOKEN",
+    }
+}
+
 /// Objective verification of a finished short. Returns a 0-100 vitality score
-/// and the reasons any check failed. Also extracts 3 QA frames via ffmpeg.
+/// (exact 100-point rubric) and any failed checks, plus 3 QA frames via ffmpeg.
 async fn verify_clip_endpoint(state: &Shared, id: &str) -> (u16, &'static str, Vec<u8>) {
     let pkg = match state.store.lock().unwrap().get(id).cloned() {
         Some(p) => p,
@@ -596,7 +703,7 @@ async fn verify_clip_endpoint(state: &Shared, id: &str) -> (u16, &'static str, V
         Ok(p) => p,
         Err(e) => return json_out(500, json!({"error": e.to_string()})),
     };
-    let ffprobe = ffmpeg.with_file_name(if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" });
+    let ffprobe = resolve_ffprobe(&ffmpeg);
     let out = std::process::Command::new(&ffprobe)
         .args(["-v", "error", "-show_streams", "-show_format", "-of", "json"])
         .arg(&pkg.video_path)
@@ -616,34 +723,52 @@ async fn verify_clip_endpoint(state: &Shared, id: &str) -> (u16, &'static str, V
     let num = |s: Option<&Value>| -> u64 { s.and_then(|x| x.as_str()).and_then(|x| x.parse().ok()).unwrap_or(0) };
     let w = v.and_then(|s| s.get("width")).and_then(|x| x.as_u64()).unwrap_or(0) as u32;
     let h = v.and_then(|s| s.get("height")).and_then(|x| x.as_u64()).unwrap_or(0) as u32;
-    let vbr = num(v.and_then(|s| s.get("bit_rate")));
     let abr = num(a.and_then(|s| s.get("bit_rate")));
+    let fmt_br = num(meta.get("format").and_then(|f| f.get("bit_rate")));
+    let stream_vbr = num(v.and_then(|s| s.get("bit_rate")));
+    let vbr = if stream_vbr > 0 { stream_vbr } else { fmt_br.saturating_sub(abr) };
     let dur = meta.get("format").and_then(|f| f.get("duration")).and_then(|x| x.as_str())
         .and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
     let vcodec = v.and_then(|s| s.get("codec_name")).and_then(|x| x.as_str()).unwrap_or("").to_string();
     let acodec = a.and_then(|s| s.get("codec_name")).and_then(|x| x.as_str()).unwrap_or("").to_string();
     let fps = v.and_then(|s| s.get("r_frame_rate")).and_then(|x| x.as_str()).unwrap_or("").to_string();
 
+    // Exact 100-point rubric:
+    // h264(10) + audio(10) + aac(5) + canvas(15) + dur(10) + vbr(15) + abr(5) + fps(5) + decode(10) + faststart(10) + non_silent(5) = 100
     let mut score = 0u32;
     let mut reasons: Vec<String> = Vec::new();
-    let mut check = |cond: bool, pts: u32, msg: &str| { if cond { score += pts; } else { reasons.push(msg.to_string()); } };
-    check(vcodec == "h264", 10, "video codec is not h264");
-    check(a.is_some(), 10, "no audio stream");
-    check(acodec == "aac", 5, "audio codec is not aac");
-    check((w == 1080 && h == 1920) || (w == 1920 && h == 1080), 15, "canvas is not 1080x1920");
-    check(dur >= 8.0 && dur <= 60.0, 10, "duration outside 8-60s");
-    check(vbr >= 2_000_000, 15, "video bitrate below 2 Mbps");
-    check(abr >= 128_000, 5, "audio bitrate below 128 kbps");
+    let mut hard_failed = false;
+    let mut check = |cond: bool, pts: u32, hard: bool, msg: &str| {
+        if cond {
+            score += pts;
+        } else {
+            reasons.push(msg.to_string());
+            if hard {
+                hard_failed = true;
+            }
+        }
+    };
+    check(vcodec == "h264", 10, true, "video codec is not h264");
+    check(a.is_some(), 10, true, "no audio stream");
+    check(acodec == "aac", 5, true, "audio codec is not aac");
+    check((w == 1080 && h == 1920) || (w == 1920 && h == 1080) || (w == 1080 && h == 1080), 15, true, "canvas is not 1080x1920");
+    check((8.0..=60.0).contains(&dur), 10, true, "duration outside 8-60s");
+    check(vbr >= 2_000_000, 15, false, "video bitrate below 2 Mbps");
+    check(abr >= 96_000, 5, false, "audio bitrate below 96 kbps");
     let fps_val = fps.split('/').next().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
     let fps_den = fps.split('/').nth(1).and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
     let fr = if fps_den > 0.0 { fps_val / fps_den } else { 0.0 };
-    check(fr >= 20.0 && fr <= 61.0, 5, "fps outside 20-61");
+    check((20.0..=61.0).contains(&fr), 5, true, "fps outside 20-61");
     let dec = std::process::Command::new(&ffmpeg)
         .args(["-v", "error", "-i"]).arg(&pkg.video_path)
         .args(["-f", "null", "-"]).output();
     let clean = dec.as_ref().map(|o| o.status.success() && o.stderr.is_empty()).unwrap_or(false);
-    check(clean, 10, "ffmpeg decode reported errors");
-    score += 20; // faststart reserved
+    check(clean, 10, true, "ffmpeg decode reported errors");
+    let faststart = has_mp4_faststart(Path::new(&pkg.video_path));
+    check(faststart, 10, false, "mp4 missing faststart (moov atom not before mdat)");
+    let mean_volume_db = probe_mean_volume_db(&ffmpeg, Path::new(&pkg.video_path));
+    let audible = mean_volume_db.map(|db| db > -50.0).unwrap_or(false);
+    check(audible, 5, true, "audio appears silent (mean_volume <= -50 dB)");
 
     let frames_dir = state.out.join("qa").join(id);
     let _ = std::fs::create_dir_all(&frames_dir);
@@ -658,19 +783,27 @@ async fn verify_clip_endpoint(state: &Shared, id: &str) -> (u16, &'static str, V
     }
     json_out(200, json!({
         "clip_id": id,
-        "ok": score >= 70 && reasons.is_empty(),
+        "status": pkg.status,
+        "ok": score >= 75 && !hard_failed,
         "vitality_score": score,
         "viral_score": pkg.confidence,
         "viral_reason": pkg.source_window.snap_reason,
-        "metrics": {"width": w, "height": h, "duration_s": dur, "fps": fps,
-                    "video_bitrate_mbps": vbr as f64 / 1e6, "audio_bitrate_kbps": abr / 1000,
-                    "video_codec": vcodec, "audio_codec": acodec},
+        "has_transcript": !pkg.words.is_empty(),
+        "word_count": pkg.words.len(),
+        "metrics": {
+            "width": w, "height": h, "duration_s": dur, "fps": fps,
+            "video_bitrate_mbps": vbr as f64 / 1e6,
+            "audio_bitrate_kbps": abr / 1000,
+            "video_codec": vcodec, "audio_codec": acodec,
+            "faststart": faststart,
+            "mean_volume_db": mean_volume_db
+        },
         "reasons": reasons,
         "sample_frames": frames
     }))
 }
 
-/// Overwrite a clip's metadata with researched captions/hashtags.
+/// Overwrite a clip's metadata with researched captions/hashtags (and optional hook).
 fn set_metadata(state: &Shared, id: &str, body: &str) -> (u16, &'static str, Vec<u8>) {
     let v: Value = match serde_json::from_str(body) {
         Ok(x) => x,
@@ -684,35 +817,74 @@ fn set_metadata(state: &Shared, id: &str, body: &str) -> (u16, &'static str, Vec
     if let Some(d) = v.get("description").and_then(|x| x.as_str()) { pkg.description = d.to_string(); }
     if let Some(tags) = v.get("hashtags").and_then(|x| x.as_array()) {
         pkg.hashtags = tags.iter().filter_map(|x| x.as_str())
-            .map(|s| s.trim_start_matches('#').to_string()).collect();
+            .map(|s| s.trim_start_matches('#').to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
     }
-    match state.store.lock().unwrap().upsert(pkg.clone()) {
-        Ok(_) => json_out(200, json!({"ok": true, "clip": pkg})),
-        Err(e) => json_out(500, json!({"error": e.to_string()})),
+    let hook_text = v.get("hook").and_then(|x| x.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    {
+        let mut store = state.store.lock().unwrap();
+        if let Err(e) = store.upsert(pkg.clone()) {
+            return json_out(500, json!({"error": e.to_string()}));
+        }
+        if let Some(hook) = hook_text {
+            let dur = pkg.source_window.duration_ms().max(4_000);
+            let _ = store.append_edits(id, vec![EditOp::Hook { text: hook, duration_ms: dur }]);
+        }
     }
+    json_out(200, json!({"ok": true, "clip": pkg}))
 }
 
-/// Publish one clip to the requested target platforms. Requires the relevant
-/// PULSECUT_*_TOKEN env var(s); returns one receipt per target.
+/// Publish one clip to the requested target platforms.
+/// Enforces the approval gate (unless `auto_approve` or `force: true`) and
+/// blocks accidental double-publishing (returns 409 unless `force: true`).
 async fn publish_clip(state: &Shared, id: &str, body: &str) -> (u16, &'static str, Vec<u8>) {
     let v: Value = serde_json::from_str(body).unwrap_or_else(|_| json!({}));
+    let force = v.get("force").and_then(|x| x.as_bool()).unwrap_or(false);
     let targets: Vec<String> = v.get("targets").and_then(|x| x.as_array())
         .and_then(|a| a.iter().map(|x| x.as_str().map(String::from)).collect::<Option<Vec<_>>>())
         .unwrap_or_else(|| state.cfg.publishing.targets.iter()
             .filter(|t| t.enabled).map(|t| t.id.clone()).collect());
-    let token_env = v.get("token_env").and_then(|x| x.as_str()).unwrap_or("PULSECUT_WOOPSOCIAL_TOKEN").to_string();
+    if targets.is_empty() {
+        return json_out(400, json!({"ok": false, "error": "no publishing targets specified or enabled"}));
+    }
+    let token_env = v.get("token_env")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| default_token_env_for_publisher().to_string());
     let pkg = match state.store.lock().unwrap().get(id).cloned() {
         Some(p) => p,
         None => return json_out(404, json!({"error": "clip not found"})),
     };
+    if !force && pkg.status == ClipStatus::Published {
+        return json_out(409, json!({
+            "ok": false,
+            "error": "clip is already published",
+            "hint": "pass {\"force\": true} to intentionally republish"
+        }));
+    }
+    if !force && !state.cfg.publishing.auto_approve && pkg.status != ClipStatus::Approved {
+        return json_out(412, json!({
+            "ok": false,
+            "error": format!("clip status is {:?}; approve the clip before publishing", pkg.status),
+            "hint": "call POST /api/clips/{id}/approve first (or pass {\"force\": true})"
+        }));
+    }
     let job = PublishJob { package: pkg, targets: targets.clone(), token_env };
     let pubber = publisher(&state.cfg);
     match pubber.publish(&job).await {
         Ok(receipts) => {
-            let all_ok = receipts.iter().all(|r| r.ok);
-            let _ = state.store.lock().unwrap().set_status(id,
-                if all_ok { ClipStatus::Published } else { ClipStatus::Failed });
-            json_out(200, json!({"ok": all_ok, "publisher": pubber.name(), "receipts": receipts}))
+            let all_ok = !receipts.is_empty() && receipts.iter().all(|r| r.ok);
+            let any_ok = receipts.iter().any(|r| r.ok);
+            let next_status = if any_ok { ClipStatus::Published } else { ClipStatus::Failed };
+            let _ = state.store.lock().unwrap().set_status(id, next_status);
+            json_out(200, json!({
+                "ok": all_ok,
+                "partial": any_ok && !all_ok,
+                "publisher": pubber.name(),
+                "receipts": receipts
+            }))
         }
         Err(e) => {
             let _ = state.store.lock().unwrap().set_status(id, ClipStatus::Failed);

@@ -58,6 +58,20 @@ impl WoopSocialPublisher {
         };
         (platform, fields)
     }
+
+    /// Extract a JSON array whether the API returns `[...]` directly or wraps it
+    /// under `data`, `projects`, `socialAccounts`, or `items`.
+    fn extract_array<'a>(v: &'a Value, keys: &[&str]) -> Option<&'a Vec<Value>> {
+        if let Some(arr) = v.as_array() {
+            return Some(arr);
+        }
+        for key in keys {
+            if let Some(arr) = v.get(*key).and_then(|x| x.as_array()) {
+                return Some(arr);
+            }
+        }
+        None
+    }
 }
 
 #[async_trait::async_trait]
@@ -78,8 +92,15 @@ impl Publisher for WoopSocialPublisher {
             None => {
                 let resp = self.client.get(format!("{base}/projects")).header("Authorization", &auth)
                     .send().await.map_err(|e| PulseError::Publish(format!("woopsocial projects: {e}")))?;
-                let v: Value = resp.json().await.unwrap_or(json!([]));
-                v.get(0).and_then(|p| p.get("id")).and_then(|x| x.as_str())
+                let status = resp.status();
+                let v: Value = resp.json().await.unwrap_or(json!({}));
+                if !status.is_success() {
+                    return Err(PulseError::Publish(format!("woopsocial projects {status}: {v}")));
+                }
+                Self::extract_array(&v, &["data", "projects", "items"])
+                    .and_then(|arr| arr.first())
+                    .and_then(|p| p.get("id").or_else(|| p.get("projectId")))
+                    .and_then(|x| x.as_str())
                     .ok_or_else(|| PulseError::Publish("woopsocial: no project found (connect a social account in the WoopSocial dashboard)".into()))?
                     .to_string()
             }
@@ -100,25 +121,39 @@ impl Publisher for WoopSocialPublisher {
         if !status.is_success() {
             return Err(PulseError::Publish(format!("woopsocial media upload {status}: {body}")));
         }
-        let media_id = body.get("mediaId").and_then(|x| x.as_str())
-            .ok_or_else(|| PulseError::Publish("woopsocial: upload returned no mediaId".into()))?.to_string();
+        let media_id = body.get("mediaId")
+            .or_else(|| body.get("id"))
+            .or_else(|| body.get("data").and_then(|d| d.get("mediaId").or_else(|| d.get("id"))))
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| PulseError::Publish(format!("woopsocial: upload returned no mediaId ({body})")))?
+            .to_string();
 
         // 3) Connected social accounts -> map platform to account id.
         let resp = self.client.get(format!("{base}/social-accounts?projectId={project_id}"))
             .header("Authorization", &auth).send().await
             .map_err(|e| PulseError::Publish(format!("woopsocial social-accounts: {e}")))?;
-        let accounts: Value = resp.json().await.unwrap_or(json!([]));
+        let status = resp.status();
+        let accounts: Value = resp.json().await.unwrap_or(json!({}));
+        if !status.is_success() {
+            return Err(PulseError::Publish(format!("woopsocial social-accounts {status}: {accounts}")));
+        }
+        let account_list = Self::extract_array(&accounts, &["data", "socialAccounts", "accounts", "items"]);
         let find_account = |platform: &str| -> Option<String> {
-            accounts.as_array()?.iter().find(|a| {
+            account_list?.iter().find(|a| {
                 a.get("platform").and_then(|x| x.as_str())
                     .map(|p| p.eq_ignore_ascii_case(platform)).unwrap_or(false)
-                    && a.get("status").and_then(|x| x.as_str()) == Some("CONNECTED")
-            }).and_then(|a| a.get("id")).and_then(|x| x.as_str()).map(String::from)
+                    && a.get("status").and_then(|x| x.as_str())
+                        .map(|s| s.eq_ignore_ascii_case("CONNECTED"))
+                        .unwrap_or(true)
+            }).and_then(|a| a.get("id").or_else(|| a.get("socialAccountId")))
+              .and_then(|x| x.as_str())
+              .map(String::from)
         };
 
         let text = caption(&job.package);
         let mut social_accounts = Vec::new();
         let mut receipts = Vec::new();
+        let mut connected_receipt_indices = Vec::new();
         for target in &job.targets {
             let (platform, mut fields) = Self::platform_for(target);
             if let Some(obj) = fields.as_mut() {
@@ -137,6 +172,14 @@ impl Publisher for WoopSocialPublisher {
             let mut sa = json!({"platform": platform, "socialAccountId": account_id});
             if let Some(obj) = fields { sa.as_object_mut().unwrap().extend(obj.as_object().unwrap().clone()); }
             social_accounts.push(sa);
+            connected_receipt_indices.push(receipts.len());
+            receipts.push(PublishReceipt {
+                target: target.clone(),
+                platform_id: String::new(),
+                url: None,
+                ok: false,
+                detail: "pending publish".into(),
+            });
         }
         if social_accounts.is_empty() {
             return Ok(receipts);
@@ -158,9 +201,13 @@ impl Publisher for WoopSocialPublisher {
             return Err(PulseError::Publish(format!("woopsocial post {status}: {body}")));
         }
         let post_id = extract_id(&body);
-        for r in &mut receipts {
-            if !r.detail.starts_with("no connected") {
+        let post_url = body["url"].as_str()
+            .or_else(|| body["data"]["url"].as_str())
+            .map(str::to_string);
+        for idx in connected_receipt_indices {
+            if let Some(r) = receipts.get_mut(idx) {
                 r.platform_id = post_id.clone();
+                r.url = post_url.clone();
                 r.ok = true;
                 r.detail = format!("published via {} post {post_id}", self.name());
             }
@@ -264,3 +311,42 @@ impl Publisher for PostizPublisher {
         }).collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn woopsocial_maps_platform_aliases_and_fields() {
+        let (plat, fields) = WoopSocialPublisher::platform_for("youtube_shorts");
+        assert_eq!(plat, "YOUTUBE");
+        assert!(fields.is_some());
+
+        let (ig, ig_fields) = WoopSocialPublisher::platform_for("instagram_reels");
+        assert_eq!(ig, "INSTAGRAM");
+        assert_eq!(ig_fields.unwrap()["postType"], "REEL");
+
+        let (tt, tt_fields) = WoopSocialPublisher::platform_for("tiktok");
+        assert_eq!(tt, "TIKTOK");
+        assert_eq!(tt_fields.unwrap()["postMode"], "DIRECT_POST");
+    }
+
+    #[test]
+    fn woopsocial_extracts_both_raw_and_wrapped_arrays() {
+        let raw = json!([{"id": "p1"}]);
+        assert_eq!(WoopSocialPublisher::extract_array(&raw, &["data"]).unwrap().len(), 1);
+
+        let wrapped = json!({"data": [{"id": "p2"}, {"id": "p3"}]});
+        assert_eq!(WoopSocialPublisher::extract_array(&wrapped, &["data"]).unwrap().len(), 2);
+
+        let named = json!({"socialAccounts": [{"id": "a1"}]});
+        assert_eq!(WoopSocialPublisher::extract_array(&named, &["data", "socialAccounts"]).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn extracts_post_id_variants() {
+        assert_eq!(extract_id(&json!({"postId": "abc"})), "abc");
+        assert_eq!(extract_id(&json!({"data": {"id": "xyz"}})), "xyz");
+    }
+}
+

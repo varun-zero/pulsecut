@@ -26,15 +26,16 @@ export const CANVAS_SPECS: readonly CanvasSpec[] = [
 
 export const DEFAULT_PIP_CONFIG: PipConfig = {
   shape: 'rounded',
+  aspect: '16:9',
   corner: 'br',
-  x: 60,
-  y: 65,
-  scale: 36,
+  x: 52,
+  y: 66,
+  scale: 44,
   borderWidth: 3,
   borderColor: '#FFFFFF',
   shadow: true,
   flip: false,
-  radius: 16,
+  radius: 14,
 };
 
 export const DEFAULT_BACKDROP_CONFIG: BackdropConfig = {
@@ -126,6 +127,32 @@ export function clampCrop(crop: NormalizedCrop): NormalizedCrop {
   };
 }
 
+export interface SlotLayoutOptions {
+  splitRatio?: number;
+  pip?: Partial<PipConfig>;
+  crops?: readonly NormalizedCrop[];
+  sourceAr?: number;
+  fullFrameSlots?: Record<number, boolean>;
+  freeCrop?: boolean;
+}
+
+/** Resolves the effective width/height aspect ratio of the PiP facecam overlay */
+export function resolvePipAspectRatio(
+  pip: Partial<PipConfig> | undefined,
+  facecamCrop?: NormalizedCrop,
+  sourceAr = 16 / 9
+): number {
+  const merged = { ...DEFAULT_PIP_CONFIG, ...pip };
+  if (merged.shape === 'circle') return 1;
+  const aspectId = merged.aspect ?? '16:9';
+  if (aspectId === '1:1') return 1;
+  if (aspectId === '4:3') return 4 / 3;
+  if (aspectId === 'free' && facecamCrop) {
+    return clampNum((facecamCrop.w * sourceAr) / Math.max(0.01, facecamCrop.h), 0.45, 2.6);
+  }
+  return 16 / 9;
+}
+
 /**
  * Exact output slot geometry (`Sb` from decompiled engine):
  * Returns normalized destination rectangles for every active slot of the chosen layout.
@@ -133,7 +160,7 @@ export function clampCrop(crop: NormalizedCrop): NormalizedCrop {
 export function getOutputSlots(
   layout: LayoutModeId,
   aspect: AspectRatioId,
-  opts?: { splitRatio?: number; pip?: Partial<PipConfig> }
+  opts?: SlotLayoutOptions
 ): OutputSlot[] {
   if (layout === 'split') {
     const r = clampNum(opts?.splitRatio ?? 0.5, 0.15, 0.85);
@@ -145,12 +172,13 @@ export function getOutputSlots(
   if (layout === 'pip') {
     const pip: PipConfig = { ...DEFAULT_PIP_CONFIG, ...opts?.pip };
     const canvasAr = getCanvasAspectRatio(aspect);
-    const w = clampNum((pip.scale ?? 36) / 100, 0.15, 0.65);
-    const h = pip.shape === 'rect' ? (w * canvasAr) / (16 / 9) : w * canvasAr;
+    const w = clampNum((pip.scale ?? 44) / 100, 0.15, 0.85);
+    const pipAr = resolvePipAspectRatio(pip, opts?.crops?.[1], opts?.sourceAr ?? 16 / 9);
+    const h = clampNum((w * canvasAr) / pipAr, 0.08, 0.72);
     const marginX = 0.04;
     const marginY = 0.04;
-    let x = (pip.x ?? 60) / 100;
-    let y = (pip.y ?? 65) / 100;
+    let x = (pip.x ?? 52) / 100;
+    let y = (pip.y ?? 66) / 100;
     if (pip.corner === 'tl') {
       x = marginX;
       y = marginY;
@@ -187,7 +215,7 @@ export function getOutputSlots(
 export function getCroppableSlots(
   layout: LayoutModeId,
   aspect: AspectRatioId,
-  opts?: { splitRatio?: number; pip?: Partial<PipConfig> }
+  opts?: SlotLayoutOptions
 ): OutputSlot[] {
   return getOutputSlots(layout, aspect, opts).filter((s) => !s.contain);
 }
@@ -235,12 +263,15 @@ export function defaultCropsForLayout(
   layout: LayoutModeId,
   aspect: AspectRatioId,
   sourceAr = 16 / 9,
-  opts?: { splitRatio?: number; pip?: Partial<PipConfig> }
+  opts?: SlotLayoutOptions
 ): NormalizedCrop[] {
-  const slots = getCroppableSlots(layout, aspect, opts);
+  const slots = getCroppableSlots(layout, aspect, { ...opts, sourceAr });
   const count = Math.max(1, slots.length);
 
   return slots.map((slot, idx) => {
+    if (opts?.fullFrameSlots?.[idx]) {
+      return { x: 0, y: 0, w: 1, h: 1 };
+    }
     const slotAr = getSlotAspect(slot, aspect);
 
     if (layout === 'pip') {
@@ -249,7 +280,8 @@ export function defaultCropsForLayout(
         const h = normHFromW(w, slotAr, sourceAr);
         return clampCrop({ w, h, x: (1 - w) / 2, y: (1 - h) / 2 });
       }
-      let w = 0.35;
+      // Default rectangular webcam crop in top-left corner where stream facecams typically sit
+      let w = 0.28;
       let h = normHFromW(w, slotAr, sourceAr);
       if (h > 1) {
         h = 1;
@@ -262,8 +294,8 @@ export function defaultCropsForLayout(
       return clampCrop({
         w,
         h,
-        x: clampNum(1 - w - 0.05, 0, 1 - w),
-        y: (1 - h) / 2,
+        x: 0.02,
+        y: 0.03,
       });
     }
 
@@ -294,11 +326,24 @@ export function reconcileCrops(
   aspect: AspectRatioId,
   sourceAr: number,
   existing: readonly NormalizedCrop[] | undefined,
-  opts?: { splitRatio?: number; pip?: Partial<PipConfig> }
+  opts?: SlotLayoutOptions
 ): NormalizedCrop[] {
-  const slots = getCroppableSlots(layout, aspect, opts);
+  const slots = getCroppableSlots(layout, aspect, { ...opts, crops: existing, sourceAr });
   if (Array.isArray(existing) && existing.length === slots.length) {
-    return existing.map((crop, i) => fitCropToAspect(crop, getSlotAspect(slots[i], aspect), sourceAr));
+    return existing.map((crop, i) => {
+      if (opts?.fullFrameSlots?.[i]) {
+        return { x: 0, y: 0, w: 1, h: 1 };
+      }
+      const isFreePipFacecam =
+        layout === 'pip' &&
+        i === 1 &&
+        (opts?.pip?.shape ?? DEFAULT_PIP_CONFIG.shape) !== 'circle' &&
+        (opts?.pip?.aspect ?? DEFAULT_PIP_CONFIG.aspect) === 'free';
+      if (opts?.freeCrop || isFreePipFacecam) {
+        return clampCrop(crop);
+      }
+      return fitCropToAspect(crop, getSlotAspect(slots[i], aspect), sourceAr);
+    });
   }
   return defaultCropsForLayout(layout, aspect, sourceAr, opts);
 }
@@ -316,6 +361,8 @@ export function swapLayoutCrops(
   return reconcileCrops(blueprint.layout, blueprint.aspect, sourceAr, swapped, {
     splitRatio: blueprint.splitRatio,
     pip: blueprint.pip,
+    fullFrameSlots: blueprint.fullFrameSlots,
+    freeCrop: blueprint.freeCrop,
   });
 }
 
@@ -330,6 +377,8 @@ export function createDefaultFramingBlueprint(
     layout,
     aspect,
     crops: defaultCropsForLayout(layout, aspect, sourceAr, { splitRatio, pip }),
+    fullFrameSlots: {},
+    freeCrop: false,
     splitRatio,
     dividerWidth: 0,
     dividerColor: '#FFFFFF',
@@ -497,9 +546,15 @@ export function renderFramedCanvas2D(
   bgImage?: HTMLImageElement | null,
   v1Hidden = false
 ): void {
+  const sourceAr =
+    video && video.videoWidth > 0 && video.videoHeight > 0
+      ? video.videoWidth / video.videoHeight
+      : 16 / 9;
   const slots = getOutputSlots(bp.layout, bp.aspect, {
     splitRatio: bp.splitRatio,
     pip: bp.pip,
+    crops: bp.crops,
+    sourceAr,
   });
 
   ctx.fillStyle = '#09090B';
@@ -538,7 +593,10 @@ export function renderFramedCanvas2D(
   };
 
   const fullCanvas = { x: 0, y: 0, w, h };
-  const isClippedMulti = !slots.some((s) => s.contain) && bp.layout !== 'pip';
+  const anySlotContain = slots.some(
+    (s, idx) => Boolean(s.contain || bp.fullFrameSlots?.[idx] || (bp.freeCrop && !(bp.layout === 'pip' && idx === 1)))
+  );
+  const isClippedMulti = !anySlotContain && bp.layout !== 'pip';
 
   if (bp.fillActive && padPx > 0 && isClippedMulti) {
     drawOuterFill(ctx, bp, fullCanvas);
@@ -642,6 +700,34 @@ export function renderFramedCanvas2D(
     let cropW = useCustom ? srcW : crop.w * srcW;
     let cropH = useCustom ? srcH : crop.h * srcH;
 
+    const slotIsFullFrame = Boolean(bp.fullFrameSlots?.[i]);
+    const slotUseContain =
+      slotIsFullFrame ||
+      Boolean(bp.freeCrop && !(bp.layout === 'pip' && i === 1) && Math.abs(cropW / Math.max(1, cropH) - dest.w / Math.max(1, dest.h)) > 0.04);
+
+    if (slotUseContain && !(bp.layout === 'pip' && i === 1)) {
+      const fit = Math.min(dest.w / Math.max(1, cropW), dest.h / Math.max(1, cropH));
+      const drawW = cropW * fit;
+      const drawH = cropH * fit;
+      const drawX = dest.x + (dest.w - drawW) / 2;
+      const drawY = dest.y + (dest.h - drawH) / 2;
+      const cardRad = Math.min(radPx, drawW / 2, drawH / 2);
+
+      ctx.save();
+      if (cardRad > 0) {
+        ctx.beginPath();
+        ctx.roundRect(drawX, drawY, drawW, drawH, cardRad);
+        ctx.clip();
+      }
+      try {
+        ctx.drawImage(srcEl, srcX, srcY, cropW, cropH, drawX, drawY, drawW, drawH);
+      } catch {
+        // ignore transient frame decode error
+      }
+      ctx.restore();
+      continue;
+    }
+
     // Exact center-cover match to slot aspect
     const destAr = dest.w / Math.max(1, dest.h);
     if (cropW / Math.max(1, cropH) > destAr) {
@@ -669,7 +755,7 @@ export function renderFramedCanvas2D(
       } else if (pip.shape === 'rect') {
         ctx.rect(dest.x, dest.y, dest.w, dest.h);
       } else {
-        const r = Math.min(Math.min(dest.w, dest.h) / 2, (pip.radius ?? 16) * scaleFactor);
+        const r = Math.min(Math.min(dest.w, dest.h) / 2, (pip.radius ?? 14) * scaleFactor);
         ctx.roundRect(dest.x, dest.y, dest.w, dest.h, r);
       }
       ctx.fillStyle = '#000000';
@@ -699,7 +785,7 @@ export function renderFramedCanvas2D(
         } else if (pip.shape === 'rect') {
           ctx.rect(dest.x + bw / 2, dest.y + bw / 2, Math.max(0, dest.w - bw), Math.max(0, dest.h - bw));
         } else {
-          const r = Math.min(Math.min(dest.w, dest.h) / 2, (pip.radius ?? 16) * scaleFactor);
+          const r = Math.min(Math.min(dest.w, dest.h) / 2, (pip.radius ?? 14) * scaleFactor);
           ctx.roundRect(
             dest.x + bw / 2,
             dest.y + bw / 2,
@@ -750,7 +836,22 @@ export function buildFramingFiltergraph(
   const slots = getOutputSlots(bp.layout, bp.aspect, {
     splitRatio: bp.splitRatio,
     pip: bp.pip,
+    crops: bp.crops,
   });
+
+  const bgColor = bp.backdrop.color || '#09090B';
+  const buildBackdropExpr = () =>
+    bp.backdrop.kind === 'blur'
+      ? `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},boxblur=${Math.max(4, Math.round(bp.backdrop.blur / 2))}:2`
+      : `scale=${W}:${H},drawbox=x=0:y=0:w=${W}:h=${H}:color=${bgColor}@1:t=fill`;
+
+  const slotScaleExpr = (idx: number, crop: NormalizedCrop, tw: number, th: number) => {
+    const cropPart = `crop=iw*${crop.w.toFixed(3)}:ih*${crop.h.toFixed(3)}:iw*${crop.x.toFixed(3)}:ih*${crop.y.toFixed(3)}`;
+    if (bp.fullFrameSlots?.[idx] || bp.freeCrop) {
+      return `${cropPart},scale=${tw}:${th}:force_original_aspect_ratio=decrease,pad=${tw}:${th}:(ow-iw)/2:(oh-ih)/2:color=${bgColor}`;
+    }
+    return `${cropPart},scale=${tw}:${th}:force_original_aspect_ratio=increase,crop=${tw}:${th}`;
+  };
 
   if (bp.layout === 'split' && bp.crops.length >= 2) {
     const topH = Math.round(H * clampNum(bp.splitRatio, 0.15, 0.85));
@@ -763,8 +864,8 @@ export function buildFramingFiltergraph(
         : '';
     return (
       `${inputLabel}split=2[s0][s1];` +
-      `[s0]crop=iw*${c0.w.toFixed(3)}:ih*${c0.h.toFixed(3)}:iw*${c0.x.toFixed(3)}:ih*${c0.y.toFixed(3)},scale=${W}:${topH}:force_original_aspect_ratio=increase,crop=${W}:${topH}[top];` +
-      `[s1]crop=iw*${c1.w.toFixed(3)}:ih*${c1.h.toFixed(3)}:iw*${c1.x.toFixed(3)}:ih*${c1.y.toFixed(3)},scale=${W}:${botH}:force_original_aspect_ratio=increase,crop=${W}:${botH}[bot];` +
+      `[s0]${slotScaleExpr(0, c0, W, topH)}[top];` +
+      `[s1]${slotScaleExpr(1, c1, W, botH)}[bot];` +
       `[top][bot]vstack=inputs=2${divFilter}${speedSuffix}${outputLabel}`
     );
   }
@@ -779,9 +880,9 @@ export function buildFramingFiltergraph(
         : '';
     return (
       `${inputLabel}split=3[s0][s1][s2];` +
-      `[s0]crop=iw*${c0.w.toFixed(3)}:ih*${c0.h.toFixed(3)}:iw*${c0.x.toFixed(3)}:ih*${c0.y.toFixed(3)},scale=${W}:${bandH}:force_original_aspect_ratio=increase,crop=${W}:${bandH}[t0];` +
-      `[s1]crop=iw*${c1.w.toFixed(3)}:ih*${c1.h.toFixed(3)}:iw*${c1.x.toFixed(3)}:ih*${c1.y.toFixed(3)},scale=${W}:${bandH}:force_original_aspect_ratio=increase,crop=${W}:${bandH}[t1];` +
-      `[s2]crop=iw*${c2.w.toFixed(3)}:ih*${c2.h.toFixed(3)}:iw*${c2.x.toFixed(3)}:ih*${c2.y.toFixed(3)},scale=${W}:${botH}:force_original_aspect_ratio=increase,crop=${W}:${botH}[t2];` +
+      `[s0]${slotScaleExpr(0, c0, W, bandH)}[t0];` +
+      `[s1]${slotScaleExpr(1, c1, W, bandH)}[t1];` +
+      `[s2]${slotScaleExpr(2, c2, W, botH)}[t2];` +
       `[t0][t1][t2]vstack=inputs=3${divFilter}${speedSuffix}${outputLabel}`
     );
   }
@@ -792,9 +893,24 @@ export function buildFramingFiltergraph(
     const pipSlot = slots[1];
     const px = Math.round(pipSlot.to[0] * W);
     const py = Math.round(pipSlot.to[1] * H);
-    const pw = Math.max(64, Math.round(pipSlot.to[2] * W));
-    const ph = Math.max(64, Math.round(pipSlot.to[3] * H));
+    const rawPw = Math.max(64, Math.round(pipSlot.to[2] * W));
+    const rawPh = Math.max(64, Math.round(pipSlot.to[3] * H));
+    const pw = rawPw - (rawPw % 2);
+    const ph = rawPh - (rawPh % 2);
     const flipFilter = bp.pip.flip ? ',hflip' : '';
+    const mainIsContain = Boolean(bp.fullFrameSlots?.[0] || bp.freeCrop);
+
+    if (mainIsContain) {
+      return (
+        `${inputLabel}split=3[bg_in][main_in][pip_in];` +
+        `[bg_in]${buildBackdropExpr()}[bg];` +
+        `[main_in]crop=iw*${cMain.w.toFixed(3)}:ih*${cMain.h.toFixed(3)}:iw*${cMain.x.toFixed(3)}:ih*${cMain.y.toFixed(3)},scale=${W}:${H}:force_original_aspect_ratio=decrease[main_fg];` +
+        `[bg][main_fg]overlay=(W-w)/2:(H-h)/2[main_bg];` +
+        `[pip_in]crop=iw*${cPip.w.toFixed(3)}:ih*${cPip.h.toFixed(3)}:iw*${cPip.x.toFixed(3)}:ih*${cPip.y.toFixed(3)},scale=${pw}:${ph}:force_original_aspect_ratio=increase,crop=${pw}:${ph}${flipFilter}[pip_fg];` +
+        `[main_bg][pip_fg]overlay=x=${px}:y=${py}${speedSuffix}${outputLabel}`
+      );
+    }
+
     return (
       `${inputLabel}split=2[main_in][pip_in];` +
       `[main_in]crop=iw*${cMain.w.toFixed(3)}:ih*${cMain.h.toFixed(3)}:iw*${cMain.x.toFixed(3)}:ih*${cMain.y.toFixed(3)},scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}[main_bg];` +
@@ -805,21 +921,25 @@ export function buildFramingFiltergraph(
 
   if (bp.layout === 'centered') {
     const fgW = Math.round(W * clampNum(bp.centeredScale, 0.3, 1.5));
-    const bgExpr =
-      bp.backdrop.kind === 'blur'
-        ? `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},boxblur=${Math.max(4, Math.round(bp.backdrop.blur / 2))}:2`
-        : `scale=${W}:${H},drawbox=x=0:y=0:w=${W}:h=${H}:color=${bp.backdrop.color}@1:t=fill`;
     const ox = Math.round(((bp.centeredPanX ?? 0) / 100) * (W / 2));
     const oy = Math.round(((bp.centeredPanY ?? 0) / 100) * (H / 2));
     return (
       `${inputLabel}split=2[bg_in][fg_in];` +
-      `[bg_in]${bgExpr}[bg];` +
+      `[bg_in]${buildBackdropExpr()}[bg];` +
       `[fg_in]scale=${fgW}:-2[fg];` +
       `[bg][fg]overlay=(W-w)/2+${ox}:(H-h)/2+${oy}${speedSuffix}${outputLabel}`
     );
   }
 
   const c0 = bp.crops[0] ?? { x: 0, y: 0, w: 1, h: 1 };
+  if (bp.fullFrameSlots?.[0] || bp.freeCrop) {
+    return (
+      `${inputLabel}split=2[bg_in][fg_in];` +
+      `[bg_in]${buildBackdropExpr()}[bg];` +
+      `[fg_in]crop=iw*${c0.w.toFixed(3)}:ih*${c0.h.toFixed(3)}:iw*${c0.x.toFixed(3)}:ih*${c0.y.toFixed(3)},scale=${W}:${H}:force_original_aspect_ratio=decrease[fg];` +
+      `[bg][fg]overlay=(W-w)/2:(H-h)/2${speedSuffix}${outputLabel}`
+    );
+  }
   return (
     `${inputLabel}crop=iw*${c0.w.toFixed(3)}:ih*${c0.h.toFixed(3)}:iw*${c0.x.toFixed(3)}:ih*${c0.y.toFixed(3)},` +
     `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H}${speedSuffix}${outputLabel}`
@@ -828,11 +948,22 @@ export function buildFramingFiltergraph(
 
 /** Human-readable 1-line summary of the active Framing Blueprint for Shorts Studio */
 export function describeFramingBlueprint(bp: FramingBlueprint): string {
+  const pipRatioLabel =
+    bp.pip.shape === 'circle'
+      ? 'Circle'
+      : bp.pip.aspect === 'free'
+        ? 'Free Rect'
+        : bp.pip.aspect === '4:3'
+          ? '4:3 Rect'
+          : bp.pip.aspect === '1:1'
+            ? '1:1'
+            : '16:9 Rect';
+  const fullFlag = Boolean(bp.fullFrameSlots?.[0]);
   const layoutLabels: Record<LayoutModeId, string> = {
     split: `Split ${Math.round(bp.splitRatio * 100)}/${Math.round((1 - bp.splitRatio) * 100)}`,
-    solo: 'Solo Crop',
+    solo: fullFlag ? 'Solo Full Frame' : 'Solo Crop',
     trio: 'Trio 3-Stack',
-    pip: `PiP (${bp.pip.shape})`,
+    pip: fullFlag ? `PiP ${pipRatioLabel} · Full Frame` : `PiP ${pipRatioLabel}`,
     centered: `Centered ${Math.round(bp.centeredScale * 100)}%`,
     widescreen: '16:9 Clip',
   };

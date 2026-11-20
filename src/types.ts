@@ -25,14 +25,17 @@ export interface NormalizedCrop {
 }
 
 export type PipShapeId = 'circle' | 'rounded' | 'rect';
+export type PipAspectId = '16:9' | '4:3' | 'free' | '1:1';
 export type PipCornerId = 'tl' | 'tr' | 'bl' | 'br' | 'custom';
 
 export interface PipConfig {
   shape: PipShapeId;
+  /** Rectangular facecam aspect ratio (default '16:9' for non-circle shapes) */
+  aspect?: PipAspectId;
   corner: PipCornerId;
   x: number; // 0..100
   y: number; // 0..100
-  scale: number; // 15..65
+  scale: number; // 15..80
   borderWidth: number; // 0..30
   borderColor: string;
   shadow: boolean;
@@ -70,8 +73,12 @@ export interface SlotMediaOverride {
 export interface FramingBlueprint {
   layout: LayoutModeId;
   aspect: AspectRatioId;
-  /** Normalized 0..1 aspect-locked crop boxes per active layout slot */
+  /** Normalized 0..1 crop boxes per active layout slot */
   crops: NormalizedCrop[];
+  /** Slots rendered as whole full-screen source (contain fit over backdrop) instead of cropped */
+  fullFrameSlots?: Record<number, boolean>;
+  /** When true, crop boxes can be resized freely to any rectangular aspect ratio */
+  freeCrop?: boolean;
   /** Split vertical divider ratio (0.15..0.85, default 0.50) */
   splitRatio: number;
   /** Divider line between Split/Trio panes */

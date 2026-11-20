@@ -166,13 +166,13 @@ export function ShortsStage({
 
   return (
     <div className="flex-1 min-h-0 flex flex-col items-center justify-between p-3 gap-2 overflow-hidden bg-[var(--pc-canvas)]">
-      {/* Hidden source video element that powers the FramedCanvasView 2D compositor + master audio */}
-      {clip.mediaUrl && (
+      {/* Offscreen source video element that powers the FramedCanvasView 2D compositor + master audio */}
+      {(clip.rawMediaUrl || clip.mediaUrl) && (
         <video
           ref={videoRef}
-          src={clip.mediaUrl}
+          src={clip.rawMediaUrl || clip.mediaUrl}
           playsInline
-          preload="metadata"
+          preload="auto"
           muted={trackStates.a1Muted}
           onLoadedMetadata={(e) => {
             const v = e.currentTarget;
@@ -182,7 +182,7 @@ export function ShortsStage({
           }}
           onTimeUpdate={(e) => onVideoTimeUpdate(e.currentTarget.currentTime)}
           onEnded={onVideoEnded}
-          className="hidden"
+          className="fixed -left-[9999px] top-0 w-px h-px opacity-0 pointer-events-none"
         />
       )}
 

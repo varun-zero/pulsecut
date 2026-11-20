@@ -165,6 +165,10 @@ impl Renderer {
         Ok(Self { cfg, ffmpeg })
     }
 
+    pub fn with_ffmpeg(cfg: RenderConfig, ffmpeg: PathBuf) -> Self {
+        Self { cfg, ffmpeg }
+    }
+
     /// Build the full ffmpeg argument vector for a render.
     pub fn args(&self, input: &Path, subs: Option<&Path>, out: &Path) -> Vec<String> {
         let vf = video_filter(&self.cfg, &EditDecisionList::default(), subs);

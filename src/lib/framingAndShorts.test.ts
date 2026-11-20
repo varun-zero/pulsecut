@@ -97,6 +97,52 @@ test('FramingEngine: FFmpeg filtergraph generation covers split+divider, trio, p
   assert.ok(trioFg.includes('vstack=inputs=3'));
 });
 
+test('FramingEngine: default PiP facecam is rectangular (16:9), supports Free Rect & 4:3, and Full Screen (100%) uses contain + backdrop', () => {
+  const pipBp = createDefaultFramingBlueprint('pip', '9:16', 16 / 9);
+  const pipSlots = getOutputSlots('pip', '9:16', { pip: pipBp.pip, crops: pipBp.crops, sourceAr: 16 / 9 });
+  const pipSlotAr = getSlotAspect(pipSlots[1], '9:16');
+  assert.ok(Math.abs(pipSlotAr - 16 / 9) < 0.02, `Default PiP facecam must be a 16:9 rectangle, got AR=${pipSlotAr}`);
+  assert.equal(pipBp.pip.shape, 'rounded', 'Default PiP should keep rounded corners on the rectangle');
+
+  // 4:3 rectangular facecam
+  const pip43 = getOutputSlots('pip', '9:16', { pip: { shape: 'rounded', aspect: '4:3', scale: 44 } });
+  assert.ok(Math.abs(getSlotAspect(pip43[1], '9:16') - 4 / 3) < 0.02);
+
+  // Free rectangular facecam derives output aspect directly from dragged source crop
+  const customWideFacecam = { x: 0.02, y: 0.03, w: 0.36, h: 0.24 }; // pixel AR = (0.36 * 16/9) / 0.24 = 2.66 -> clamped to 2.6
+  const pipFree = getOutputSlots('pip', '9:16', {
+    pip: { shape: 'rounded', aspect: 'free', scale: 50 },
+    crops: [{ x: 0, y: 0, w: 1, h: 1 }, customWideFacecam],
+    sourceAr: 16 / 9,
+  });
+  assert.ok(getSlotAspect(pipFree[1], '9:16') > 2.2, 'Free Rect PiP should match wide rectangular crop');
+
+  // Reconcile preserves fullFrameSlots (100% whole video) and free facecam crop
+  const fullReconciled = reconcileCrops('pip', '9:16', 16 / 9, [{ x: 0, y: 0, w: 1, h: 1 }, customWideFacecam], {
+    pip: { shape: 'rounded', aspect: 'free', scale: 50 },
+    fullFrameSlots: { 0: true },
+  });
+  assert.deepEqual(fullReconciled[0], { x: 0, y: 0, w: 1, h: 1 });
+  assert.deepEqual(fullReconciled[1], customWideFacecam);
+
+  // Solo Full Screen (100%) emits force_original_aspect_ratio=decrease + backdrop overlay
+  const soloFull = createDefaultFramingBlueprint('solo', '9:16');
+  soloFull.crops = [{ x: 0, y: 0, w: 1, h: 1 }];
+  soloFull.fullFrameSlots = { 0: true };
+  const soloFullFg = buildFramingFiltergraph(soloFull, '1080p');
+  assert.ok(soloFullFg.includes('force_original_aspect_ratio=decrease'), 'Solo Full Frame must preserve full widescreen video');
+  assert.ok(soloFullFg.includes('boxblur='), 'Solo Full Frame should render over blurred backdrop by default');
+  assert.ok(describeFramingBlueprint(soloFull).includes('Solo Full Frame'));
+
+  // PiP with Full Screen Main Video + Rectangular Facecam
+  pipBp.crops[0] = { x: 0, y: 0, w: 1, h: 1 };
+  pipBp.fullFrameSlots = { 0: true };
+  const pipFullFg = buildFramingFiltergraph(pipBp, '1080p');
+  assert.ok(pipFullFg.includes('split=3[bg_in][main_in][pip_in]'));
+  assert.ok(pipFullFg.includes('force_original_aspect_ratio=decrease[main_fg]'));
+  assert.ok(describeFramingBlueprint(pipBp).includes('PiP 16:9 Rect · Full Frame'));
+});
+
 test('ShortsEngine: multi-segment stitching, playback stepping, and stitched time mapping', () => {
   const segs = [
     { id: 'b', start: 20, end: 28 },
