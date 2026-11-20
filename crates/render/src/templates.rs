@@ -213,6 +213,20 @@ pub fn resolve(cfg: &RenderConfig, edl: &EditDecisionList) -> ShortTemplate {
 }
 
 /// Escape text for an ffmpeg `drawtext` option.
+/// Shrink a drawtext font size so a single line fits the canvas width with a
+/// 40px margin each side. Prevents long hooks/titles from being clipped.
+/// Uses a conservative ~0.56em average glyph width for sans fonts.
+pub fn fit_font_size(text: &str, base: i64, canvas_w: i64) -> i64 {
+    let chars = text.chars().count().max(1) as f64;
+    let estimated = chars * base as f64 * 0.56;
+    let max_w = (canvas_w - 80).max(240) as f64;
+    if estimated <= max_w {
+        base
+    } else {
+        ((base as f64 * max_w / estimated).floor() as i64).max(26)
+    }
+}
+
 pub fn escape_drawtext(text: &str) -> String {
     text.chars()
         .map(|c| match c {
@@ -269,7 +283,7 @@ pub fn apply_visual(
                 ",drawtext={}text='{}':fontcolor=white:fontsize={}:x=(w-text_w)/2:y={}:borderw=4:bordercolor=black:shadowcolor=black@0.85:shadowx=0:shadowy=4",
                 font,
                 escape_drawtext(text),
-                (cfg.subtitle_size as f64 * 0.92) as i64,
+                fit_font_size(text, (cfg.subtitle_size as f64 * 0.92) as i64, cfg.width as i64),
                 top + 14
             ));
         }
@@ -403,5 +417,14 @@ mod tests {
     #[test]
     fn escape_drawtext_handles_colons() {
         assert_eq!(escape_drawtext("a:b'c\\d"), "a\\:b\\'c\\\\d");
+    }
+
+    #[test]
+    fn long_hook_font_is_shrunk_to_fit_canvas() {
+        let short = fit_font_size("GO", 64, 1080);
+        let long = fit_font_size("Why is that? How can we speak powerfully", 64, 1080);
+        assert_eq!(short, 64);            // short text keeps base size
+        assert!(long < short, "long hook should shrink: {long}");
+        assert!(long >= 26, "long hook should stay legible: {long}");
     }
 }

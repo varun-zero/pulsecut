@@ -127,7 +127,8 @@ fn apply_extra_overlays(f: &mut String, cfg: &RenderConfig, edl: &EditDecisionLi
         let start = (cfg.max_duration_secs as i64 * 1000 - duration_ms).max(0) as f64 / 1000.0;
         f.push_str(&format!(
             ",drawtext={font}text='{}':fontcolor=white:fontsize={}:x=(w-text_w)/2:y=h-260:box=1:boxcolor=black@0.65:boxborderw=18:enable='gte(t\\,{start:.2})'",
-            templates::escape_drawtext(&text), cfg.subtitle_size
+            templates::escape_drawtext(&text),
+            templates::fit_font_size(&text, cfg.subtitle_size as i64, cfg.width as i64)
         ));
     }
     if let Some((handle, style)) = edl.social_card() {
