@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, ChevronRight, Upload } from 'lucide-react';
 import type { TemplatePreset } from '../../presets';
+import { InstagramIcon, KickLogoIcon, YouTubeShortsIcon } from './PlatformIcons';
 import {
   VIRAL_CAPTION_PRESETS,
   VIRAL_FONTS,
@@ -463,9 +464,9 @@ export function TemplateMiniPreview({
           <div className="h-[3.5px] w-4/5 rounded-[1.5px] bg-white" />
         </div>
         <div className="flex-1" />
-        {/* Bottom small K logo + streamer name */}
+        {/* Bottom small green Kick K logo + streamer name */}
         <div className="flex items-center justify-center gap-0.5 pb-0.5">
-          <span className="text-[7px] font-black leading-none text-[#53FC18]">K</span>
+          <KickLogoIcon color="#53FC18" className="w-2.5 h-2.5 shrink-0" />
           <span className="h-[3px] w-3.5 rounded-xs bg-white/90" />
         </div>
       </div>
@@ -487,7 +488,7 @@ export function TemplateMiniPreview({
         </div>
         <div className="flex-1" />
         <div className="flex items-center justify-center gap-0.5 pb-0.5">
-          <span className="w-2 h-2 rounded-[2px] border border-[#E1306C] shrink-0" />
+          <InstagramIcon color="#E1306C" className="w-2.5 h-2.5 shrink-0" />
           <span className="h-[3px] w-3.5 rounded-xs bg-white/85" />
         </div>
       </div>
@@ -509,7 +510,7 @@ export function TemplateMiniPreview({
         </div>
         <div className="h-1.5 w-4/5 mx-auto rounded-xs bg-[#FFE600]" />
         <div className="flex items-center justify-center gap-0.5 pb-0.5">
-          <span className="w-2 h-2 rounded-[2px] bg-[#FF0033] shrink-0" />
+          <YouTubeShortsIcon color="#FF0033" className="w-2.5 h-2.5 shrink-0" />
           <span className="h-[3px] w-3.5 rounded-xs bg-white/85" />
         </div>
       </div>
@@ -566,8 +567,15 @@ export function TemplateMiniPreview({
         <div className="flex-1 my-0.5 rounded-[2px] bg-[var(--pc-surface-hover)]" />
       )}
 
-      {/* Bottom caption line */}
-      <div className="h-1 w-4/5 mx-auto rounded-xs bg-[var(--pc-ink)]/75" />
+      {/* Bottom caption line or green Kick badge for Kick split templates */}
+      {preset.defaultStreamerPlatform === 'kick' ? (
+        <div className="flex items-center justify-center gap-0.5">
+          <KickLogoIcon color="#53FC18" className="w-2.5 h-2.5 shrink-0" />
+          <span className="h-1 w-3.5 rounded-xs bg-white/80" />
+        </div>
+      ) : (
+        <div className="h-1 w-4/5 mx-auto rounded-xs bg-[var(--pc-ink)]/75" />
+      )}
     </div>
   );
 }

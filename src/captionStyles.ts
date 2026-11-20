@@ -1009,7 +1009,9 @@ export function buildRenderParitySpec(
   const overlayAssets: string[] = [];
   const resolvedPlatform =
     settings.streamerPlatform === 'auto'
-      ? settings.template === 'kick-stream' || settings.template === 'split-stream'
+      ? settings.template === 'kick-stream' ||
+        settings.template === 'split-stream' ||
+        settings.template === 'dual_react'
         ? 'kick'
         : settings.template === 'insta-short'
           ? 'instagram'

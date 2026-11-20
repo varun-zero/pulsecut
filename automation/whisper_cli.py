@@ -44,14 +44,20 @@ def main():
 
     from faster_whisper import WhisperModel
 
+    cpu_threads = int(os.environ.get("PULSECUT_WHISPER_THREADS", str(min(os.cpu_count() or 4, 8))))
+    beam_size = int(os.environ.get("PULSECUT_WHISPER_BEAM", "1"))
     model = WhisperModel(
         args.model,
         device=os.environ.get("PULSECUT_WHISPER_DEVICE", "cpu"),
         compute_type=os.environ.get("PULSECUT_WHISPER_COMPUTE", "int8"),
+        cpu_threads=cpu_threads,
     )
     vad_enabled = os.environ.get("PULSECUT_WHISPER_VAD", "1").strip().lower() not in ("0", "false", "no", "off")
     segments, info = model.transcribe(
         media,
+        beam_size=beam_size,
+        best_of=1,
+        condition_on_previous_text=False,
         word_timestamps=True,
         vad_filter=vad_enabled,
         language=os.environ.get("PULSECUT_WHISPER_LANG") or None,

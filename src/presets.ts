@@ -181,7 +181,7 @@ export const TEMPLATE_PRESETS: readonly TemplatePreset[] = [
     hasCard: false,
     hasHeadline: false,
     hasTicker: false,
-    accentHex: '#22C55E',
+    accentHex: '#53FC18',
     wireframe: 'split',
   },
   {

@@ -150,18 +150,28 @@ export function ShortsStage({
   // Resolved platform attribution icon
   const resolvedPlatform =
     settings.streamerPlatform === 'auto'
-      ? settings.template === 'kick-stream' || settings.template === 'split-stream'
+      ? settings.template === 'kick-stream' ||
+        settings.template === 'split-stream' ||
+        settings.template === 'dual_react'
         ? 'kick'
         : settings.template === 'insta-short'
           ? 'instagram'
           : settings.template === 'yt-short'
             ? 'youtube'
-            : 'none'
+            : clip.platform === 'Kick'
+              ? 'kick'
+              : clip.platform === 'Instagram'
+                ? 'instagram'
+                : clip.platform === 'YouTube'
+                  ? 'youtube'
+                  : 'none'
       : settings.streamerPlatform;
 
   const isXCard =
     settings.templateEnabled && (settings.template === 'x_light' || settings.template === 'x_dark');
-  const isNewsBroadcast = settings.templateEnabled && settings.template === 'breaking-news';
+  const isNewsBroadcast =
+    settings.templateEnabled &&
+    (settings.template === 'breaking_news' || settings.template === 'breaking-news');
 
   const outroAnim =
     outroElapsedSec !== null ? computeOutroAnimationFrame(outroElapsedSec, shorts.outro) : null;
@@ -396,28 +406,52 @@ export function ShortsStage({
           )}
 
           {/* Layer 5: Draggable Streamer Platform Attribution (`[Logo] USERNAME`) */}
-          {settings.showStreamerBadge && settings.streamerHandle.trim() && resolvedPlatform !== 'none' && (
-            <div
-              onPointerDown={(e) => startDragOverlay('streamer', e)}
-              style={{
-                left: `${settings.streamerBadgeX}%`,
-                top: `${settings.streamerBadgeY}%`,
-                transform: `translate(-50%, -50%) scale(${settings.streamerBadgeScale / 100})`,
-              }}
-              className="absolute z-20 cursor-move inline-flex items-center gap-1.5 whitespace-nowrap"
-            >
-              {resolvedPlatform === 'kick' && <KickLogoIcon className="w-4 h-4 shrink-0" />}
-              {resolvedPlatform === 'instagram' && <InstagramIcon className="w-4 h-4 shrink-0 text-[#E1306C]" />}
-              {resolvedPlatform === 'youtube' && <YouTubeShortsIcon className="w-4 h-4 shrink-0" />}
-              <span
-                className="text-white font-extrabold text-[13px] tracking-tight drop-shadow-[0_1.5px_3px_rgba(0,0,0,0.95)]"
+          {(() => {
+            const badgeHandle = (
+              settings.streamerHandle ||
+              clip.streamerHandle ||
+              clip.channel ||
+              ''
+            ).trim();
+            if (!settings.showStreamerBadge || !badgeHandle || resolvedPlatform === 'none') {
+              return null;
+            }
+            return (
+              <div
+                data-testid="streamer-platform-badge"
+                data-platform={resolvedPlatform}
+                onPointerDown={(e) => startDragOverlay('streamer', e)}
+                style={{
+                  left: `${settings.streamerBadgeX}%`,
+                  top: `${settings.streamerBadgeY}%`,
+                  transform: `translate(-50%, -50%) scale(${settings.streamerBadgeScale / 100})`,
+                }}
+                className="absolute z-20 cursor-move inline-flex items-center gap-1.5 whitespace-nowrap"
               >
-                {settings.streamerBadgeUppercase
-                  ? settings.streamerHandle.toUpperCase()
-                  : settings.streamerHandle}
-              </span>
-            </div>
-          )}
+                {resolvedPlatform === 'kick' && (
+                  <KickLogoIcon
+                    color="#53FC18"
+                    className="w-4 h-4 shrink-0 text-[#53FC18] drop-shadow-[0_1.5px_3px_rgba(0,0,0,0.95)]"
+                  />
+                )}
+                {resolvedPlatform === 'instagram' && (
+                  <InstagramIcon
+                    color="#E1306C"
+                    className="w-4 h-4 shrink-0 text-[#E1306C] drop-shadow-[0_1.5px_3px_rgba(0,0,0,0.95)]"
+                  />
+                )}
+                {resolvedPlatform === 'youtube' && (
+                  <YouTubeShortsIcon
+                    color="#FF0033"
+                    className="w-4 h-4 shrink-0 text-[#FF0033] drop-shadow-[0_1.5px_3px_rgba(0,0,0,0.95)]"
+                  />
+                )}
+                <span className="text-white font-extrabold text-[13px] tracking-tight drop-shadow-[0_1.5px_3px_rgba(0,0,0,0.95)]">
+                  {settings.streamerBadgeUppercase ? badgeHandle.toUpperCase() : badgeHandle}
+                </span>
+              </div>
+            );
+          })()}
 
           {/* Layer 6: Draggable Dual Watermarks (Primary Handle/Logo + Secondary Hashtag) */}
           {brandKit.showWatermark &&

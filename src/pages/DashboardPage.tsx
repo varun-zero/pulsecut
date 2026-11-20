@@ -10,6 +10,7 @@ import {
   Film,
   Link2,
   Loader2,
+  Radio,
   RefreshCw,
   SlidersHorizontal,
   Upload,
@@ -41,6 +42,8 @@ interface DashboardPageProps {
   }) => Promise<boolean> | void;
   onRefreshJobs: () => void;
   onOpenClips: () => void;
+  onOpenLiveStreams?: () => void;
+  activeMonitorCount?: number;
 }
 
 export function DashboardPage({
@@ -49,6 +52,8 @@ export function DashboardPage({
   onCreateJob,
   onRefreshJobs,
   onOpenClips,
+  onOpenLiveStreams,
+  activeMonitorCount = 0,
 }: DashboardPageProps) {
   const [importMode, setImportMode] = useState<'link' | 'file'>('link');
   const [url, setUrl] = useState('');
@@ -160,12 +165,27 @@ export function DashboardPage({
             Import a YouTube, Kick, Twitch, or Instagram URL — or drop a local recording — to detect highlights and build vertical shorts.
           </p>
         </div>
-        <div className="flex items-center gap-4 text-xs text-[var(--pc-sub)] font-mono-tabular">
+        <div className="flex items-center gap-3 text-xs text-[var(--pc-sub)] font-mono-tabular">
           <span>{jobs.length} total jobs</span>
           <span aria-hidden="true">·</span>
           <span>
             {activeJobsCount > 0 ? `${activeJobsCount} processing` : 'Pipeline idle'}
           </span>
+          {onOpenLiveStreams && (
+            <button
+              type="button"
+              onClick={onOpenLiveStreams}
+              className="ml-1 h-8 px-3 rounded-lg border border-[var(--pc-border)] bg-[var(--pc-surface)] text-xs font-sans font-medium text-[var(--pc-ink)] hover:border-[var(--pc-accent)] inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <Radio className="w-3.5 h-3.5 text-[#53FC18] stroke-[1.75]" />
+              <span>
+                {activeMonitorCount > 0
+                  ? `Live Streams (${activeMonitorCount})`
+                  : 'Monitor Live Streams'}
+              </span>
+              <ArrowRight className="w-3 h-3" />
+            </button>
+          )}
         </div>
       </div>
 

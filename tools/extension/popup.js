@@ -1,5 +1,5 @@
 /**
- * PulseCut Auto-Clipper — Popup Controller
+ * PulseCut Auto-Clipper — Popup Controller (Multi-Tab Aware)
  */
 (function initPulseCutPopup() {
   'use strict';
@@ -18,6 +18,10 @@
     statusText: document.getElementById('statusText'),
     tabPlatform: document.getElementById('tabPlatform'),
     tabChannel: document.getElementById('tabChannel'),
+    tabStats: document.getElementById('tabStats'),
+    watchedSection: document.getElementById('watchedSection'),
+    watchedCount: document.getElementById('watchedCount'),
+    watchedList: document.getElementById('watchedList'),
     clipNowBtn: document.getElementById('clipNowBtn'),
     actionHint: document.getElementById('actionHint'),
     mode: document.getElementById('mode'),
@@ -40,6 +44,10 @@
     return engine ? engine.normalizeServerUrl(raw) : String(raw || DEFAULTS.serverUrl).replace(/\/+$/, '');
   }
 
+  function formatViewers(v) {
+    return engine && engine.formatViewerCount ? engine.formatViewerCount(v) : v ? String(v) : '';
+  }
+
   function setHint(text, kind = '') {
     els.actionHint.textContent = text;
     els.actionHint.className = `hint ${kind}`.trim();
@@ -49,13 +57,17 @@
     els.thresholdVal.textContent = `${els.threshold.value}%`;
     els.lookbackVal.textContent = `${els.lookbackSecs.value}s`;
     els.cooldownVal.textContent = `${els.cooldownSecs.value}s`;
-    els.openEditorLink.href = normalizeUrl(els.serverUrl.value);
+    const apiUrl = normalizeUrl(els.serverUrl.value);
+    els.openEditorLink.href =
+      /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(apiUrl)
+        ? 'http://localhost:3000'
+        : apiUrl;
   }
 
-  function pingServer(serverUrl) {
+  function pingServer(serverUrl, force = false) {
     els.statusText.textContent = 'Checking…';
     chrome.runtime.sendMessage(
-      { type: 'PING_SERVER', serverUrl: normalizeUrl(serverUrl) },
+      { type: 'PING_SERVER', serverUrl: normalizeUrl(serverUrl), force },
       (res) => {
         const ok = Boolean(res && res.ok);
         els.statusDot.className = `dot ${ok ? 'ok' : ''}`.trim();
@@ -66,12 +78,50 @@
     );
   }
 
+  function loadWatchedStreams() {
+    chrome.runtime.sendMessage({ type: 'GET_WATCHED_STREAMS' }, (res) => {
+      if (chrome.runtime.lastError || !res || !Array.isArray(res.streams)) return;
+      const streams = res.streams;
+      if (streams.length === 0) {
+        els.watchedSection.classList.remove('visible');
+        return;
+      }
+      els.watchedSection.classList.add('visible');
+      els.watchedCount.textContent = `${streams.length} tab${streams.length === 1 ? '' : 's'}`;
+      els.watchedList.innerHTML = '';
+
+      for (const s of streams) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'watched-item';
+        const vStr = formatViewers(s.viewerCount);
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'watched-name';
+        nameSpan.textContent = `${s.platform.toUpperCase()} · ${s.channel}${vStr ? ` (${vStr})` : ''}`;
+
+        const metaSpan = document.createElement('span');
+        metaSpan.className = `watched-meta ${s.score >= Number(els.threshold.value) ? 'hot' : ''}`.trim();
+        metaSpan.textContent = s.calibrated
+          ? `${s.score}% · base ${s.baselineRatePerSec}/s`
+          : `cal ${s.calibrationPct}%`;
+
+        btn.appendChild(nameSpan);
+        btn.appendChild(metaSpan);
+        btn.addEventListener('click', () => {
+          chrome.runtime.sendMessage({ type: 'FOCUS_TAB', tabId: s.tabId });
+        });
+        els.watchedList.appendChild(btn);
+      }
+    });
+  }
+
   function inspectActiveTab() {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       activeTab = tabs && tabs[0] ? tabs[0] : null;
       if (!activeTab || !activeTab.url) {
         els.tabPlatform.textContent = '—';
         els.tabChannel.textContent = 'No active stream tab';
+        els.tabStats.textContent = 'Open Kick, YouTube Live, or Twitch';
         els.clipNowBtn.disabled = true;
         return;
       }
@@ -80,30 +130,39 @@
         ? engine.detectStreamContext(activeTab.url)
         : { platform: 'unknown', channel: 'unknown', template: 'default', supported: false };
 
-      const applyContext = (ctx) => {
+      const applyContext = (ctx, baseline) => {
         activeContext = ctx;
         if (ctx.supported) {
-          els.tabPlatform.textContent = `${ctx.platform.toUpperCase()} · ${ctx.template}`;
+          els.tabPlatform.textContent = `${ctx.platform.toUpperCase()}${ctx.isLive ? ' · LIVE' : ' · VOD'}`;
           els.tabChannel.textContent = ctx.channel;
+          const vStr = formatViewers(baseline?.viewerCount ?? ctx.viewerCount);
+          if (baseline) {
+            const cal = baseline.calibrated
+              ? `base ${baseline.mean}/s · hype ${baseline.score}%`
+              : `calibrating ${baseline.calibrationPct}%`;
+            els.tabStats.textContent = `${vStr ? `${vStr} watching · ` : ''}${cal}`;
+          } else {
+            els.tabStats.textContent = vStr ? `${vStr} watching` : 'Adaptive chat baseline active';
+          }
           els.clipNowBtn.disabled = false;
         } else {
           els.tabPlatform.textContent = 'UNSUPPORTED';
-          els.tabChannel.textContent = 'Open Kick, Twitch, YouTube, or Instagram';
+          els.tabChannel.textContent = 'Open Kick, Twitch, YouTube Live, or Reels';
+          els.tabStats.textContent = 'Multi-tab stream monitoring works automatically';
           els.clipNowBtn.disabled = true;
         }
       };
 
-      // Ask the content script first so YouTube / Instagram DOM-extracted handles are accurate
       chrome.tabs.sendMessage(
         activeTab.id,
         { type: 'GET_PAGE_CONTEXT' },
         { frameId: 0 },
         (res) => {
           if (chrome.runtime.lastError || !res || !res.context) {
-            applyContext(fallbackCtx);
+            applyContext(fallbackCtx, null);
             return;
           }
-          applyContext(res.context);
+          applyContext(res.context, res.baseline || null);
         }
       );
     });
@@ -140,7 +199,7 @@
       els.clipNowBtn.textContent = 'Clip Active Tab Now';
       if (res && res.ok) {
         setHint(`Queued ${activeContext.channel} (${els.lookbackSecs.value}s)`, 'ok');
-        pingServer(els.serverUrl.value);
+        pingServer(els.serverUrl.value, true);
       } else {
         setHint((res && res.error) || 'Could not reach PulseCut server', 'err');
       }
@@ -150,6 +209,7 @@
       chrome.runtime.sendMessage(
         {
           type: 'TRIGGER_CLIP',
+          source: 'manual',
           serverUrl: normalizeUrl(els.serverUrl.value),
           url: activeTab.url,
           is_live: Boolean(activeContext.isLive),
@@ -164,8 +224,6 @@
       );
     };
 
-    // Prefer content.js so Kick's same-origin live playback_url (.m3u8) and
-    // YouTube/Twitch VOD currentTime are captured from the active page.
     chrome.tabs.sendMessage(
       activeTab.id,
       { type: 'POPUP_TRIGGER_CLIP' },
@@ -187,7 +245,7 @@
 
   els.serverUrl.addEventListener('change', () => {
     saveSettings();
-    pingServer(els.serverUrl.value);
+    pingServer(els.serverUrl.value, true);
   });
 
   // Load initial settings
@@ -199,7 +257,8 @@
     els.cooldownSecs.value = String(cfg.cooldownSecs);
     els.serverUrl.value = normalizeUrl(cfg.serverUrl);
     syncLabels();
-    pingServer(cfg.serverUrl);
+    pingServer(cfg.serverUrl, true);
     inspectActiveTab();
+    loadWatchedStreams();
   });
 })();

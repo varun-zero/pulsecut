@@ -24,6 +24,7 @@ import {
   StudioSlider,
   StudioSwitch,
 } from '../ui/Primitives';
+import { InstagramIcon, KickLogoIcon, YouTubeShortsIcon } from '../ui/PlatformIcons';
 
 interface TemplateEditorModalProps {
   open: boolean;
@@ -173,9 +174,15 @@ export function TemplateEditorModal({
           ? 'split'
           : draft.defaultLayout === 'pip'
             ? 'pip'
-            : draft.defaultHeadlineLayout === 'solid-banner'
-              ? 'story'
-              : 'plain',
+            : draft.defaultStreamerPlatform === 'kick'
+              ? 'kick'
+              : draft.defaultStreamerPlatform === 'instagram'
+                ? 'insta'
+                : draft.defaultStreamerPlatform === 'youtube'
+                  ? 'yt-short'
+                  : draft.defaultHeadlineLayout === 'solid-banner'
+                    ? 'story'
+                    : 'plain',
     });
   };
 
@@ -343,8 +350,20 @@ export function TemplateEditorModal({
 
               {/* Streamer Platform Tag Preview */}
               {draft.defaultStreamerPlatform !== 'none' && (
-                <div className="absolute bottom-[10%] left-1/2 -translate-x-1/2 text-[9px] font-bold text-white/90 bg-black/60 px-2 py-0.5 rounded font-mono-tabular uppercase">
-                  {draft.defaultStreamerPlatform} · @creator
+                <div
+                  data-testid="template-editor-platform-badge"
+                  className="absolute bottom-[10%] left-1/2 -translate-x-1/2 inline-flex items-center gap-1.5 text-[9.5px] font-extrabold text-white bg-black/70 px-2 py-0.5 rounded uppercase tracking-tight whitespace-nowrap"
+                >
+                  {draft.defaultStreamerPlatform === 'kick' && (
+                    <KickLogoIcon color="#53FC18" className="w-3 h-3 shrink-0" />
+                  )}
+                  {draft.defaultStreamerPlatform === 'instagram' && (
+                    <InstagramIcon color="#E1306C" className="w-3 h-3 shrink-0" />
+                  )}
+                  {draft.defaultStreamerPlatform === 'youtube' && (
+                    <YouTubeShortsIcon color="#FF0033" className="w-3 h-3 shrink-0" />
+                  )}
+                  <span>{draft.defaultStreamerPlatform === 'kick' ? 'CREATOR' : '@creator'}</span>
                 </div>
               )}
             </div>

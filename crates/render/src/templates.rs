@@ -185,6 +185,12 @@ pub fn library() -> Vec<ShortTemplate> {
             caption_preset: "karaoke_bold", title_pattern: "{title}",
             hook_pattern: "{hook}", hashtags: &["stream", "clips", "shorts"],
         },
+        ShortTemplate {
+            id: "dual_react", name: "Dual React Split", background: (9, 9, 11), accent: (83, 252, 24),
+            card: false, headline: true, ticker: false, watermark: true,
+            caption_preset: "karaoke_bold", title_pattern: "{title}",
+            hook_pattern: "{hook}", hashtags: &["kick", "reaction", "clips", "shorts"],
+        },
     ]
 }
 
@@ -298,6 +304,53 @@ pub struct TemplateOverlays {
     pub watermark: Option<String>,
 }
 
+/// Draw the official stepped geometric Kick Green (`#53FC18`) "K" mark using
+/// deterministic FFmpeg `drawbox` rectangles (no font dependency, always crisp green).
+/// Returns the total rendered width in pixels (including dark backing pad).
+pub fn append_kick_green_logo(filter: &mut String, x: i64, y: i64, size: i64) -> i64 {
+    let u = (size / 7).max(4);
+    let pad = (u / 2).max(3);
+    let mark_w = 6 * u;
+    let mark_h = 7 * u;
+    // Dark backing pad so the bright Kick green emblem pops on bright video frames
+    filter.push_str(&format!(
+        ",drawbox=x={}:y={}:w={}:h={}:color=0x0B0E0F@0.82:t=fill",
+        (x - pad).max(0),
+        (y - pad).max(0),
+        mark_w + pad * 2,
+        mark_h + pad * 2
+    ));
+    // Left vertical stem (2u x 7u)
+    filter.push_str(&format!(
+        ",drawbox=x={}:y={}:w={}:h={}:color=0x53FC18:t=fill",
+        x, y, 2 * u, mark_h
+    ));
+    // Center pinch block (u x 3u)
+    filter.push_str(&format!(
+        ",drawbox=x={}:y={}:w={}:h={}:color=0x53FC18:t=fill",
+        x + 2 * u, y + 2 * u, u, 3 * u
+    ));
+    // Upper and lower inner steps (u x 2u)
+    filter.push_str(&format!(
+        ",drawbox=x={}:y={}:w={}:h={}:color=0x53FC18:t=fill",
+        x + 3 * u, y + u, u, 2 * u
+    ));
+    filter.push_str(&format!(
+        ",drawbox=x={}:y={}:w={}:h={}:color=0x53FC18:t=fill",
+        x + 3 * u, y + 4 * u, u, 2 * u
+    ));
+    // Upper-right and lower-right wings (2u x 2u)
+    filter.push_str(&format!(
+        ",drawbox=x={}:y={}:w={}:h={}:color=0x53FC18:t=fill",
+        x + 4 * u, y, 2 * u, 2 * u
+    ));
+    filter.push_str(&format!(
+        ",drawbox=x={}:y={}:w={}:h={}:color=0x53FC18:t=fill",
+        x + 4 * u, y + 5 * u, 2 * u, 2 * u
+    ));
+    mark_w + pad
+}
+
 /// Append template filters to an already-built base chain. Called after the
 /// canvas/scale/pad but before subtitles so captions always stay on top.
 pub fn apply_visual(
@@ -351,12 +404,31 @@ pub fn apply_visual(
     }
     if t.watermark {
         if let Some(handle) = &overlays.watermark {
-            filter.push_str(&format!(
-                ",drawtext={}text='{}':fontcolor=white:fontsize=40:x=w-text_w-50:y={}:box=1:boxcolor=black@0.5:boxborderw=12",
-                font,
-                escape_drawtext(handle),
-                h - cfg.safe_zone_bottom as i64
-            ));
+            let y_pos = h - cfg.safe_zone_bottom as i64;
+            let clean_handle = handle.trim_start_matches('@').trim();
+            if matches!(t.id, "kick-stream" | "split-stream" | "dual_react") && !clean_handle.is_empty() {
+                let upper = clean_handle.to_ascii_uppercase();
+                let handle_w = (upper.chars().count() as i64 * 24).max(80);
+                let logo_w = 42;
+                let total_w = logo_w + 14 + handle_w;
+                let start_x = ((w - total_w) / 2).max(40);
+                // Official Kick Green (#53FC18) stepped geometric K logo beside bold white handle
+                let drawn_w = append_kick_green_logo(filter, start_x, y_pos, 42);
+                filter.push_str(&format!(
+                    ",drawtext={}text='{}':fontcolor=white:fontsize=40:x={}:y={}:borderw=3:bordercolor=black:shadowcolor=black@0.85:shadowx=0:shadowy=3",
+                    font,
+                    escape_drawtext(&upper),
+                    start_x + drawn_w + 12,
+                    y_pos + 3
+                ));
+            } else {
+                filter.push_str(&format!(
+                    ",drawtext={}text='{}':fontcolor=white:fontsize=40:x=w-text_w-50:y={}:box=1:boxcolor=black@0.5:boxborderw=12",
+                    font,
+                    escape_drawtext(handle),
+                    y_pos
+                ));
+            }
         }
     }
 }
@@ -486,5 +558,24 @@ mod tests {
         assert!(lines[0].chars().count() <= 24);
         assert!(lines[1].chars().count() <= 24);
         assert_eq!(lines.join(" "), "Why is that? How can we speak powerfully");
+    }
+
+    #[test]
+    fn kick_template_draws_green_logo_mark() {
+        for id in ["kick-stream", "split-stream", "dual_react"] {
+            let t = get(id).unwrap();
+            let mut f = String::new();
+            apply_visual(
+                &mut f,
+                &t,
+                &cfg(),
+                &TemplateOverlays {
+                    headline: Some("Clutch".into()),
+                    watermark: Some("@adinross".into()),
+                },
+            );
+            assert!(f.contains("color=0x53FC18:t=fill"), "{id} should draw green Kick logo");
+            assert!(f.contains("ADINROSS"), "{id} should draw uppercase streamer handle");
+        }
     }
 }

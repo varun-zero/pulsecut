@@ -1,4 +1,4 @@
-export type PageId = 'dashboard' | 'clips' | 'framing' | 'shorts';
+export type PageId = 'dashboard' | 'live' | 'clips' | 'framing' | 'shorts';
 
 export type EditorTabId = 'framing' | 'templates' | 'text' | 'media';
 export type ShortsTabId = 'templates' | 'text' | 'media';
@@ -485,4 +485,82 @@ export interface DetectedSource {
   /** Optional platform-matched template suggestion (e.g. 'kick-stream' for kick.com) */
   suggestedTemplateId?: string;
   error?: string;
+}
+
+export type LiveMonitorPlatform = 'kick' | 'youtube' | 'twitch';
+
+export type LiveMonitorStatus =
+  | 'connecting'
+  | 'calibrating'
+  | 'watching'
+  | 'spike'
+  | 'paused'
+  | 'error';
+
+export interface MonitorRatePoint {
+  ts_ms: number;
+  rate: number;
+  baseline: number;
+  z_score: number;
+  hype_score: number;
+  unique_authors: number;
+  triggered: boolean;
+}
+
+export interface MonitorSpikeRecord {
+  ts_ms: number;
+  hype_score: number;
+  z_score: number;
+  rate: number;
+  baseline: number;
+  reasons: string[];
+  job_id: string;
+  manual: boolean;
+}
+
+export interface LiveStreamMonitor {
+  id: string;
+  url: string;
+  platform: LiveMonitorPlatform;
+  channel: string;
+  status: LiveMonitorStatus;
+  status_detail: string;
+  viewer_count: number | null;
+  playback_url: string | null;
+  template: string;
+  lookback_secs: number;
+  cooldown_secs: number;
+  threshold: number;
+  auto_clip: boolean;
+  paused: boolean;
+  calibrated: boolean;
+  calibration_pct: number;
+  current_rate: number;
+  baseline_rate: number;
+  z_score: number;
+  hype_score: number;
+  unique_authors: number;
+  total_messages: number;
+  clips_triggered: number;
+  last_clip_job_id: string | null;
+  last_message_ms: number;
+  created_at_ms: number;
+  history: MonitorRatePoint[];
+  spikes: MonitorSpikeRecord[];
+}
+
+export interface LiveMonitorConfig {
+  kick_bridge_url: string;
+  kick_pusher_key_set: boolean;
+  kick_pusher_key_preview: string;
+  kick_pusher_cluster: string;
+  youtube_api_key_set: boolean;
+}
+
+export interface LiveMonitorsResponse {
+  ok?: boolean;
+  backend_offline?: boolean;
+  count: number;
+  config?: LiveMonitorConfig;
+  monitors: LiveStreamMonitor[];
 }

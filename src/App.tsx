@@ -7,6 +7,8 @@ import type {
   EditorSettings,
   FramingBlueprint,
   JobItem,
+  LiveMonitorConfig,
+  LiveStreamMonitor,
   PageId,
   ShortsProductionConfig,
   WordCue,
@@ -55,6 +57,7 @@ import {
 import { createDefaultFramingBlueprint, reconcileCrops } from './lib/framingEngine';
 import { createDefaultShortsProduction } from './lib/shortsEngine';
 import {
+  fetchLiveMonitors,
   fetchWorkspaceData,
   normalizeServerJob,
   requestServerApi,
@@ -65,6 +68,7 @@ import { ShortcutsAboutModal } from './components/ShortcutsAboutModal';
 import { BrandKitModal } from './components/BrandKitModal';
 import { Toast } from './components/ui/Primitives';
 import { DashboardPage } from './pages/DashboardPage';
+import { LiveStreamsPage } from './pages/LiveStreamsPage';
 import { ClipsPage } from './pages/ClipsPage';
 import { FramingPage } from './pages/FramingPage';
 import { ShortsPage } from './pages/ShortsPage';
@@ -413,6 +417,9 @@ export function App() {
 
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [brandKitOpen, setBrandKitOpen] = useState(false);
+  const [liveMonitors, setLiveMonitors] = useState<LiveStreamMonitor[]>([]);
+  const [monitorConfig, setMonitorConfig] = useState<LiveMonitorConfig | null>(null);
+  const [backendConnected, setBackendConnected] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const draftsByClipIdRef = useRef<Record<string, EditorSettings>>({});
@@ -440,7 +447,9 @@ export function App() {
   useEffect(() => {
     let active = true;
     fetchWorkspaceData().then((data) => {
-      if (!active || !data.connectedToBackend) return;
+      if (!active) return;
+      setBackendConnected(data.connectedToBackend);
+      if (!data.connectedToBackend) return;
       setClips((prev) => mergeServerWithLocalClips(prev, data.clips));
       setJobs((prev) => mergeServerWithLocalJobs(prev, data.jobs));
       if (data.clips[0]) {
@@ -457,10 +466,180 @@ export function App() {
         });
       }
     });
+    fetchLiveMonitors().then((res) => {
+      if (!active) return;
+      if (res.connectedToBackend) {
+        setBackendConnected(true);
+        setLiveMonitors(res.monitors);
+        setMonitorConfig(res.config);
+      }
+    });
     return () => {
       active = false;
     };
   }, []);
+
+  const refreshLiveMonitors = useCallback(async () => {
+    const res = await fetchLiveMonitors();
+    setBackendConnected(res.connectedToBackend);
+    if (res.connectedToBackend) {
+      setLiveMonitors(res.monitors);
+      setMonitorConfig(res.config);
+    }
+  }, []);
+
+  // Poll live multi-stream monitor telemetry every 1.5s while on the Live Streams page
+  useEffect(() => {
+    if (page !== 'live') return;
+    let active = true;
+    void refreshLiveMonitors();
+    const timer = window.setInterval(() => {
+      if (!active) return;
+      void refreshLiveMonitors();
+    }, 1500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [page, refreshLiveMonitors]);
+
+  const handleStartMonitors = useCallback(
+    async (payload: {
+      urls: string[];
+      template: string;
+      lookback_secs: number;
+      cooldown_secs: number;
+      threshold: number;
+      auto_clip: boolean;
+    }): Promise<boolean> => {
+      const res = await requestServerApi<{
+        ok?: boolean;
+        started?: LiveStreamMonitor[];
+        errors?: Array<{ url: string; error: string }>;
+        list?: { monitors?: LiveStreamMonitor[]; config?: LiveMonitorConfig };
+      }>('/api/monitors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        notify(res.error);
+        return false;
+      }
+      setBackendConnected(true);
+      if (res.data.list?.monitors) {
+        setLiveMonitors(res.data.list.monitors);
+      } else {
+        await refreshLiveMonitors();
+      }
+      if (res.data.list?.config) {
+        setMonitorConfig(res.data.list.config);
+      }
+      const startedCount = res.data.started?.length || payload.urls.length;
+      const errCount = res.data.errors?.length || 0;
+      notify(
+        errCount > 0
+          ? `Monitoring ${startedCount} stream${startedCount === 1 ? '' : 's'} (${errCount} skipped)`
+          : `Monitoring ${startedCount} live stream${startedCount === 1 ? '' : 's'}`
+      );
+      return true;
+    },
+    [notify, refreshLiveMonitors]
+  );
+
+  const handleSaveMonitorConfig = useCallback(
+    async (payload: {
+      kick_pusher_key?: string;
+      kick_pusher_cluster?: string;
+      kick_bridge_url?: string;
+      youtube_api_key?: string;
+    }): Promise<{ ok: boolean; bridgeSynced?: boolean; error?: string }> => {
+      const res = await requestServerApi<{
+        ok?: boolean;
+        bridge_synced?: boolean;
+        config?: LiveMonitorConfig;
+      }>('/api/monitors/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        return { ok: false, error: res.error };
+      }
+      setBackendConnected(true);
+      if (res.data.config) {
+        setMonitorConfig(res.data.config);
+      }
+      notify(
+        res.data.bridge_synced
+          ? 'Kick Pusher key saved & synced to bridge'
+          : 'Monitor configuration saved'
+      );
+      return { ok: true, bridgeSynced: Boolean(res.data.bridge_synced) };
+    },
+    [notify]
+  );
+
+  const handlePauseMonitor = useCallback(
+    async (id: string, paused: boolean) => {
+      const action = paused ? 'pause' : 'resume';
+      const res = await requestServerApi(`/api/monitors/${id}/${action}`, { method: 'POST' });
+      if (!res.ok) {
+        notify(res.error);
+        return;
+      }
+      await refreshLiveMonitors();
+      notify(paused ? 'Stream monitor paused' : 'Stream monitor resumed');
+    },
+    [notify, refreshLiveMonitors]
+  );
+
+  const handleToggleAutoClip = useCallback(
+    async (id: string, enabled: boolean) => {
+      const res = await requestServerApi(`/api/monitors/${id}/auto-clip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!res.ok) {
+        notify(res.error);
+        return;
+      }
+      await refreshLiveMonitors();
+      notify(enabled ? 'Auto-clip enabled' : 'Auto-clip disabled (monitoring only)');
+    },
+    [notify, refreshLiveMonitors]
+  );
+
+  const handleManualClipMonitor = useCallback(
+    async (id: string, lookbackSecs?: number) => {
+      const res = await requestServerApi<{ job_id?: string }>(`/api/monitors/${id}/clip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(lookbackSecs ? { lookback_secs: lookbackSecs } : {}),
+      });
+      if (!res.ok) {
+        notify(res.error);
+        return;
+      }
+      await refreshLiveMonitors();
+      notify(`Queued ${lookbackSecs || 30}s lookback clip`);
+    },
+    [notify, refreshLiveMonitors]
+  );
+
+  const handleStopMonitor = useCallback(
+    async (id: string) => {
+      const res = await requestServerApi(`/api/monitors/${id}/stop`, { method: 'POST' });
+      if (!res.ok) {
+        notify(res.error);
+        return;
+      }
+      setLiveMonitors((prev) => prev.filter((m) => m.id !== id));
+      notify('Stopped stream monitor');
+    },
+    [notify]
+  );
 
   // Automatic background polling while any backend ingest job is active
   const hasActiveServerJob = useMemo(
@@ -488,7 +667,7 @@ export function App() {
         setCurrentClipId((prevId) => {
           if (prevId) return prevId;
           const first = data.clips[0];
-          const preset = getTemplatePreset(first.template || 'kick-stream');
+          const preset = getTemplatePreset(first.template || 'default');
           setHistory(createHistory(createEditorSettingsForClip(first, brandKit)));
           setFramingHistory(
             createHistory(createDefaultFramingBlueprint(first.layout || preset.defaultLayout, first.aspect || '9:16'))
@@ -560,7 +739,7 @@ export function App() {
       }
       setCurrentClipId(clipId);
       const found = clips.find((c) => c.id === clipId) ?? null;
-      const preset = getTemplatePreset(found?.template || 'kick-stream');
+      const preset = getTemplatePreset(found?.template || 'default');
       const restoredSettings =
         clipId && draftsByClipIdRef.current[clipId]
           ? draftsByClipIdRef.current[clipId]
@@ -1391,13 +1570,14 @@ export function App() {
 
   return (
     <div className="min-h-dvh bg-[var(--pc-bg)] text-[var(--pc-ink)]">
-      {/* Global Header renders ONLY on Dashboard & Clips — Framing Studio & Shorts Studio each use a single unified 48px Studio Bar */}
-      {(page === 'dashboard' || page === 'clips') && (
+      {/* Global Header renders on Dashboard, Live Streams & Clips — Framing Studio & Shorts Studio each use a single unified 48px Studio Bar */}
+      {(page === 'dashboard' || page === 'live' || page === 'clips') && (
         <AppHeader
           page={page}
           onNavigate={setPage}
           clipCount={clips.length}
           activeJobCount={activeJobCount}
+          activeMonitorCount={liveMonitors.length}
           theme={theme}
           onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
           onOpenShortcuts={() => setShortcutsOpen(true)}
@@ -1412,6 +1592,25 @@ export function App() {
           templates={templates}
           onCreateJob={handleCreateJob}
           onRefreshJobs={handleRefreshJobs}
+          onOpenClips={() => setPage('clips')}
+          onOpenLiveStreams={() => setPage('live')}
+          activeMonitorCount={liveMonitors.length}
+        />
+      )}
+
+      {page === 'live' && (
+        <LiveStreamsPage
+          monitors={liveMonitors}
+          monitorConfig={monitorConfig}
+          connectedToBackend={backendConnected}
+          templates={templates}
+          onStartMonitors={handleStartMonitors}
+          onSaveMonitorConfig={handleSaveMonitorConfig}
+          onPauseMonitor={handlePauseMonitor}
+          onToggleAutoClip={handleToggleAutoClip}
+          onManualClipMonitor={handleManualClipMonitor}
+          onStopMonitor={handleStopMonitor}
+          onRefreshMonitors={refreshLiveMonitors}
           onOpenClips={() => setPage('clips')}
         />
       )}

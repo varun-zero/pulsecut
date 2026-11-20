@@ -21,6 +21,82 @@ use pulsecut_core::edl::{EditDecisionList, EditOp};
 use pulsecut_core::error::{PulseError, Result};
 use pulsecut_core::model::Word;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+static DETECTED_HW_ENCODER: OnceLock<&'static str> = OnceLock::new();
+
+/// Probe once per process whether a real GPU H.264 hardware encoder works on
+/// this machine (NVENC -> QSV -> AMF), falling back safely to software `x264`.
+fn detect_best_encoder(ffmpeg: &Path) -> &'static str {
+    *DETECTED_HW_ENCODER.get_or_init(|| {
+        let Ok(list_out) = std::process::Command::new(ffmpeg)
+            .args(["-hide_banner", "-encoders"])
+            .output()
+        else {
+            return "x264";
+        };
+        let list = String::from_utf8_lossy(&list_out.stdout);
+        for (key, codec) in [
+            ("nvenc", "h264_nvenc"),
+            ("qsv", "h264_qsv"),
+            ("amf", "h264_amf"),
+        ] {
+            if !list.contains(codec) {
+                continue;
+            }
+            // Verify the GPU driver is actually present with a 1-frame smoke test.
+            let ok = std::process::Command::new(ffmpeg)
+                .args([
+                    "-y", "-loglevel", "error",
+                    "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.04",
+                    "-frames:v", "1",
+                    "-c:v", codec,
+                    "-f", "null", "-",
+                ])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if ok {
+                tracing::info!("auto-detected working GPU encoder: {codec}");
+                return key;
+            }
+        }
+        "x264"
+    })
+}
+
+fn x264_preset() -> String {
+    std::env::var("PULSECUT_X264_PRESET")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "veryfast".to_string())
+}
+
+fn encoder_codec_and_args(encoder: &str, crf: u32) -> (&'static str, Vec<String>) {
+    let crf_s = crf.to_string();
+    match encoder {
+        "nvenc" => (
+            "h264_nvenc",
+            vec!["-preset".into(), "p4".into(), "-cq".into(), crf_s, "-b:v".into(), "0".into()],
+        ),
+        "amf" => (
+            "h264_amf",
+            vec!["-quality".into(), "speed".into(), "-qp_i".into(), crf_s.clone(), "-qp_p".into(), crf_s],
+        ),
+        "qsv" => (
+            "h264_qsv",
+            vec!["-preset".into(), "faster".into(), "-global_quality".into(), crf_s],
+        ),
+        _ => (
+            "libx264",
+            vec![
+                "-preset".into(), x264_preset(),
+                "-crf".into(), crf_s,
+                "-threads".into(), "0".into(),
+            ],
+        ),
+    }
+}
 
 /// Escape a path for use in an ffmpeg filter option.
 /// The filtergraph parser splits on ':' even inside single quotes, so Windows
@@ -135,16 +211,31 @@ fn apply_extra_overlays(f: &mut String, cfg: &RenderConfig, edl: &EditDecisionLi
         ));
     }
     if let Some((handle, style)) = edl.social_card() {
-        let color = if style == "verified" { "0x1D9BF0" } else { "0xFFFFFF" };
-        f.push_str(&format!(
-            ",drawbox=x=40:y={}:w=460:h=110:color={color}@0.85:t=fill",
-            cfg.height as i64 - 420
-        ));
-        f.push_str(&format!(
-            ",drawtext={font}text='{}':fontcolor=white:fontsize=42:x=70:y={}",
-            templates::escape_drawtext(&handle),
-            cfg.height as i64 - 395
-        ));
+        let card_y = cfg.height as i64 - 420;
+        if style == "kick" {
+            let clean = handle.trim_start_matches('@').trim().to_ascii_uppercase();
+            let card_w = (120 + clean.chars().count() as i64 * 26).clamp(320, cfg.width as i64 - 80);
+            f.push_str(&format!(
+                ",drawbox=x=40:y={card_y}:w={card_w}:h=92:color=0x0B0E0F@0.82:t=fill"
+            ));
+            let drawn_w = templates::append_kick_green_logo(f, 64, card_y + 24, 42);
+            f.push_str(&format!(
+                ",drawtext={font}text='{}':fontcolor=white:fontsize=40:x={}:y={}:borderw=2:bordercolor=black",
+                templates::escape_drawtext(&clean),
+                64 + drawn_w + 14,
+                card_y + 26
+            ));
+        } else {
+            let box_color = if style == "verified" { "0x1D9BF0@0.88" } else { "0x0B0E0F@0.78" };
+            f.push_str(&format!(
+                ",drawbox=x=40:y={card_y}:w=460:h=100:color={box_color}:t=fill"
+            ));
+            f.push_str(&format!(
+                ",drawtext={font}text='{}':fontcolor=white:fontsize=40:x=70:y={}",
+                templates::escape_drawtext(&handle),
+                card_y + 28
+            ));
+        }
     }
 }
 
@@ -176,28 +267,18 @@ impl Renderer {
     /// Build the full ffmpeg argument vector for a render.
     pub fn args(&self, input: &Path, subs: Option<&Path>, out: &Path) -> Vec<String> {
         let vf = video_filter(&self.cfg, &EditDecisionList::default(), subs);
-        let crf = self.cfg.crf.to_string();
-        // Max-quality encode: slow preset for better compression/quality at a
-        // given CRF, higher-quality hardware presets, and 256k AAC audio.
-        let (codec, extra) = match self.cfg.encoder.as_str() {
-            "nvenc" => ("h264_nvenc", vec!["-preset", "p7", "-cq", "17", "-b:v", "0"]),
-            "amf" => ("h264_amf", vec!["-quality", "quality"]),
-            "qsv" => ("h264_qsv", vec!["-preset", "slow", "-global_quality", crf.as_str()]),
-            _ => ("libx264", vec!["-preset", "slow", "-crf", crf.as_str()]),
-        };
+        let (codec, extra) = encoder_codec_and_args(self.cfg.encoder.as_str(), self.cfg.crf);
         let mut args = vec![
             "-y".into(), "-loglevel".into(), "error".into(),
             "-i".into(), input.to_string_lossy().into_owned(),
             "-vf".into(), vf,
             "-c:v".into(), codec.into(),
         ];
-        for e in extra {
-            args.push(e.into());
-        }
+        args.extend(extra);
         args.extend([
             "-pix_fmt".into(), "yuv420p".into(),
             "-c:a".into(), "aac".into(),
-            "-b:a".into(), "256k".into(),
+            "-b:a".into(), "192k".into(),
             "-t".into(), self.cfg.max_duration_secs.to_string(),
             "-movflags".into(), "+faststart".into(),
             out.to_string_lossy().into_owned(),
@@ -296,19 +377,15 @@ impl Renderer {
         if let Some(af) = audio_filter(&cfg, edl) {
             cmd.args(["-af", &af]);
         }
-        cmd.args(["-c:v", match cfg.encoder.as_str() {
-            "nvenc" => "h264_nvenc", "amf" => "h264_amf", "qsv" => "h264_qsv", _ => "libx264",
-        }]);
-        let crf = cfg.crf.to_string();
-        // Max-quality encode (kept in sync with Renderer::args above).
-        let (_codec, extra): (&str, Vec<&str>) = match self.cfg.encoder.as_str() {
-            "nvenc" => ("h264_nvenc", vec!["-preset", "p7", "-cq", "17", "-b:v", "0"]),
-            "amf" => ("h264_amf", vec!["-quality", "quality"]),
-            "qsv" => ("h264_qsv", vec!["-preset", "slow", "-global_quality", crf.as_str()]),
-            _ => ("libx264", vec!["-preset", "slow", "-crf", crf.as_str()]),
+        let resolved_encoder = if cfg.encoder.eq_ignore_ascii_case("auto") {
+            detect_best_encoder(&self.ffmpeg)
+        } else {
+            cfg.encoder.as_str()
         };
+        let (codec, extra) = encoder_codec_and_args(resolved_encoder, cfg.crf);
+        cmd.args(["-c:v", codec]);
         cmd.args(&extra);
-        cmd.args(["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k",
+        cmd.args(["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
                   "-t", &cfg.max_duration_secs.to_string(),
                   "-movflags", "+faststart"])
             .arg(out);

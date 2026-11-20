@@ -22,6 +22,7 @@ use pulsecut_core::model::{ClipPackage, ClipStatus, ClipWindow, Platform, Word, 
 use pulsecut_render::{apply_metadata, Renderer};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use tokio::process::Command as AsyncCommand;
 
 /// Extra context supplied by the Dashboard or Browser Extension.
 #[derive(Debug, Clone, Default)]
@@ -162,9 +163,10 @@ pub async fn download_with_options(
         attempts.push((build_args("best", false, false), 0));
 
         for (args, offset_ms) in attempts {
-            let output = Command::new(&bin)
+            let output = tokio::process::Command::new(&bin)
                 .args(&args)
                 .output()
+                .await
                 .map_err(|e| PulseError::Process(format!("yt-dlp failed to start: {e}")))?;
             if output.status.success() {
                 if let Some(p) = find_downloaded_source(dir)? {
@@ -245,6 +247,10 @@ fn should_use_live_capture(url: &str, opts: &ClipJobOptions) -> bool {
     }
     // Kick channel URL (not a VOD `/video/` or `/clips/` page) is a live stream.
     if extract_kick_slug(url).is_some() {
+        return true;
+    }
+    // YouTube Live direct `/live/<id>` URLs are live broadcasts.
+    if lower.contains("youtube.com/live/") {
         return true;
     }
     // Twitch channel URL (not `/videos/` or `/clip/`) is a live stream.
@@ -335,9 +341,19 @@ async fn capture_live_stream(
 
     if hls_url.is_none() {
         if let Some(ytdlp) = resolve_binary("", "PULSECUT_YTDLP", &["yt-dlp", "yt-dlp.exe"]) {
-            let out = Command::new(&ytdlp)
-                .args(["-g", "--no-playlist", "--no-update", "-f", "best", url])
-                .output();
+            // Prefer single muxed HLS (.m3u8) stream up to 1080p so FFmpeg can
+            // grab DVR lookback segments rapidly without separate audio muxing.
+            let out = AsyncCommand::new(&ytdlp)
+                .args([
+                    "-g",
+                    "--no-playlist",
+                    "--no-update",
+                    "-f",
+                    "best[protocol*=m3u8][height<=1080]/best[height<=1080]/best",
+                    url,
+                ])
+                .output()
+                .await;
             if let Ok(o) = out {
                 if o.status.success() {
                     let stdout = String::from_utf8_lossy(&o.stdout);
@@ -351,7 +367,7 @@ async fn capture_live_stream(
 
     let stream_url = hls_url.ok_or_else(|| {
         PulseError::Http(format!(
-            "Could not resolve live HLS stream for {url}. On Kick/Twitch live channels, click Clip in the PulseCut Chrome Extension while the stream is playing (it extracts the live .m3u8 URL directly from your browser tab) or verify the streamer is currently live."
+            "Could not resolve live HLS stream for {url}. On Kick/Twitch/YouTube live channels, click Clip in the PulseCut Chrome Extension while the stream is playing or verify the streamer is currently live."
         ))
     })?;
 
@@ -359,8 +375,39 @@ async fn capture_live_stream(
     let target = dir.join("source.mp4");
     tracing::info!("capturing {duration_secs}s live HLS stream -> {}", target.display());
 
-    // Fast lossless stream-copy capture first.
-    let copy_status = Command::new(ffmpeg_bin)
+    // 1. Fast DVR lookback attempt: pull already-buffered HLS segments from the
+    //    playlist tail so we capture the moment that JUST happened in ~2-5s
+    //    instead of sitting for 30 real-time seconds waiting into the future!
+    let live_start_idx = -(((duration_secs / 2) + 2).clamp(6, 45) as i64);
+    let dvr_attempt = AsyncCommand::new(ffmpeg_bin)
+        .args([
+            "-y",
+            "-v", "error",
+            "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "-live_start_index", &live_start_idx.to_string(),
+            "-i", &stream_url,
+            "-t", &duration_secs.to_string(),
+            "-c", "copy",
+            "-bsf:a", "aac_adtstoasc",
+            "-movflags", "+faststart",
+        ])
+        .arg(&target)
+        .output()
+        .await;
+
+    if let Ok(dvr) = dvr_attempt {
+        if dvr.status.success()
+            && target.is_file()
+            && std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0) > 32_768
+            && probe_duration_ms(&target, ffmpeg_bin) >= 8_000
+        {
+            tracing::info!("fast DVR lookback capture succeeded for {url}");
+            return Ok(target);
+        }
+    }
+
+    // 2. Standard lossless stream-copy live capture fallback.
+    let copy_status = AsyncCommand::new(ffmpeg_bin)
         .args([
             "-y",
             "-v", "error",
@@ -373,14 +420,15 @@ async fn capture_live_stream(
         ])
         .arg(&target)
         .output()
+        .await
         .map_err(|e| PulseError::Process(format!("ffmpeg live capture failed to start: {e}")))?;
 
     if copy_status.status.success() && target.is_file() && std::fs::metadata(&target)?.len() > 16_384 {
         return Ok(target);
     }
 
-    // Fallback: re-encode cleanly if stream copy failed (e.g. non-AAC audio or TS discontinuity).
-    let encode_out = Command::new(ffmpeg_bin)
+    // 3. Re-encode fallback if stream copy failed (e.g. non-AAC audio or TS discontinuity).
+    let encode_out = AsyncCommand::new(ffmpeg_bin)
         .args([
             "-y",
             "-v", "error",
@@ -388,14 +436,16 @@ async fn capture_live_stream(
             "-i", &stream_url,
             "-t", &duration_secs.to_string(),
             "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-crf", "17",
+            "-preset", "ultrafast",
+            "-crf", "19",
+            "-threads", "0",
             "-c:a", "aac",
             "-b:a", "192k",
             "-movflags", "+faststart",
         ])
         .arg(&target)
         .output()
+        .await
         .map_err(|e| PulseError::Process(format!("ffmpeg live capture failed: {e}")))?;
 
     if encode_out.status.success() && target.is_file() && std::fs::metadata(&target)?.len() > 16_384 {
@@ -449,12 +499,13 @@ async fn transcribe_full_video(
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| cfg.ai.whisper_model.clone());
         let wav = dir.join("full_audio.wav");
-        let extracted = Command::new(ffmpeg_bin)
+        let extracted = AsyncCommand::new(ffmpeg_bin)
             .args(["-y", "-v", "error", "-i"])
             .arg(source)
             .args(["-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"])
             .arg(&wav)
             .status()
+            .await
             .map(|s| s.success())
             .unwrap_or(false);
         if extracted && wav.is_file() {
@@ -721,8 +772,14 @@ async fn select_best_clips(
     };
 
     // Single live/lookback capture from the browser extension: keep the whole
-    // captured lookback window cleanly intact.
+    // captured lookback window cleanly intact. Omit generic browser page titles
+    // like "Eray Live Stream - Watch Live on KICK" so Whisper generates a real
+    // spoken hook headline!
     if (opts.is_live || opts.current_time_sec.is_some()) && target_count == 1 && duration_ms <= 95_000 {
+        let usable_title = opts
+            .video_title
+            .clone()
+            .filter(|t| !is_generic_live_title(t));
         return vec![SelectedClip {
             start_ms: 0,
             end_ms: duration_ms,
@@ -732,7 +789,7 @@ async fn select_best_clips(
             } else {
                 "extension VOD lookback capture".into()
             },
-            title: opts.video_title.clone(),
+            title: usable_title,
             hook: None,
             description: None,
             hashtags: Vec::new(),
@@ -1019,6 +1076,18 @@ fn is_trailing_sentence_tail(word: &str) -> bool {
     starts_lower && ends_sentence
 }
 
+/// Detect generic browser tab titles ("X Live Stream - Watch Live on KICK") so
+/// Whisper/AI generates a punchy spoken hook instead of repeating the page title.
+fn is_generic_live_title(title: &str) -> bool {
+    let lower = title.trim().to_ascii_lowercase();
+    lower.is_empty()
+        || lower.contains("watch live on kick")
+        || lower.contains("live stream")
+        || lower.ends_with(" - kick")
+        || lower.ends_with(" - twitch")
+        || lower.ends_with(" - youtube")
+}
+
 /// Capitalize the first character of a string while preserving the rest.
 fn capitalize_first(text: &str) -> String {
     let trimmed = text.trim();
@@ -1171,8 +1240,13 @@ where
     let (source, section_offset_ms) = download_with_options(url, &dir, &opts, Some(&ffmpeg_bin)).await?;
     tracing::info!("downloaded {} -> {}", url, source.display());
 
-    on_progress(35, "analyzing audio & transcribing full video");
-    let energy = audio_energy_per_second(&source, &ffmpeg_bin);
+    on_progress(35, "transcribing clip audio");
+    let is_single_extension_clip = (opts.is_live || opts.current_time_sec.is_some()) && max_clips == 1;
+    let energy = if is_single_extension_clip {
+        Vec::new()
+    } else {
+        audio_energy_per_second(&source, &ffmpeg_bin)
+    };
     let probed_ms = probe_duration_ms(&source, &ffmpeg_bin);
     let duration_ms = if probed_ms > 0 {
         probed_ms
@@ -1225,31 +1299,52 @@ where
         let start_sec = (clip.start_ms as f64 / 1000.0).max(0.0);
         let dur_sec = ((clip.end_ms - clip.start_ms) as f64 / 1000.0).max(1.0);
 
-        // Frame-accurate high-quality slice (CRF 16 + 256k AAC) into raw/{id}.ts
-        // so sentence starts never freeze on a late keyframe and Framing Studio
-        // gets crisp native-resolution frames.
-        let slice_status = Command::new(&ffmpeg_bin)
-            .args([
-                "-y",
-                "-v", "error",
-                "-ss", &format!("{start_sec:.3}"),
-                "-i",
-            ])
-            .arg(&source)
-            .args([
-                "-t", &format!("{dur_sec:.3}"),
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", "16",
-                "-c:a", "aac",
-                "-b:a", "256k",
-                "-f", "mpegts",
-            ])
-            .arg(&raw)
-            .status()
-            .map_err(|e| PulseError::Process(format!("clip slice failed: {e}")))?;
-        if !slice_status.success() {
-            return Err(PulseError::Process(format!("ffmpeg slice failed for clip {}", rank + 1)));
+        // Fast path: when keeping the entire captured live/short source
+        // (start ~0s and full duration), do a 0.1s lossless stream-copy remux
+        // into raw/{id}.ts instead of re-encoding the entire video twice!
+        let is_full_source_clip =
+            clip.start_ms <= 500 && (duration_ms - clip.end_ms).abs() <= 2_500;
+        let mut sliced_ok = false;
+        if is_full_source_clip {
+            let copy_ok = AsyncCommand::new(&ffmpeg_bin)
+                .args(["-y", "-v", "error", "-i"])
+                .arg(&source)
+                .args(["-c", "copy", "-f", "mpegts"])
+                .arg(&raw)
+                .status()
+                .await
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if copy_ok && raw.is_file() && std::fs::metadata(&raw).map(|m| m.len()).unwrap_or(0) > 16_384 {
+                sliced_ok = true;
+            }
+        }
+        if !sliced_ok {
+            let slice_status = AsyncCommand::new(&ffmpeg_bin)
+                .args([
+                    "-y",
+                    "-v", "error",
+                    "-ss", &format!("{start_sec:.3}"),
+                    "-i",
+                ])
+                .arg(&source)
+                .args([
+                    "-t", &format!("{dur_sec:.3}"),
+                    "-c:v", "libx264",
+                    "-preset", "veryfast",
+                    "-crf", "18",
+                    "-threads", "0",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-f", "mpegts",
+                ])
+                .arg(&raw)
+                .status()
+                .await
+                .map_err(|e| PulseError::Process(format!("clip slice failed: {e}")))?;
+            if !slice_status.success() {
+                return Err(PulseError::Process(format!("ffmpeg slice failed for clip {}", rank + 1)));
+            }
         }
 
         // Slice matching word-level timestamps relative to the clip start (0..dur_ms).
@@ -1355,6 +1450,9 @@ where
         };
         packages.push(pkg);
     }
+
+    // Clean up temporary download workspace so multi-tab live clipping stays lightweight on disk.
+    let _ = std::fs::remove_dir_all(&dir);
 
     Ok(packages)
 }

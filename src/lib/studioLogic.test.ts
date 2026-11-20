@@ -40,6 +40,7 @@ import {
   undoHistory,
   validateIngestInput,
 } from './studioLogic';
+import { normalizeServerClip } from './api';
 import type { BrandKit, ClipItem, EditorSettings, WordCue } from '../types';
 
 const require = createRequire(import.meta.url);
@@ -587,5 +588,27 @@ Podcast trio test cue`;
   assert.ok(trioParity.ffmpegFiltergraph.includes('vstack=inputs=2'));
   assert.ok(trioParity.ffmpegFiltergraph.includes('setpts=0.667*PTS'));
 });
+
+test('normalizeServerClip defaults missing template to Classic Short (default) and Kick templates use Kick Green #53FC18', () => {
+  const normalized = normalizeServerClip({ id: 'clip-42', title: 'Test Clip' }, 0);
+  assert.equal(normalized.template, 'default');
+
+  const kickViral = getTemplatePreset('kick-stream');
+  const splitCam = getTemplatePreset('split-stream');
+  assert.equal(kickViral.accentHex, '#53FC18');
+  assert.equal(splitCam.accentHex, '#53FC18');
+
+  const dualParity = buildRenderParitySpec(
+    [],
+    { ...SAMPLE_SETTINGS, template: 'dual_react', streamerPlatform: 'auto', streamerHandle: 'eray' },
+    SAMPLE_BRAND_KIT,
+    0,
+    []
+  );
+  assert.ok(
+    dualParity.overlayAssets.some((a) => a.includes('kick_logo_53fc18.svg') && a.includes('ERAY'))
+  );
+});
+
 
 

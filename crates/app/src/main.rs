@@ -4,6 +4,7 @@
 //! -> editor store -> publish queue. Every stage is a separate crate so it can
 //! be tested and replaced independently.
 
+mod monitor;
 mod vod;
 mod web;
 

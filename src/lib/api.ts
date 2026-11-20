@@ -74,7 +74,7 @@ export function normalizeServerClip(c: Partial<ClipItem> & Record<string, unknow
   return {
     id,
     title: typeof c.title === 'string' && c.title ? c.title : 'Untitled Clip',
-    template: typeof c.template === 'string' && c.template ? c.template : 'kick-stream',
+    template: typeof c.template === 'string' && c.template ? c.template : 'default',
     status: (c.status as ClipItem['status']) || 'Ready',
     confidence: typeof c.confidence === 'number' ? c.confidence : 0.85,
     channel: typeof c.channel === 'string' && c.channel ? c.channel : platform,
@@ -172,6 +172,26 @@ export async function fetchWorkspaceData(): Promise<{
   return {
     clips: (clipsRes?.clips ?? []).map(normalizeServerClip),
     jobs: (jobsRes?.jobs ?? []).map(normalizeServerJob),
+    connectedToBackend: true,
+  };
+}
+
+export async function fetchLiveMonitors(): Promise<{
+  monitors: import('../types').LiveStreamMonitor[];
+  config: import('../types').LiveMonitorConfig | null;
+  connectedToBackend: boolean;
+}> {
+  const res = await tryServerApi<import('../types').LiveMonitorsResponse>('/api/monitors');
+  if (!res || res.backend_offline) {
+    return {
+      monitors: [],
+      config: null,
+      connectedToBackend: false,
+    };
+  }
+  return {
+    monitors: Array.isArray(res.monitors) ? res.monitors : [],
+    config: res.config ?? null,
     connectedToBackend: true,
   };
 }

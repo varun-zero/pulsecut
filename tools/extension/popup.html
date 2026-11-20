@@ -6,7 +6,7 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      width: 320px;
+      width: 332px;
       background: #0b0b0d;
       color: #f4f4f6;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -67,7 +67,7 @@
       margin-bottom: 12px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 7px;
     }
     .tab-row {
       display: flex;
@@ -95,6 +95,67 @@
       color: #53fc18;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
+    .tab-stats {
+      font-size: 10.5px;
+      color: #a1a1aa;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .watched-section {
+      background: #141418;
+      border: 1px solid #23232b;
+      border-radius: 10px;
+      padding: 9px 11px;
+      margin-bottom: 12px;
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .watched-section.visible {
+      display: flex;
+    }
+    .watched-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      max-height: 112px;
+      overflow-y: auto;
+    }
+    .watched-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 5px 7px;
+      border-radius: 7px;
+      background: #1b1b21;
+      border: 1px solid #272730;
+      cursor: pointer;
+      color: #f4f4f6;
+      text-align: left;
+      width: 100%;
+    }
+    .watched-item:hover {
+      border-color: #3f3f4e;
+    }
+    .watched-name {
+      font-size: 11.5px;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+      min-width: 0;
+    }
+    .watched-meta {
+      font-size: 10px;
+      color: #a1a1aa;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: nowrap;
+    }
+    .watched-meta.hot {
+      color: #53fc18;
+      font-weight: 700;
+    }
     .btn-primary {
       width: 100%;
       height: 34px;
@@ -109,7 +170,7 @@
     .btn-primary:hover:not(:disabled) { opacity: 0.92; }
     .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
     .field {
-      margin-bottom: 11px;
+      margin-bottom: 10px;
     }
     .field-head {
       display: flex;
@@ -189,19 +250,29 @@
       <span class="tab-label">Active Tab</span>
       <span class="tab-platform" id="tabPlatform">—</span>
     </div>
-    <div class="tab-channel" id="tabChannel">Open Kick, Twitch, YouTube, or Reels</div>
+    <div class="tab-channel" id="tabChannel">Open Kick, Twitch, YouTube Live, or Reels</div>
+    <div class="tab-stats" id="tabStats">Adaptive baseline scales to viewer count</div>
     <button type="button" class="btn-primary" id="clipNowBtn" disabled>
       Clip Active Tab Now
     </button>
     <div class="hint" id="actionHint">Shortcut on stream tabs: Alt+Shift+C</div>
   </div>
 
+  <div class="watched-section" id="watchedSection">
+    <div class="tab-row">
+      <span class="tab-label">Monitored Stream Tabs</span>
+      <span class="tab-platform" id="watchedCount">0 tabs</span>
+    </div>
+    <div class="watched-list" id="watchedList"></div>
+  </div>
+
   <div class="field">
     <div class="field-head">
-      <label for="mode">Auto-Clip Mode</label>
+      <label for="mode">Extension Mode</label>
     </div>
     <select id="mode">
-      <option value="auto">Auto-Clip on Hype Spike</option>
+      <option value="manual">Manual Clip Only (Recommended — Use Direct-Link for Auto)</option>
+      <option value="auto">Browser Auto-Clip (DOM Fallback)</option>
       <option value="alert">Alert Toast Only</option>
       <option value="off">Off (Hide HUD)</option>
     </select>

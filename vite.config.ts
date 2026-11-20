@@ -25,9 +25,12 @@ export default defineConfig({
             const method = (req.method || 'GET').toUpperCase();
             const url = req.url || '';
             // Gracefully report offline workspace on read probes so standalone local-file mode stays console-clean
-            if (method === 'GET' && (url.startsWith('/api/clips') || url.startsWith('/api/jobs'))) {
+            if (
+              method === 'GET' &&
+              (url.startsWith('/api/clips') || url.startsWith('/api/jobs') || url.startsWith('/api/monitors'))
+            ) {
               res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ backend_offline: true, clips: [], jobs: [] }));
+              res.end(JSON.stringify({ backend_offline: true, clips: [], jobs: [], monitors: [], count: 0 }));
               return;
             }
             res.writeHead(503, { 'Content-Type': 'application/json' });

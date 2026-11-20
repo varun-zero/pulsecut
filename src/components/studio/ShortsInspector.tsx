@@ -62,6 +62,7 @@ import {
   StudioSlider,
   StudioSwitch,
 } from '../ui/Primitives';
+import { InstagramIcon, KickLogoIcon, YouTubeShortsIcon } from '../ui/PlatformIcons';
 
 interface ShortsInspectorProps {
   activeTab: ShortsTabId;
@@ -459,8 +460,17 @@ export function ShortsInspector({
                       onClick={() => onSelectTemplatePreset(preset)}
                       className="p-2 pb-1.5 text-left cursor-pointer bg-transparent border-0 w-full"
                     >
-                      <div className="text-xs font-semibold text-[var(--pc-ink)] truncate">
-                        {preset.name}
+                      <div className="text-xs font-semibold text-[var(--pc-ink)] flex items-center gap-1.5 min-w-0">
+                        {preset.defaultStreamerPlatform === 'kick' && (
+                          <KickLogoIcon className="w-3 h-3 shrink-0" />
+                        )}
+                        {preset.defaultStreamerPlatform === 'instagram' && (
+                          <InstagramIcon className="w-3 h-3 shrink-0" />
+                        )}
+                        {preset.defaultStreamerPlatform === 'youtube' && (
+                          <YouTubeShortsIcon className="w-3 h-3 shrink-0" />
+                        )}
+                        <span className="truncate">{preset.name}</span>
                       </div>
                       <div className="text-[10px] font-mono-tabular text-[var(--pc-muted)] mt-0.5 truncate">
                         {preset.defaultAspect || '9:16'} ·{' '}

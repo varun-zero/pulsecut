@@ -76,8 +76,8 @@ export function ClipsPage({
   );
 
   const emptyState = getClipsEmptyState(clips.length, filteredClips.length);
-  const readyCount = clips.filter((c) => c.status === 'Ready').length;
-  const approvedCount = clips.filter((c) => c.status === 'Approved').length;
+  const readyCount = clips.filter((c) => c.status.toLowerCase() === 'ready').length;
+  const approvedCount = clips.filter((c) => c.status.toLowerCase() === 'approved').length;
 
   const allVisibleSelected =
     filteredClips.length > 0 && filteredClips.every((c) => selectedIds.has(c.id));

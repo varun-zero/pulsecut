@@ -7,7 +7,7 @@ pub mod youtube;
 
 pub use kick::KickChat;
 pub use twitch::TwitchChat;
-pub use youtube::YouTubeChat;
+pub use youtube::{YouTubeChat, YouTubeInnertubeChat};
 
 use pulsecut_core::error::Result;
 use pulsecut_core::model::{ChatMessage, Platform};

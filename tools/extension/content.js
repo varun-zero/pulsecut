@@ -1,14 +1,17 @@
 /**
- * PulseCut Auto-Clipper — Content Script
+ * PulseCut Auto-Clipper — Lightweight Multi-Tab Content Script
  *
  * Works cleanly across:
- * - Kick (live channels, virtualized chatroom, same-origin HLS playback_url capture)
- * - Twitch (live channels, VODs & chat)
- * - YouTube Live & VODs (top-frame HUD + /live_chat iframe observer + exact playback timestamp)
+ * - Kick (live channels, viewer count via DOM + v2 API, virtualized chatroom, same-origin HLS .m3u8)
+ * - YouTube Live & VODs (live badge/chatframe detection, viewer count, /live_chat iframe + custom emoji alt text)
+ * - Twitch (live channels, viewer count, VODs & chat)
  * - YouTube Shorts & Instagram Reels (one-click capture + auto-detected creator handle)
  *
- * All localhost server requests are proxied through background.js so HTTPS pages
- * never hit Mixed Content or CORS blocks.
+ * Multi-tab stability:
+ * - 1s adaptive tick cadence with bounded buffers (<= 250 messages, <= 300 dedupe keys)
+ * - Skips redundant DOM querySelectorAll fallback whenever MutationObserver is actively firing
+ * - Pauses HUD DOM repaints on hidden background tabs while continuing silent auto-clip monitoring
+ * - Shares a single cached server health ping via background.js across all open tabs
  */
 
 (function startPulseCutContentScript() {
@@ -19,13 +22,16 @@
 
   const IS_TOP_FRAME = window === window.top;
   const CHAT_WINDOW_MS = 6000;
-  const BASELINE_WINDOW_MS = 60000;
-  const TICK_INTERVAL_MS = 500;
+  const TICK_INTERVAL_MS = 1000;
+  const HEARTBEAT_INTERVAL_MS = 5000;
+  const HEALTH_PING_INTERVAL_MS = 20000;
+  const MAX_MESSAGE_BUFFER = 250;
+  const MAX_SEEN_KEYS = 300;
 
   let config = { ...engine.DEFAULT_CONFIG };
   let context = readPageContext();
-  let messageTimestamps = []; // [{ ts, text }]
-  let baselineCount = []; // [ts]
+  let baselineState = engine.createBaselineState(Date.now(), context.viewerCount);
+  let messageTimestamps = []; // [{ ts, text, author }]
   let lastAutoTriggerMs = 0;
   let lastManualTriggerMs = 0;
   let lastAlertMs = 0;
@@ -34,21 +40,105 @@
   let currentUrl = window.location.href;
   let chatObserver = null;
   let observedContainer = null;
+  let lastMutationMs = 0;
+  let lastHeartbeatMs = 0;
+  let lastAnalysis = null;
+  let lastViewerCount = context.viewerCount || null;
+  let lastKickMetaFetchMs = 0;
 
   // Deduplication for subtree MutationObserver + virtualized Kick/Twitch chat scanner
   const seenNodes = new WeakSet();
   const seenMessageKeys = new Map(); // key -> timestamp
 
-  // Cached Kick/HLS playback URL resolved inside the authenticated browser tab
+  // Cached Kick/HLS playback URL & viewer count resolved inside authenticated browser tab
   let cachedPlaybackUrl = '';
   let cachedPlaybackSlug = '';
 
-  // Iframe batch buffer for relaying YouTube live_chat messages to top frame
+  // Iframe batch buffer for relaying YouTube /live_chat messages to top frame
   let iframeRelayBuffer = [];
   let iframeRelayTimer = null;
 
+  // Active timers tracked for clean pagehide teardown
+  const timers = [];
+
+  // -------------------------------------------------------------------------
+  // Viewer Count & Platform DOM Inspection (Kick, YouTube Live, Twitch, IG)
+  // -------------------------------------------------------------------------
+
+  function readViewerCountFromDom() {
+    const host = window.location.hostname.toLowerCase();
+
+    if (host.includes('youtube.com')) {
+      // YouTube Live renders "<N> watching now" inside ytd-video-view-count-renderer / #info-strings
+      const candidates = [
+        document.querySelector('ytd-video-view-count-renderer .view-count'),
+        document.querySelector('ytd-video-view-count-renderer'),
+        document.querySelector('#info-strings'),
+        document.querySelector('#view-count'),
+        document.querySelector('ytd-watch-info-text #tooltip'),
+      ];
+      for (const el of candidates) {
+        if (!el || !el.textContent) continue;
+        const txt = el.textContent.trim();
+        if (/watching/i.test(txt)) {
+          const parsed = engine.parseViewerCount(txt);
+          if (parsed !== null) return parsed;
+        }
+      }
+      // Fallback: check live-view-count span on /live/ layout
+      const spans = document.querySelectorAll('ytd-watch-metadata yt-formatted-string, #count yt-formatted-string');
+      for (let i = 0; i < Math.min(spans.length, 12); i += 1) {
+        const txt = (spans[i].textContent || '').trim();
+        if (/watching/i.test(txt)) {
+          const parsed = engine.parseViewerCount(txt);
+          if (parsed !== null) return parsed;
+        }
+      }
+      return null;
+    }
+
+    if (host.includes('kick.com')) {
+      const selectors = [
+        '[data-testid="viewer-count"]',
+        '[data-testid="live-viewer-count"]',
+        '[aria-label*="viewer" i]',
+        '[aria-label*="watching" i]',
+        'span[class*="viewer"]',
+      ];
+      for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (!el) continue;
+        const txt = el.getAttribute('aria-label') || el.textContent || '';
+        const parsed = engine.parseViewerCount(txt);
+        if (parsed !== null) return parsed;
+      }
+      return lastViewerCount;
+    }
+
+    if (host.includes('twitch.tv')) {
+      const el =
+        document.querySelector('[data-a-target="animated-channel-viewers-count"]') ||
+        document.querySelector('p[data-a-target="animated-channel-viewers-count"]') ||
+        document.querySelector('[aria-label*="viewers" i]');
+      if (el) {
+        const parsed = engine.parseViewerCount(el.textContent || el.getAttribute('aria-label') || '');
+        if (parsed !== null) return parsed;
+      }
+      return null;
+    }
+
+    return null;
+  }
+
   function readDomHints() {
-    const hints = { channelName: '', channelHandle: '', hasLiveBadge: false };
+    const hints = {
+      channelName: '',
+      channelHandle: '',
+      hasLiveBadge: false,
+      hasLiveChatFrame: false,
+      hasWatchingNow: false,
+      viewerCount: null,
+    };
     const host = window.location.hostname.toLowerCase();
 
     if (host.includes('youtube.com')) {
@@ -68,6 +158,8 @@
       if (channelText && channelText.textContent) {
         hints.channelName = channelText.textContent.trim();
       }
+
+      // Reliable YouTube Live detection: check live badge, live chat iframe, or "watching now" text
       const liveBadge = document.querySelector('.ytp-live-badge');
       if (liveBadge) {
         const style = window.getComputedStyle(liveBadge);
@@ -75,8 +167,21 @@
         hints.hasLiveBadge =
           style.display !== 'none' &&
           style.visibility !== 'hidden' &&
-          liveBadge.getAttribute('disabled') !== null &&
+          liveBadge.offsetWidth > 0 &&
           text.includes('LIVE');
+      }
+
+      const chatFrame = document.querySelector('iframe#chatframe, ytd-live-chat-frame iframe');
+      if (chatFrame) {
+        const src = String(chatFrame.getAttribute('src') || '');
+        hints.hasLiveChatFrame =
+          src.includes('/live_chat') && !src.includes('/live_chat_replay');
+      }
+
+      const viewers = readViewerCountFromDom();
+      if (viewers !== null) {
+        hints.viewerCount = viewers;
+        hints.hasWatchingNow = true;
       }
     } else if (host.includes('instagram.com')) {
       const headerLink =
@@ -91,6 +196,13 @@
       if (heading && heading.textContent) {
         hints.channelName = heading.textContent.trim();
       }
+      hints.viewerCount = readViewerCountFromDom();
+    } else if (host.includes('twitch.tv')) {
+      const heading = document.querySelector('h1.tw-title, [data-a-target="stream-title"]');
+      if (heading && heading.textContent) {
+        hints.channelName = heading.textContent.trim();
+      }
+      hints.viewerCount = readViewerCountFromDom();
     }
 
     return hints;
@@ -118,9 +230,44 @@
   }
 
   /**
+   * Fetches Kick same-origin channel metadata (playback_url + exact live viewer_count)
+   * at most once every 30s so baseline calibration knows exact Kick audience size.
+   */
+  async function refreshKickChannelMetadata(force = false) {
+    const slug = engine.extractKickSlug ? engine.extractKickSlug(window.location.href) : '';
+    if (!slug) return '';
+
+    const now = Date.now();
+    if (!force && cachedPlaybackSlug === slug && now - lastKickMetaFetchMs < 30000) {
+      return cachedPlaybackUrl;
+    }
+    lastKickMetaFetchMs = now;
+
+    try {
+      const resp = await fetch(`https://kick.com/api/v2/channels/${encodeURIComponent(slug)}`, {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        const url = data?.playback_url || data?.livestream?.playback_url || '';
+        if (typeof url === 'string' && url.startsWith('http')) {
+          cachedPlaybackUrl = url;
+          cachedPlaybackSlug = slug;
+        }
+        const vc = engine.parseViewerCount(data?.livestream?.viewer_count);
+        if (vc !== null) {
+          lastViewerCount = vc;
+        }
+      }
+    } catch {
+      // Ignore network hiccups; DOM fallback remains active
+    }
+    return cachedPlaybackUrl || '';
+  }
+
+  /**
    * Resolves a direct HLS `.m3u8` URL inside the authenticated browser tab.
-   * For Kick live channels, this runs same-origin AFTER Cloudflare clearance so
-   * PulseCut's backend FFmpeg can capture the live stream cleanly without 403s.
    */
   async function resolveLivePlaybackUrl() {
     // 1. Check Performance Resource Timing API for any active HLS manifest loaded by the player.
@@ -143,23 +290,8 @@
       if (cachedPlaybackSlug === slug && cachedPlaybackUrl.includes('.m3u8')) {
         return cachedPlaybackUrl;
       }
-      try {
-        const resp = await fetch(`https://kick.com/api/v2/channels/${encodeURIComponent(slug)}`, {
-          credentials: 'include',
-          headers: { Accept: 'application/json' },
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          const url = data?.playback_url || data?.livestream?.playback_url || '';
-          if (typeof url === 'string' && url.startsWith('http')) {
-            cachedPlaybackUrl = url;
-            cachedPlaybackSlug = slug;
-            return url;
-          }
-        }
-      } catch {
-        // Fall back to resource-timing URL if present
-      }
+      const fetched = await refreshKickChannelMetadata(true);
+      if (fetched) return fetched;
     }
 
     return cachedPlaybackUrl || '';
@@ -182,7 +314,7 @@
   }
 
   // -------------------------------------------------------------------------
-  // Chat DOM Observation (2025/2026 Kick, Twitch, YouTube Live selectors)
+  // Chat DOM Observation (Kick, Twitch, YouTube Live + Custom Emoji Alt Text)
   // -------------------------------------------------------------------------
 
   function findChatContainer() {
@@ -214,6 +346,59 @@
     return null;
   }
 
+  function extractNodeTextWithEmotes(el) {
+    if (!el) return '';
+    let text = (el.textContent || '').trim();
+    // YouTube Live, Kick, and Twitch render custom emotes/emojis as <img> with alt attributes
+    const imgs = el.querySelectorAll ? el.querySelectorAll('img[alt]') : [];
+    if (imgs.length > 0) {
+      const alts = [];
+      for (let i = 0; i < Math.min(imgs.length, 8); i += 1) {
+        const alt = (imgs[i].getAttribute('alt') || '').trim();
+        if (alt) alts.push(alt);
+      }
+      if (alts.length > 0) {
+        text = text ? `${text} ${alts.join(' ')}` : alts.join(' ');
+      }
+    }
+    return text.trim();
+  }
+
+  function extractMessageAuthor(node) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return '';
+
+    if (context.platform === 'kick') {
+      const authorEl =
+        node.querySelector('[data-testid="chat-entry-username"]') ||
+        node.querySelector('.chat-entry-username') ||
+        node.querySelector('button[title]') ||
+        node.querySelector('span[style*="color"]');
+      if (authorEl) {
+        return (authorEl.getAttribute('title') || authorEl.textContent || '').trim().slice(0, 48);
+      }
+      const raw = (node.textContent || '').trim();
+      const colonIdx = raw.indexOf(':');
+      if (colonIdx > 0 && colonIdx < 28) {
+        return raw.slice(0, colonIdx).trim();
+      }
+      return '';
+    }
+
+    if (context.platform === 'twitch') {
+      const authorEl =
+        node.querySelector('[data-a-target="chat-message-username"]') ||
+        node.querySelector('.chat-author__display-name');
+      return (authorEl?.textContent || '').trim().slice(0, 48);
+    }
+
+    if (context.platform === 'youtube') {
+      const authorEl = node.querySelector('#author-name');
+      return (authorEl?.textContent || '').trim().slice(0, 48);
+    }
+
+    return '';
+  }
+
   function extractMessageText(node) {
     if (!node || node.nodeType !== Node.ELEMENT_NODE) return '';
 
@@ -222,8 +407,7 @@
         node.querySelector('[data-testid="chat-message-content"]') ||
         node.querySelector('.chat-entry-content') ||
         node.querySelector('span[class*="font-normal"]');
-      const raw = (msgEl ? msgEl.textContent : node.textContent || '').trim();
-      // Strip leading "username: " prefix if falling back to whole-row textContent
+      const raw = msgEl ? extractNodeTextWithEmotes(msgEl) : extractNodeTextWithEmotes(node);
       const colonIdx = raw.indexOf(':');
       if (!msgEl && colonIdx > 0 && colonIdx < 32) {
         return raw.slice(colonIdx + 1).trim();
@@ -233,15 +417,15 @@
 
     if (context.platform === 'twitch') {
       const body = node.querySelector('[data-a-target="chat-line-message-body"]') || node;
-      return (body.textContent || '').trim();
+      return extractNodeTextWithEmotes(body);
     }
 
     if (context.platform === 'youtube') {
       const msgEl = node.querySelector('#message') || node;
-      return (msgEl.textContent || '').trim();
+      return extractNodeTextWithEmotes(msgEl);
     }
 
-    return (node.textContent || '').trim();
+    return extractNodeTextWithEmotes(node);
   }
 
   function getMessageNodeSelector() {
@@ -252,7 +436,7 @@
       return '.chat-line__message, [data-a-target="chat-line-message"]';
     }
     if (context.platform === 'youtube') {
-      return 'yt-live-chat-text-message-renderer, yt-live-chat-paid-MESSAGE-renderer, yt-live-chat-paid-message-renderer';
+      return 'yt-live-chat-text-message-renderer, yt-live-chat-paid-message-renderer';
     }
     return '';
   }
@@ -283,9 +467,10 @@
     return false;
   }
 
-  function buildMessageKey(node, text) {
+  function buildMessageKey(node, author, text) {
     const idx = node.getAttribute?.('data-index') || node.getAttribute?.('data-chat-entry') || node.id || '';
-    return idx ? `${idx}|${text.slice(0, 64)}` : text.slice(0, 80);
+    if (idx) return `${idx}|${text.slice(0, 48)}`;
+    return `${author.slice(0, 20)}|${text.slice(0, 64)}`;
   }
 
   function collectNewChatMessage(node, now, batch) {
@@ -293,8 +478,9 @@
     if (seenNodes.has(node)) return;
     const text = extractMessageText(node);
     if (!text) return;
+    const author = extractMessageAuthor(node);
 
-    const key = buildMessageKey(node, text);
+    const key = buildMessageKey(node, author, text);
     const prevTs = seenMessageKeys.get(key);
     if (prevTs && now - prevTs < 15000) {
       seenNodes.add(node);
@@ -303,13 +489,16 @@
 
     seenNodes.add(node);
     seenMessageKeys.set(key, now);
-    batch.push({ ts: now, text: text.slice(0, 240) });
+    batch.push({ ts: now, text: text.slice(0, 200), author });
   }
 
   function pruneSeenKeys(now) {
-    if (seenMessageKeys.size < 250) return;
+    if (seenMessageKeys.size <= MAX_SEEN_KEYS) return;
     for (const [k, ts] of seenMessageKeys.entries()) {
-      if (now - ts > 30000) seenMessageKeys.delete(k);
+      if (now - ts > 20000 || seenMessageKeys.size > MAX_SEEN_KEYS) {
+        seenMessageKeys.delete(k);
+      }
+      if (seenMessageKeys.size <= Math.floor(MAX_SEEN_KEYS * 0.7)) break;
     }
   }
 
@@ -317,6 +506,9 @@
     if (!items.length) return;
     if (!IS_TOP_FRAME) {
       iframeRelayBuffer.push(...items);
+      if (iframeRelayBuffer.length > 80) {
+        iframeRelayBuffer.splice(0, iframeRelayBuffer.length - 80);
+      }
       if (!iframeRelayTimer) {
         iframeRelayTimer = window.setTimeout(() => {
           const batch = iframeRelayBuffer.splice(0, iframeRelayBuffer.length);
@@ -324,19 +516,21 @@
           if (batch.length > 0) {
             void sendRuntimeMessage({ type: 'CHAT_BURST', messages: batch });
           }
-        }, 250);
+        }, 300);
       }
       return;
     }
 
     for (const item of items) {
       messageTimestamps.push(item);
-      baselineCount.push(item.ts);
+    }
+    if (messageTimestamps.length > MAX_MESSAGE_BUFFER) {
+      messageTimestamps.splice(0, messageTimestamps.length - MAX_MESSAGE_BUFFER);
     }
   }
 
   /**
-   * Periodic fallback scanner for virtualized chat lists (especially Kick's
+   * Periodic fallback scanner for virtualized chat lists (e.g. Kick's
    * react-virtuoso `[data-index]` rows that recycle DOM elements in place).
    */
   function scanVisibleChatEntries(seedOnly = false) {
@@ -347,18 +541,19 @@
     const now = Date.now();
     const batch = [];
     const nodes = observedContainer.querySelectorAll(selector);
-    const startIdx = Math.max(0, nodes.length - 40);
+    const startIdx = Math.max(0, nodes.length - 30);
 
     for (let i = startIdx; i < nodes.length; i += 1) {
       const el = nodes[i];
       const text = extractMessageText(el);
       if (!text) continue;
-      const key = buildMessageKey(el, text);
+      const author = extractMessageAuthor(el);
+      const key = buildMessageKey(el, author, text);
       if (seenMessageKeys.has(key)) continue;
       seenMessageKeys.set(key, now);
       seenNodes.add(el);
       if (!seedOnly) {
-        batch.push({ ts: now, text: text.slice(0, 240) });
+        batch.push({ ts: now, text: text.slice(0, 200), author });
       }
     }
 
@@ -400,12 +595,11 @@
       }
       pruneSeenKeys(now);
       if (batch.length > 0) {
+        lastMutationMs = now;
         recordMessages(batch);
       }
     });
 
-    // CRITICAL: subtree: true is required on Kick & Twitch because virtualized
-    // chat lists insert rows inside nested wrapper divs under #chatroom-messages.
     chatObserver.observe(container, { childList: true, subtree: true });
   }
 
@@ -433,19 +627,23 @@
       lastAlertMs,
       cooldownSecs: config.cooldownSecs,
       manualDebounceSecs: config.manualDebounceSecs,
+      calibrated: source === 'manual' ? true : baselineState.calibrated,
+      sustainedHotTicks: source === 'manual' ? 99 : baselineState.consecutiveHotTicks,
+      sustainedTicksRequired: config.sustainedTicksRequired || 2,
     });
 
     if (!gate.allowed) {
-      if (source === 'manual') {
+      if (source === 'manual' && gate.retryAfterSecs > 0) {
         showToast(`Please wait ${gate.retryAfterSecs}s before clipping again`, 'info');
       }
-      return { ok: false, throttled: true };
+      return { ok: false, throttled: true, reason: gate.reason };
     }
 
     if (source === 'manual') {
       lastManualTriggerMs = now;
     } else {
       lastAutoTriggerMs = now;
+      baselineState.consecutiveHotTicks = 0;
     }
 
     context = readPageContext();
@@ -457,6 +655,7 @@
 
     const res = await sendRuntimeMessage({
       type: 'TRIGGER_CLIP',
+      source,
       serverUrl: config.serverUrl,
       url: window.location.href,
       playback_url: playbackUrl || undefined,
@@ -468,6 +667,7 @@
       template: context.template || 'default',
       lookback_secs: config.lookbackSecs,
       hype_score: score,
+      viewer_count: baselineState.viewerCount || context.viewerCount || undefined,
       reasons: reasons || [],
     });
 
@@ -483,6 +683,10 @@
       return { ok: true, data: res.data };
     }
 
+    if (res.deduped) {
+      return { ok: false, deduped: true };
+    }
+
     serverConnected = false;
     updateHudHeader();
     showToast(res.error || 'PulseCut server offline — start PulseCut first', 'error');
@@ -496,6 +700,9 @@
       nowMs: now,
       lastAlertMs,
       alertCooldownSecs: config.alertCooldownSecs,
+      calibrated: baselineState.calibrated,
+      sustainedHotTicks: baselineState.consecutiveHotTicks,
+      sustainedTicksRequired: config.sustainedTicksRequired || 2,
     });
     if (!gate.allowed) return;
     if (document.getElementById('pulsecut-alert-modal')) return;
@@ -532,7 +739,7 @@
   }
 
   function showToast(message, kind = 'info') {
-    if (!IS_TOP_FRAME) return;
+    if (!IS_TOP_FRAME || document.hidden) return;
     const existing = document.getElementById('pulsecut-status-toast');
     if (existing) existing.remove();
 
@@ -570,13 +777,13 @@
       <div class="pc-hud-body" id="pc-hud-body">
         <div class="pc-hud-meter-wrap">
           <div class="pc-hud-meter-label">
-            <span>Chat Hype</span>
+            <span id="pc-hud-status-label">Calibrating…</span>
             <span id="pc-hud-score">0%</span>
           </div>
           <div class="pc-hud-bar-bg">
             <div class="pc-hud-bar-fill" id="pc-hud-bar"></div>
           </div>
-          <div class="pc-hud-meta" id="pc-hud-meta">Monitoring stream…</div>
+          <div class="pc-hud-meta" id="pc-hud-meta">Learning chat baseline…</div>
         </div>
         <button type="button" class="pc-hud-clip-btn" id="pc-hud-clip-btn">
           Clip Last ${config.lookbackSecs}s
@@ -616,7 +823,7 @@
   }
 
   function updateHudHeader() {
-    if (!hudEl) return;
+    if (!hudEl || document.hidden) return;
     const dot = hudEl.querySelector('#pc-hud-dot');
     const channelEl = hudEl.querySelector('#pc-hud-channel');
     const btn = hudEl.querySelector('#pc-hud-clip-btn');
@@ -627,45 +834,67 @@
         : `PulseCut server offline (${config.serverUrl})`;
     }
     if (channelEl) {
-      channelEl.textContent = context.channel;
-      channelEl.title = `${context.platform}${context.isLive ? ' LIVE' : ''} · template: ${context.template}`;
+      const vLabel = engine.formatViewerCount(baselineState.viewerCount || context.viewerCount);
+      channelEl.textContent = vLabel ? `${context.channel} · ${vLabel}` : context.channel;
+      channelEl.title = `${context.platform}${context.isLive ? ' LIVE' : ''}${vLabel ? ` · ${vLabel} watching` : ''}`;
     }
     if (btn && !btn.disabled) {
       btn.textContent = `Clip Last ${config.lookbackSecs}s`;
     }
   }
 
-  let scanTickCounter = 0;
+  function resetStreamStateForNavigation() {
+    currentUrl = window.location.href;
+    messageTimestamps = [];
+    observedContainer = null;
+    cachedPlaybackUrl = '';
+    cachedPlaybackSlug = '';
+    lastViewerCount = null;
+    lastKickMetaFetchMs = 0;
+    lastMutationMs = 0;
+    seenMessageKeys.clear();
+    context = readPageContext();
+    baselineState = engine.createBaselineState(Date.now(), context.viewerCount);
+    if (context.supported && config.mode !== 'off') {
+      createHud();
+      updateHudHeader();
+    } else {
+      removeHud();
+    }
+  }
 
   function evaluateHypeTick() {
     if (!IS_TOP_FRAME) return;
+    const now = Date.now();
 
     // Detect SPA route changes (Kick, Twitch, YouTube, Instagram)
     if (window.location.href !== currentUrl) {
-      currentUrl = window.location.href;
-      messageTimestamps = [];
-      baselineCount = [];
-      observedContainer = null;
-      cachedPlaybackUrl = '';
-      cachedPlaybackSlug = '';
-      seenMessageKeys.clear();
-      context = readPageContext();
-      if (context.supported && config.mode !== 'off') {
-        createHud();
-        updateHudHeader();
-      } else {
-        removeHud();
-      }
+      resetStreamStateForNavigation();
     }
 
-    // Re-read YouTube / Instagram DOM channel name once hydrated
+    // Re-read YouTube / Kick / Twitch DOM hints (channel handle, live status, viewer count)
     const refreshed = readPageContext();
+    if (refreshed.viewerCount !== null) {
+      lastViewerCount = refreshed.viewerCount;
+    } else if (lastViewerCount !== null) {
+      refreshed.viewerCount = lastViewerCount;
+    }
+
+    // Refresh Kick exact viewer_count & playback_url via same-origin API every 30s
+    if (refreshed.platform === 'kick' && refreshed.isLive && now - lastKickMetaFetchMs >= 30000) {
+      void refreshKickChannelMetadata(false);
+    }
+
     if (
       refreshed.channel !== context.channel ||
       refreshed.template !== context.template ||
-      refreshed.isLive !== context.isLive
+      refreshed.isLive !== context.isLive ||
+      refreshed.viewerCount !== context.viewerCount
     ) {
       context = refreshed;
+      if (context.supported && config.mode !== 'off' && !hudEl) {
+        createHud();
+      }
       updateHudHeader();
     }
 
@@ -674,30 +903,96 @@
       return;
     }
 
+    // In Manual Clip mode, skip DOM chat observation completely so the tab stays ultra-lightweight.
+    if (config.mode === 'manual') {
+      if (chatObserver) {
+        chatObserver.disconnect();
+        chatObserver = null;
+        observedContainer = null;
+      }
+      if (hudEl && !document.hidden) {
+        const scoreEl = hudEl.querySelector('#pc-hud-score');
+        const statusLabel = hudEl.querySelector('#pc-hud-status-label');
+        const barEl = hudEl.querySelector('#pc-hud-bar');
+        const metaEl = hudEl.querySelector('#pc-hud-meta');
+        if (scoreEl) scoreEl.textContent = `${config.lookbackSecs || 30}s`;
+        if (statusLabel) statusLabel.textContent = 'Manual Clip';
+        if (barEl) {
+          barEl.style.width = '100%';
+          barEl.className = 'pc-hud-bar-fill';
+        }
+        if (metaEl) {
+          metaEl.textContent = `Manual ready · Alt+Shift+C · Use Live Streams for auto`;
+        }
+      }
+      return;
+    }
+
     attachChatObserver();
-    scanTickCounter += 1;
-    // Poll virtualized chat rows every 1 second so recycled Kick/Twitch nodes never miss messages
-    if (scanTickCounter % 2 === 0) {
+
+    // Lightweight fallback scan ONLY when MutationObserver hasn't fired recently
+    // (saves CPU when 5-10 stream tabs are open simultaneously)
+    if (observedContainer && now - lastMutationMs > 1800) {
       scanVisibleChatEntries(false);
     }
 
-    const now = Date.now();
+    // Prune rolling 6-second message window
     messageTimestamps = messageTimestamps.filter((m) => now - m.ts <= CHAT_WINDOW_MS);
-    baselineCount = baselineCount.filter((ts) => now - ts <= BASELINE_WINDOW_MS);
 
-    const baselineRatePerSec = baselineCount.length / (BASELINE_WINDOW_MS / 1000);
+    // Count messages arriving in the last 1 second for the adaptive baseline tracker
+    let lastSecCount = 0;
+    const oneSecCutoff = now - 1000;
+    for (let i = messageTimestamps.length - 1; i >= 0; i -= 1) {
+      if (messageTimestamps[i].ts >= oneSecCutoff) lastSecCount += 1;
+      else break;
+    }
+
+    baselineState = engine.updateAdaptiveBaseline(
+      baselineState,
+      lastSecCount,
+      context.viewerCount || lastViewerCount,
+      now
+    );
+
     const analysis = engine.analyzeChatWindow({
       messages: messageTimestamps,
       nowMs: now,
       windowMs: CHAT_WINDOW_MS,
-      baselineRatePerSec,
+      baselineRatePerSec: baselineState.mean,
+      baselineStdDev: baselineState.stdDev,
+      viewerCount: baselineState.viewerCount,
+      sustainedHotTicks: baselineState.consecutiveHotTicks,
+      calibrated: baselineState.calibrated,
     });
 
-    if (hudEl) {
+    // Track sustained hot ticks (require 2 consecutive seconds above threshold to auto-clip)
+    if (analysis.score >= config.threshold) {
+      baselineState.consecutiveHotTicks += 1;
+    } else {
+      baselineState.consecutiveHotTicks = 0;
+    }
+    analysis.sustainedHotTicks = baselineState.consecutiveHotTicks;
+    lastAnalysis = analysis;
+
+    // Skip HUD DOM repaints on hidden background tabs to stay ultra-lightweight
+    if (hudEl && !document.hidden) {
       const scoreEl = hudEl.querySelector('#pc-hud-score');
+      const statusLabel = hudEl.querySelector('#pc-hud-status-label');
       const barEl = hudEl.querySelector('#pc-hud-bar');
       const metaEl = hudEl.querySelector('#pc-hud-meta');
+
       if (scoreEl) scoreEl.textContent = `${analysis.score}%`;
+      if (statusLabel) {
+        if (!baselineState.calibrated) {
+          statusLabel.textContent = `Calibrating ${baselineState.calibrationPct}%`;
+        } else if (analysis.spamDampened) {
+          statusLabel.textContent = 'Spam Filtered';
+        } else if (analysis.score >= config.threshold) {
+          statusLabel.textContent = 'HYPE SPIKE';
+        } else {
+          statusLabel.textContent = 'Chat Hype';
+        }
+      }
       if (barEl) {
         barEl.style.width = `${analysis.score}%`;
         barEl.className = `pc-hud-bar-fill ${
@@ -710,14 +1005,41 @@
       }
       if (metaEl) {
         const modeTag = config.mode === 'auto' ? 'Auto' : 'Alert';
-        metaEl.textContent =
-          analysis.reasons.length > 0
-            ? `${modeTag} · ${analysis.reasons.slice(0, 2).join(' · ')}`
-            : `${modeTag} · ${analysis.ratePerSec} msg/s · ${context.isLive ? 'LIVE' : 'VOD'}`;
+        const baseStr = `base ${analysis.baselineRatePerSec}/s`;
+        if (analysis.reasons.length > 0 && analysis.score >= 35) {
+          metaEl.textContent = `${modeTag} · ${analysis.reasons.slice(0, 2).join(' · ')} (${baseStr})`;
+        } else {
+          metaEl.textContent = `${modeTag} · ${analysis.ratePerSec}/s vs ${baseStr} · ${
+            context.isLive ? 'LIVE' : 'VOD'
+          }`;
+        }
       }
     }
 
-    if (analysis.score >= config.threshold) {
+    // Periodic lightweight multi-tab heartbeat to background coordinator
+    if (context.supported && now - lastHeartbeatMs >= HEARTBEAT_INTERVAL_MS) {
+      lastHeartbeatMs = now;
+      void sendRuntimeMessage({
+        type: 'TAB_HEARTBEAT',
+        url: window.location.href,
+        platform: context.platform,
+        channel: context.channel,
+        isLive: context.isLive,
+        viewerCount: baselineState.viewerCount,
+        score: analysis.score,
+        ratePerSec: analysis.ratePerSec,
+        baselineRatePerSec: analysis.baselineRatePerSec,
+        calibrated: baselineState.calibrated,
+        calibrationPct: baselineState.calibrationPct,
+      });
+    }
+
+    // Trigger only when calibrated + sustained above threshold!
+    if (
+      analysis.score >= config.threshold &&
+      baselineState.calibrated &&
+      baselineState.consecutiveHotTicks >= (config.sustainedTicksRequired || 2)
+    ) {
       if (config.mode === 'auto') {
         void triggerClip('auto', analysis.score, analysis.reasons);
       } else if (config.mode === 'alert') {
@@ -727,7 +1049,7 @@
   }
 
   // -------------------------------------------------------------------------
-  // Runtime Messages & Live Storage Sync
+  // Runtime Messages, Storage Sync & Clean Teardown
   // -------------------------------------------------------------------------
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -746,9 +1068,19 @@
 
     if (msg.type === 'GET_PAGE_CONTEXT' && IS_TOP_FRAME) {
       context = readPageContext();
+      if (lastViewerCount !== null && context.viewerCount === null) {
+        context.viewerCount = lastViewerCount;
+      }
       sendResponse({
         ok: true,
         context,
+        baseline: {
+          viewerCount: baselineState.viewerCount,
+          mean: baselineState.mean,
+          calibrated: baselineState.calibrated,
+          calibrationPct: baselineState.calibrationPct,
+          score: lastAnalysis ? lastAnalysis.score : 0,
+        },
         serverConnected,
       });
       return false;
@@ -779,6 +1111,23 @@
     }
   });
 
+  function cleanup() {
+    if (chatObserver) {
+      chatObserver.disconnect();
+      chatObserver = null;
+    }
+    for (const id of timers) {
+      window.clearInterval(id);
+    }
+    timers.length = 0;
+    if (iframeRelayTimer) {
+      window.clearTimeout(iframeRelayTimer);
+      iframeRelayTimer = null;
+    }
+  }
+
+  window.addEventListener('pagehide', cleanup);
+
   // Keyboard shortcut: Alt+Shift+C to manually clip active stream
   if (IS_TOP_FRAME) {
     window.addEventListener('keydown', (e) => {
@@ -803,16 +1152,23 @@
       if (config.mode !== 'off' && context.supported) {
         createHud();
       }
+      if (context.platform === 'kick' && context.isLive) {
+        void refreshKickChannelMetadata(true);
+      }
       void pingServer();
-      window.setInterval(evaluateHypeTick, TICK_INTERVAL_MS);
-      window.setInterval(() => void pingServer(), 15000);
-    } else {
-      // Subframe (e.g. YouTube /live_chat iframe): never render HUD, only observe chat
+      timers.push(window.setInterval(evaluateHypeTick, TICK_INTERVAL_MS));
+      timers.push(window.setInterval(() => void pingServer(), HEALTH_PING_INTERVAL_MS));
+    } else if (context.isChatIframe) {
+      // Subframe (e.g. YouTube /live_chat iframe): never render HUD, only observe chat cleanly
       attachChatObserver();
-      window.setInterval(() => {
-        attachChatObserver();
-        scanVisibleChatEntries(false);
-      }, 1200);
+      timers.push(
+        window.setInterval(() => {
+          attachChatObserver();
+          if (observedContainer && Date.now() - lastMutationMs > 2500) {
+            scanVisibleChatEntries(false);
+          }
+        }, 2000)
+      );
     }
   });
 })();

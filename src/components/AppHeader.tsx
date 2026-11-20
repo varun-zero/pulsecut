@@ -8,6 +8,7 @@ interface AppHeaderProps {
   onNavigate: (page: PageId) => void;
   clipCount: number;
   activeJobCount: number;
+  activeMonitorCount?: number;
   theme: 'dark' | 'light';
   onToggleTheme: () => void;
   onOpenShortcuts: () => void;
@@ -20,6 +21,7 @@ export function AppHeader({
   onNavigate,
   clipCount,
   activeJobCount,
+  activeMonitorCount = 0,
   theme,
   onToggleTheme,
   onOpenShortcuts,
@@ -31,6 +33,11 @@ export function AppHeader({
       id: 'dashboard',
       label: 'Dashboard',
       meta: activeJobCount > 0 ? String(activeJobCount) : undefined,
+    },
+    {
+      id: 'live',
+      label: 'Live Streams',
+      meta: activeMonitorCount > 0 ? String(activeMonitorCount) : undefined,
     },
     {
       id: 'clips',
