@@ -1,6 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BadgeCheck, Film, Maximize2, Move, Plus, UserSquare2 } from 'lucide-react';
-import type { BrandKit, ClipItem, CustomFontEntry, EditorSettings, FrameAspectId, StreamerPlatformId } from '../../types';
+import { BadgeCheck, Film, Frame, Maximize2, Move, Plus, UserSquare2 } from 'lucide-react';
+import type {
+  BrandKit,
+  ClipItem,
+  CustomFontEntry,
+  EditorSettings,
+  FacecamSourceBox,
+  FrameAspectId,
+  StreamerPlatformId,
+  TrackStates,
+} from '../../types';
 import { getTemplatePreset } from '../../presets';
 import {
   getActiveWordBeat,
@@ -8,7 +17,12 @@ import {
   getViralCaptionPreset,
   getViralFont,
 } from '../../captionStyles';
-import { applyTextCasing, computeCropTransform, normalizeHandle } from '../../lib/studioLogic';
+import {
+  applyTextCasing,
+  computeCropTransform,
+  computeScoreVolume,
+  normalizeHandle,
+} from '../../lib/studioLogic';
 import { Button } from '../ui/Primitives';
 import { InstagramIcon, KickLogoIcon, YouTubeShortsIcon } from '../ui/PlatformIcons';
 
@@ -20,10 +34,13 @@ interface VideoStageProps {
   playing: boolean;
   playbackSpeed: number;
   currentTimeSec: number;
+  trimOutSec: number;
+  trackStates: TrackStates;
   showSafeZones: boolean;
   stageRef: React.RefObject<HTMLDivElement | null>;
   onUpdateSettings: (patch: Partial<EditorSettings>, recordHistory?: boolean) => void;
   onDurationLoaded?: (durationSec: number) => void;
+  onSwitchToFraming?: () => void;
   onToggleFullscreen: () => void;
   onOpenClipPicker: () => void;
   onGoToDashboard: () => void;
@@ -73,10 +90,13 @@ export function VideoStage({
   playing,
   playbackSpeed,
   currentTimeSec,
+  trimOutSec,
+  trackStates,
   showSafeZones,
   stageRef,
   onUpdateSettings,
   onDurationLoaded,
+  onSwitchToFraming,
   onToggleFullscreen,
   onOpenClipPicker,
   onGoToDashboard,
@@ -84,6 +104,9 @@ export function VideoStage({
   const frameRef = useRef<HTMLDivElement>(null);
   const mainVideoRef = useRef<HTMLVideoElement>(null);
   const camVideoRef = useRef<HTMLVideoElement>(null);
+  const speaker2VideoRef = useRef<HTMLVideoElement>(null);
+  const speaker3VideoRef = useRef<HTMLVideoElement>(null);
+  const scoreAudioRef = useRef<HTMLAudioElement>(null);
   const [dragging, setDragging] = useState<{
     target: DragTarget;
     x: number;
@@ -91,26 +114,42 @@ export function VideoStage({
     snappedCenter: boolean;
   } | null>(null);
 
-  // Synchronize real <video> playback (main + cropped facecam) with timeline transport
+  // Synchronize all real <video> elements (main + cropped speaker/facecam feeds) with timeline transport
   useEffect(() => {
-    const videos = [mainVideoRef.current, camVideoRef.current].filter(
-      (v): v is HTMLVideoElement => Boolean(v)
-    );
+    const videos = [
+      mainVideoRef.current,
+      camVideoRef.current,
+      speaker2VideoRef.current,
+      speaker3VideoRef.current,
+    ].filter((v): v is HTMLVideoElement => Boolean(v));
     videos.forEach((vid, idx) => {
       vid.playbackRate = playbackSpeed;
-      vid.muted = idx > 0; // Keep secondary facecam copy muted to prevent audio doubling
+      // Primary feed respects A1 mute toggle; all secondary feeds stay muted to prevent audio doubling
+      vid.muted = idx === 0 ? trackStates.a1Muted : true;
       if (playing) {
         vid.play().catch(() => {});
       } else {
         vid.pause();
       }
     });
-  }, [playing, playbackSpeed, clip?.mediaUrl, settings.facecamEnabled, settings.facecamPlacement]);
+  }, [
+    playing,
+    playbackSpeed,
+    trackStates.a1Muted,
+    trackStates.v1Visible,
+    clip?.mediaUrl,
+    settings.layout,
+    settings.facecamEnabled,
+    settings.facecamPlacement,
+  ]);
 
   useEffect(() => {
-    const videos = [mainVideoRef.current, camVideoRef.current].filter(
-      (v): v is HTMLVideoElement => Boolean(v)
-    );
+    const videos = [
+      mainVideoRef.current,
+      camVideoRef.current,
+      speaker2VideoRef.current,
+      speaker3VideoRef.current,
+    ].filter((v): v is HTMLVideoElement => Boolean(v));
     videos.forEach((vid) => {
       if (Math.abs(vid.currentTime - currentTimeSec) > 0.35) {
         try {
@@ -121,6 +160,47 @@ export function VideoStage({
       }
     });
   }, [currentTimeSec, clip?.mediaUrl]);
+
+  // Synchronize A2 Score / Background Music <audio> track with live base→peak riser ducking
+  useEffect(() => {
+    const audio = scoreAudioRef.current;
+    if (!audio || !settings.customAudioUrl) return;
+    audio.muted = trackStates.a2Muted;
+    audio.playbackRate = playbackSpeed;
+    const effectiveOut = trimOutSec > 0 ? trimOutSec : clip?.duration_sec || 30;
+    audio.volume = computeScoreVolume(
+      currentTimeSec,
+      effectiveOut,
+      settings.audioPeak,
+      settings.audioBaseVol,
+      settings.audioPeakVol,
+      settings.riserDurationSec
+    );
+    if (Math.abs(audio.currentTime - currentTimeSec) > 0.4) {
+      try {
+        audio.currentTime = currentTimeSec;
+      } catch {
+        // ignore
+      }
+    }
+    if (playing) {
+      audio.play().catch(() => {});
+    } else {
+      audio.pause();
+    }
+  }, [
+    playing,
+    playbackSpeed,
+    currentTimeSec,
+    trimOutSec,
+    clip?.duration_sec,
+    trackStates.a2Muted,
+    settings.customAudioUrl,
+    settings.audioPeak,
+    settings.audioBaseVol,
+    settings.audioPeakVol,
+    settings.riserDurationSec,
+  ]);
 
   const preset = getTemplatePreset(settings.template);
   const captionPreset = getViralCaptionPreset(settings.captionStyle);
@@ -151,13 +231,17 @@ export function VideoStage({
   const isKickTemplate = settings.templateEnabled && settings.template === 'kick-stream';
   const isYtShortTemplate = settings.templateEnabled && settings.template === 'yt-short';
 
-  // Aspect container sizing inside the bounded stage
+  // Aspect container sizing inside the bounded stage (9:16, 4:5, 1:1, 16:9)
   const frameAspectClass =
     settings.aspect === '9:16'
       ? 'aspect-[9/16] h-full max-h-full w-auto max-w-full'
-      : settings.aspect === '1:1'
-        ? 'aspect-square h-full max-h-full w-auto max-w-full'
-        : 'aspect-video w-full max-w-[820px] max-h-full h-auto';
+      : settings.aspect === '4:5'
+        ? 'aspect-[4/5] h-full max-h-full w-auto max-w-full'
+        : settings.aspect === '1:1'
+          ? 'aspect-square h-full max-h-full w-auto max-w-full'
+          : 'aspect-video w-full max-w-[820px] max-h-full h-auto';
+
+  const effectiveOuterFill = settings.outerFillActive ? settings.outerFill : '#000000';
 
   const showSocialCard = settings.templateEnabled && preset.hasCard;
   const showHeadlineOverlay =
@@ -288,10 +372,37 @@ export function VideoStage({
           data-template={settings.template}
           className={`relative ${frameAspectClass} rounded-lg overflow-hidden shadow-2xl border border-white/10 flex flex-col items-center justify-center`}
           style={{
-            backgroundColor: settings.outerFill,
+            backgroundColor: effectiveOuterFill,
+            backgroundImage:
+              settings.outerFillActive && settings.canvas === 'gradient'
+                ? settings.outerGradient
+                : undefined,
             padding: `${settings.canvas === 'padding' ? Math.max(12, settings.framePadding) : settings.framePadding}px`,
           }}
         >
+          {/* Synced hidden A2 Score / Background Music <audio> element */}
+          {settings.customAudioUrl && (
+            <audio ref={scoreAudioRef} src={settings.customAudioUrl} preload="auto" loop />
+          )}
+
+          {/* Custom Background Image Wallpaper when Canvas mode = Image */}
+          {settings.canvas === 'image' && settings.bgImageUrl && (
+            <>
+              <img
+                src={settings.bgImageUrl}
+                alt=""
+                aria-hidden="true"
+                className="absolute inset-0 w-full h-full object-cover scale-105 pointer-events-none"
+                style={{ filter: `blur(${settings.bgImageBlur}px)` }}
+              />
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 pointer-events-none"
+                style={{ backgroundColor: `rgba(0, 0, 0, ${settings.bgImageDim / 100})` }}
+              />
+            </>
+          )}
+
           {/* Blurred backdrop layer when Canvas mode = Blur */}
           {settings.canvas === 'blur' && clip.previewImage && (
             <img
@@ -364,35 +475,44 @@ export function VideoStage({
             }}
           >
             {(() => {
-              const cropStyle = computeCropTransform(settings.facecamSourceBox);
-              const isSplitFacecam =
-                settings.facecamEnabled &&
-                (settings.facecamPlacement === 'split-top' ||
-                  settings.facecamPlacement === 'split-bottom');
-              const isOverlayFacecam = settings.facecamEnabled && !isSplitFacecam;
+              if (!trackStates.v1Visible) {
+                return (
+                  <div
+                    data-testid="v1-hidden-placeholder"
+                    className="w-full h-full flex flex-col items-center justify-center bg-[#09090B] text-zinc-500 text-[11px] font-mono-tabular gap-1.5"
+                  >
+                    <Film className="w-5 h-5 opacity-50" />
+                    <span>V1 Video Track Hidden</span>
+                  </div>
+                );
+              }
+
               const mainFitClass =
                 settings.mainVideoFit === 'contain' ? 'object-contain' : 'object-cover';
+
+              const handleMetaLoad = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+                const d = e.currentTarget.duration;
+                if (Number.isFinite(d) && d > 0 && onDurationLoaded) {
+                  onDurationLoaded(Math.round(d));
+                }
+                if (e.currentTarget.currentTime === 0) {
+                  try {
+                    e.currentTarget.currentTime = 0.05;
+                  } catch {
+                    // ignore
+                  }
+                }
+              };
 
               const renderMainMedia = () =>
                 clip.mediaUrl ? (
                   <video
                     ref={mainVideoRef}
                     src={clip.mediaUrl}
+                    muted={trackStates.a1Muted}
                     playsInline
                     preload="auto"
-                    onLoadedMetadata={(e) => {
-                      const d = e.currentTarget.duration;
-                      if (Number.isFinite(d) && d > 0 && onDurationLoaded) {
-                        onDurationLoaded(Math.round(d));
-                      }
-                      if (e.currentTarget.currentTime === 0) {
-                        try {
-                          e.currentTarget.currentTime = 0.05;
-                        } catch {
-                          // ignore
-                        }
-                      }
-                    }}
+                    onLoadedMetadata={handleMetaLoad}
                     className={`w-full h-full ${mainFitClass}`}
                   />
                 ) : clip.previewImage ? (
@@ -409,59 +529,145 @@ export function VideoStage({
                   </div>
                 );
 
-              const renderCroppedFacecamMedia = () => (
-                <div className="relative w-full h-full overflow-hidden bg-zinc-900">
-                  {clip.mediaUrl ? (
-                    <video
-                      ref={camVideoRef}
-                      src={clip.mediaUrl}
-                      muted
-                      playsInline
-                      preload="auto"
-                      onLoadedMetadata={(e) => {
-                        if (e.currentTarget.currentTime === 0) {
-                          try {
-                            e.currentTarget.currentTime = 0.05;
-                          } catch {
-                            // ignore
-                          }
-                        }
-                      }}
-                      style={{
-                        position: 'absolute',
-                        width: `${cropStyle.widthPct}%`,
-                        height: `${cropStyle.heightPct}%`,
-                        left: `${cropStyle.leftPct}%`,
-                        top: `${cropStyle.topPct}%`,
-                        maxWidth: 'none',
-                      }}
-                      className="object-fill pointer-events-none"
-                    />
-                  ) : clip.previewImage ? (
-                    <img
-                      src={clip.previewImage}
-                      alt="Streamer Facecam"
-                      referrerPolicy="no-referrer"
-                      style={{
-                        position: 'absolute',
-                        width: `${cropStyle.widthPct}%`,
-                        height: `${cropStyle.heightPct}%`,
-                        left: `${cropStyle.leftPct}%`,
-                        top: `${cropStyle.topPct}%`,
-                        maxWidth: 'none',
-                      }}
-                      className="object-fill pointer-events-none"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-900 text-[#53FC18]/85 text-[9.5px] font-mono-tabular gap-1">
-                      <UserSquare2 className="w-4 h-4" />
-                      <span>
-                        Cam {settings.facecamSourceBox.x}%,{settings.facecamSourceBox.y}%
-                      </span>
+              const renderCroppedBoxMedia = (
+                box: FacecamSourceBox,
+                vidRef: React.RefObject<HTMLVideoElement | null>,
+                isPrimaryAudio: boolean,
+                fallbackLabel: string
+              ) => {
+                const c = computeCropTransform(box);
+                return (
+                  <div className="relative w-full h-full overflow-hidden bg-zinc-950">
+                    {clip.mediaUrl ? (
+                      <video
+                        ref={vidRef}
+                        src={clip.mediaUrl}
+                        muted={isPrimaryAudio ? trackStates.a1Muted : true}
+                        playsInline
+                        preload="auto"
+                        onLoadedMetadata={handleMetaLoad}
+                        style={{
+                          position: 'absolute',
+                          width: `${c.widthPct}%`,
+                          height: `${c.heightPct}%`,
+                          left: `${c.leftPct}%`,
+                          top: `${c.topPct}%`,
+                          maxWidth: 'none',
+                        }}
+                        className="object-fill pointer-events-none"
+                      />
+                    ) : clip.previewImage ? (
+                      <img
+                        src={clip.previewImage}
+                        alt={fallbackLabel}
+                        referrerPolicy="no-referrer"
+                        style={{
+                          position: 'absolute',
+                          width: `${c.widthPct}%`,
+                          height: `${c.heightPct}%`,
+                          left: `${c.leftPct}%`,
+                          top: `${c.topPct}%`,
+                          maxWidth: 'none',
+                        }}
+                        className="object-fill pointer-events-none"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-900 text-[#53FC18]/85 text-[9.5px] font-mono-tabular gap-1">
+                        <UserSquare2 className="w-4 h-4" />
+                        <span>
+                          {fallbackLabel} {box.x}%,{box.y}%
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              };
+
+              // 1. YIZERGE 3-Speaker Podcast Trio (2 Top + 1 Bottom)
+              if (settings.layout === 'trio') {
+                return (
+                  <div
+                    data-testid="trio-layout-container"
+                    className="w-full h-full flex flex-col bg-black"
+                  >
+                    <div className="h-1/2 w-full flex border-b border-white/10">
+                      <div
+                        data-testid="trio-speaker-primary"
+                        className="w-1/2 h-full overflow-hidden border-r border-white/10"
+                      >
+                        {renderCroppedBoxMedia(
+                          settings.speakerCrops.primary,
+                          mainVideoRef,
+                          true,
+                          'Top-Left'
+                        )}
+                      </div>
+                      <div
+                        data-testid="trio-speaker-secondary"
+                        className="w-1/2 h-full overflow-hidden"
+                      >
+                        {renderCroppedBoxMedia(
+                          settings.speakerCrops.secondary,
+                          speaker2VideoRef,
+                          false,
+                          'Top-Right'
+                        )}
+                      </div>
                     </div>
-                  )}
-                </div>
-              );
+                    <div
+                      data-testid="trio-speaker-tertiary"
+                      className="h-1/2 w-full overflow-hidden"
+                    >
+                      {renderCroppedBoxMedia(
+                        settings.speakerCrops.tertiary,
+                        speaker3VideoRef,
+                        false,
+                        'Bottom'
+                      )}
+                    </div>
+                  </div>
+                );
+              }
+
+              // 2. YIZERGE Dual 9:8 Split (2 Speakers) when Split layout is used without Facecam PiP mode
+              if (settings.layout === 'split' && !settings.facecamEnabled) {
+                return (
+                  <div
+                    data-testid="dual-split-container"
+                    className="w-full h-full flex flex-col bg-black"
+                  >
+                    <div
+                      data-testid="split-speaker-top"
+                      className="h-1/2 w-full overflow-hidden border-b border-white/10"
+                    >
+                      {renderCroppedBoxMedia(
+                        settings.speakerCrops.primary,
+                        mainVideoRef,
+                        true,
+                        'Top Speaker'
+                      )}
+                    </div>
+                    <div
+                      data-testid="split-speaker-bottom"
+                      className="h-1/2 w-full overflow-hidden"
+                    >
+                      {renderCroppedBoxMedia(
+                        settings.speakerCrops.secondary,
+                        speaker2VideoRef,
+                        false,
+                        'Bottom Speaker'
+                      )}
+                    </div>
+                  </div>
+                );
+              }
+
+              // 3. Streamer Facecam Split-Screen (Gameplay + Cropped Facecam)
+              const isSplitFacecam =
+                settings.facecamEnabled &&
+                (settings.facecamPlacement === 'split-top' ||
+                  settings.facecamPlacement === 'split-bottom');
+              const isOverlayFacecam = settings.facecamEnabled && !isSplitFacecam;
 
               if (isSplitFacecam) {
                 const camPct = Math.max(25, Math.min(65, settings.facecamSplitRatio));
@@ -477,25 +683,45 @@ export function VideoStage({
                       style={{ height: `${camOnTop ? camPct : mainPct}%` }}
                       className="relative w-full overflow-hidden border-b border-white/10"
                     >
-                      {camOnTop ? renderCroppedFacecamMedia() : renderMainMedia()}
+                      {camOnTop
+                        ? renderCroppedBoxMedia(
+                            settings.facecamSourceBox,
+                            camVideoRef,
+                            false,
+                            'Facecam'
+                          )
+                        : renderMainMedia()}
                     </div>
                     <div
                       data-testid={camOnTop ? 'main-video-region' : 'facecam-output-region'}
                       style={{ height: `${camOnTop ? mainPct : camPct}%` }}
                       className="relative w-full overflow-hidden"
                     >
-                      {camOnTop ? renderMainMedia() : renderCroppedFacecamMedia()}
+                      {camOnTop
+                        ? renderMainMedia()
+                        : renderCroppedBoxMedia(
+                            settings.facecamSourceBox,
+                            camVideoRef,
+                            false,
+                            'Facecam'
+                          )}
                     </div>
                   </div>
                 );
               }
 
-              // Single or Reaction PiP overlay layout with configurable Main Video Aspect inside mobile frame
-              const isFullBleedMain = settings.mainVideoAspect === '9:16';
-              const camPosX =
-                settings.facecamPlacement === 'bottom' || settings.facecamPlacement === 'top'
-                  ? settings.facecamOutputX
-                  : settings.facecamOutputX;
+              // 4. Solo Speaker Crop (when Solo layout has a custom crop region from Framing Mode)
+              const usePrimaryCrop =
+                settings.layout === 'solo' &&
+                !settings.facecamEnabled &&
+                settings.mainVideoAspect === '9:16' &&
+                (settings.speakerCrops.primary.width < 99 ||
+                  settings.speakerCrops.primary.height < 99);
+
+              // 5. Single, Centered, Widescreen, or Reaction PiP overlay layout
+              const isFullBleedMain =
+                settings.mainVideoAspect === '9:16' || settings.layout === 'widescreen';
+              const camPosX = settings.facecamOutputX;
               const camPosY =
                 settings.facecamPlacement === 'bottom'
                   ? Math.max(66, settings.facecamOutputY)
@@ -504,8 +730,20 @@ export function VideoStage({
                     : settings.facecamOutputY;
 
               return (
-                <div className="relative w-full h-full overflow-hidden" style={{ backgroundColor: settings.outerFill }}>
-                  {isFullBleedMain ? (
+                <div
+                  className="relative w-full h-full overflow-hidden"
+                  style={{ backgroundColor: effectiveOuterFill }}
+                >
+                  {usePrimaryCrop ? (
+                    <div data-testid="main-video-region" className="w-full h-full">
+                      {renderCroppedBoxMedia(
+                        settings.speakerCrops.primary,
+                        mainVideoRef,
+                        true,
+                        'Main Speaker'
+                      )}
+                    </div>
+                  ) : isFullBleedMain ? (
                     <div data-testid="main-video-region" className="w-full h-full">
                       {renderMainMedia()}
                     </div>
@@ -542,7 +780,12 @@ export function VideoStage({
                       }}
                       className="group absolute z-15 overflow-hidden border border-white/35 shadow-2xl bg-zinc-900 cursor-grab active:cursor-grabbing touch-none hover:ring-2 hover:ring-[#53FC18]/80"
                     >
-                      {renderCroppedFacecamMedia()}
+                      {renderCroppedBoxMedia(
+                        settings.facecamSourceBox,
+                        camVideoRef,
+                        false,
+                        'Facecam'
+                      )}
                     </div>
                   )}
                 </div>
@@ -638,8 +881,8 @@ export function VideoStage({
               </div>
             )}
 
-            {/* 2. DRAGGABLE LIVE WORD-LEVEL VIRAL CAPTIONS / SUBTITLES */}
-            {activeBeat && (
+            {/* 2. DRAGGABLE LIVE WORD-LEVEL VIRAL CAPTIONS / SUBTITLES (respects CC Eye toggle) */}
+            {activeBeat && trackStates.ccVisible && (
               <div
                 key={`beat-${activeBeat.chunk.index}-${settings.subtitleWordsPerScreen}`}
                 data-testid="viral-caption-overlay"
@@ -935,22 +1178,34 @@ export function VideoStage({
         </div>
       )}
 
-      {/* Subtle stage footer hint & fullscreen button */}
+      {/* Subtle stage footer hint & quick Framing/fullscreen controls */}
       {clip && (
         <>
           <div className="absolute bottom-3 left-3 inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-black/55 border border-white/10 text-[10.5px] text-zinc-400 pointer-events-none">
             <Move className="w-3 h-3" />
             <span>Drag captions, watermark &amp; streamer credit directly</span>
           </div>
-          <button
-            type="button"
-            onClick={onToggleFullscreen}
-            aria-label="Toggle fullscreen preview"
-            title="Fullscreen preview (Ctrl+L)"
-            className="absolute bottom-3 right-3 h-8 w-8 rounded-md bg-black/65 border border-white/15 text-zinc-300 hover:text-white hover:bg-black/85 grid place-items-center cursor-pointer transition-colors"
-          >
-            <Maximize2 className="w-3.5 h-3.5 stroke-[1.75]" />
-          </button>
+          <div className="absolute bottom-3 right-3 flex items-center gap-1.5">
+            {onSwitchToFraming && (
+              <button
+                type="button"
+                onClick={onSwitchToFraming}
+                className="h-8 px-2.5 rounded-lg bg-black/70 border border-white/15 text-xs font-medium text-white hover:bg-black/90 inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+              >
+                <Frame className="w-3.5 h-3.5" />
+                <span>Framing</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onToggleFullscreen}
+              aria-label="Toggle fullscreen preview"
+              title="Fullscreen preview"
+              className="h-8 w-8 rounded-lg bg-black/65 border border-white/15 text-zinc-300 hover:text-white hover:bg-black/85 grid place-items-center cursor-pointer transition-colors"
+            >
+              <Maximize2 className="w-3.5 h-3.5 stroke-[1.75]" />
+            </button>
+          </div>
         </>
       )}
     </div>

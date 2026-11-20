@@ -155,15 +155,45 @@ pub fn library() -> Vec<ShortTemplate> {
             caption_preset: "karaoke_bold", title_pattern: "{hook} // {title}",
             hook_pattern: "{hook}", hashtags: &["street", "fyp", "viral", "trending"],
         },
+        ShortTemplate {
+            id: "kick-stream", name: "Kick Viral Clip", background: (9, 9, 11), accent: (83, 252, 24),
+            card: false, headline: true, ticker: false, watermark: true,
+            caption_preset: "karaoke_bold", title_pattern: "{title}",
+            hook_pattern: "{hook}", hashtags: &["kick", "clips", "viral"],
+        },
+        ShortTemplate {
+            id: "insta-short", name: "Instagram Reels Clip", background: (9, 9, 11), accent: (225, 48, 108),
+            card: false, headline: true, ticker: false, watermark: true,
+            caption_preset: "karaoke", title_pattern: "{title}",
+            hook_pattern: "{hook}", hashtags: &["reels", "instagram", "clips"],
+        },
+        ShortTemplate {
+            id: "yt-short", name: "YouTube Shorts Clip", background: (9, 9, 11), accent: (255, 0, 0),
+            card: false, headline: true, ticker: false, watermark: true,
+            caption_preset: "karaoke_bold", title_pattern: "{title}",
+            hook_pattern: "{hook}", hashtags: &["shorts", "youtube", "clips"],
+        },
+        ShortTemplate {
+            id: "reaction-pip", name: "Clipper Reaction PiP", background: (9, 9, 11), accent: (255, 120, 60),
+            card: false, headline: true, ticker: false, watermark: true,
+            caption_preset: "karaoke_bold", title_pattern: "{title}",
+            hook_pattern: "{hook}", hashtags: &["reaction", "shorts", "clips"],
+        },
+        ShortTemplate {
+            id: "split-stream", name: "Streamer Split Cam", background: (9, 9, 11), accent: (83, 252, 24),
+            card: false, headline: true, ticker: false, watermark: true,
+            caption_preset: "karaoke_bold", title_pattern: "{title}",
+            hook_pattern: "{hook}", hashtags: &["stream", "clips", "shorts"],
+        },
     ]
 }
 
 /// Layout preset implied by a ready-made template, if any.
 pub fn layout_for(id: &str) -> Option<&'static str> {
     match id {
-        "podcast_split" => Some("split"),
-        "gaming_reaction" | "youtube_shorts" | "shorts_progress" => Some("pip"),
-        "smartphone" | "centered_canvas" | "wide_16x9" | "editorial" | "street" => Some("solo"),
+        "podcast_split" | "split-stream" | "dual_react" => Some("split"),
+        "reaction-pip" | "gaming_reaction" | "youtube_shorts" | "shorts_progress" => Some("pip"),
+        "kick-stream" | "insta-short" | "yt-short" | "smartphone" | "centered_canvas" | "wide_16x9" | "editorial" | "street" => Some("solo"),
         _ => None,
     }
 }

@@ -7,9 +7,12 @@ import type {
   EditorSettings,
   JobItem,
   PageId,
+  WordCue,
 } from './types';
 import {
   DEFAULT_FACECAM_SOURCE_BOX,
+  DEFAULT_SPEAKER_CROPS,
+  GRADIENT_PRESETS,
   getTemplatePreset,
   WATERMARK_POSITIONS,
   type TemplatePreset,
@@ -140,6 +143,17 @@ function createEditorSettingsForClip(clip: ClipItem | null, brandKit: BrandKit):
     cornerRadius: preset.defaultCornerRadius ?? (preset.hasCard ? 12 : 0),
     framePadding: preset.hasCard ? 12 : 0,
     outerFill: preset.defaultOuterFill || '#09090B',
+    outerFillActive: true,
+    outerGradient: GRADIENT_PRESETS[0].css,
+    bgImageUrl: '',
+    bgImageBlur: 12,
+    bgImageDim: 35,
+    playbackSpeed: 1.0,
+    speakerCrops: {
+      primary: { ...DEFAULT_SPEAKER_CROPS.primary },
+      secondary: { ...DEFAULT_SPEAKER_CROPS.secondary },
+      tertiary: { ...DEFAULT_SPEAKER_CROPS.tertiary },
+    },
     cardTheme: preset.id === 'x_light' ? 'light' : 'dark',
     pinnedStatement: clip?.description || '',
     ...facecamDefaults,
@@ -193,8 +207,11 @@ function createEditorSettingsForClip(clip: ClipItem | null, brandKit: BrandKit):
     subtitleBgStyle: preset.defaultSubtitleBg,
     safeZonePlatform: 'auto',
     audioPeak: clip?.audioPeak ?? false,
+    audioBaseVol: 15,
+    audioPeakVol: 85,
     riserDurationSec: 5,
     customAudioName: '',
+    customAudioUrl: '',
     outroText: clip?.outroText ?? brandKit.defaultOutro,
     outroDurationSec: 3,
   };
@@ -830,6 +847,28 @@ export function App() {
     );
   }, []);
 
+  const handleImportSrtCues = useCallback(
+    (clipId: string, cues: WordCue[]) => {
+      const snippet = cues
+        .slice(0, 4)
+        .map((c) => c.text)
+        .join(' ');
+      setClips((prev) =>
+        prev.map((clip) =>
+          clip.id === clipId
+            ? {
+                ...clip,
+                words: cues,
+                transcript_snippet: snippet || clip.transcript_snippet,
+              }
+            : clip
+        )
+      );
+      notify(`Imported ${cues.length} subtitle cue${cues.length === 1 ? '' : 's'} onto CC track`);
+    },
+    [notify]
+  );
+
   const handleUpdateCueWord = useCallback((clipId: string, index: number, text: string) => {
     setClips((prev) =>
       prev.map((clip) => {
@@ -995,6 +1034,7 @@ export function App() {
           onUpdateBrandKit={handleUpdateBrandKit}
           customFonts={customFonts}
           onUploadCustomFont={handleUploadCustomFont}
+          onImportSrtCues={handleImportSrtCues}
           onUpdateCueWord={handleUpdateCueWord}
           onSetWordEmphasis={handleSetWordEmphasis}
           onUpdateClipDuration={handleUpdateClipDuration}

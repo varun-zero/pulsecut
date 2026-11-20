@@ -20,8 +20,12 @@ import type {
   CustomFontEntry,
   EditorSettings,
   EditorTabId,
+  LayoutModeId,
   SafeZonePlatformId,
+  StageViewModeId,
   TextSubtabId,
+  TrackStates,
+  WordCue,
 } from '../types';
 import { ASPECT_RATIOS, type TemplatePreset } from '../presets';
 import {
@@ -29,8 +33,13 @@ import {
   resolveSafeZonePlatform,
   type ViralCaptionPreset,
 } from '../captionStyles';
-import { clampTrimWindow, formatShortDuration } from '../lib/studioLogic';
+import {
+  clampTrimWindow,
+  formatShortDuration,
+  parseSrtToWordCues,
+} from '../lib/studioLogic';
 import { Button, SegmentedControl } from '../components/ui/Primitives';
+import { FramingCanvas } from '../components/editor/FramingCanvas';
 import { VideoStage } from '../components/editor/VideoStage';
 import { EditorTimeline } from '../components/editor/EditorTimeline';
 import { EditorInspector } from '../components/editor/EditorInspector';
@@ -55,6 +64,7 @@ interface EditorPageProps {
   onUpdateBrandKit: (next: BrandKit) => void;
   customFonts: readonly CustomFontEntry[];
   onUploadCustomFont: (file: File) => void;
+  onImportSrtCues: (clipId: string, cues: WordCue[]) => void;
   onUpdateCueWord: (clipId: string, index: number, text: string) => void;
   onSetWordEmphasis: (
     clipId: string,
@@ -88,6 +98,7 @@ export function EditorPage({
   onUpdateBrandKit,
   customFonts,
   onUploadCustomFont,
+  onImportSrtCues,
   onUpdateCueWord,
   onSetWordEmphasis,
   onUpdateClipDuration,
@@ -97,15 +108,21 @@ export function EditorPage({
   onOpenShortcuts,
   onNotify,
 }: EditorPageProps) {
+  const [stageMode, setStageMode] = useState<StageViewModeId>('framing');
   const [activeTab, setActiveTab] = useState<EditorTabId>('framing');
   const [textSubtab, setTextSubtab] = useState<TextSubtabId>('headline');
   const [showSafeZones, setShowSafeZones] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [currentTimeSec, setCurrentTimeSec] = useState(0);
-  const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
   const [zoomPct, setZoomPct] = useState(100);
   const [trimInSec, setTrimInSec] = useState(0);
   const [trimOutSec, setTrimOutSec] = useState(currentClip?.duration_sec ?? 0);
+  const [trackStates, setTrackStates] = useState<TrackStates>({
+    ccVisible: true,
+    v1Visible: true,
+    a1Muted: false,
+    a2Muted: false,
+  });
   const [exporting, setExporting] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [safeZoneMenuOpen, setSafeZoneMenuOpen] = useState(false);
@@ -117,6 +134,7 @@ export function EditorPage({
   const safeZoneMenuRef = useRef<HTMLDivElement>(null);
 
   const durationSec = currentClip?.duration_sec ?? 0;
+  const playbackSpeed = settings.playbackSpeed || 1.0;
   const activeSafeZone = getSafeZoneSpec(settings.safeZonePlatform, settings.template);
   const matchedSafeZone = getSafeZoneSpec(
     resolveSafeZonePlatform('auto', settings.template),
@@ -131,7 +149,7 @@ export function EditorPage({
     setTrimOutSec(currentClip?.duration_sec ?? 0);
   }, [currentClip?.id, currentClip?.duration_sec]);
 
-  // Smooth simulated playback timer so stage captions & playhead run live
+  // Smooth playback timer synced 1:1 with settings.playbackSpeed
   useEffect(() => {
     if (!playing || !currentClip || durationSec <= 0) return;
     const interval = window.setInterval(() => {
@@ -161,6 +179,112 @@ export function EditorPage({
     document.addEventListener('mousedown', onOutside);
     return () => document.removeEventListener('mousedown', onOutside);
   }, [projectMenuOpen, safeZoneMenuOpen]);
+
+  const handleToggleStageMode = () => {
+    const next: StageViewModeId = stageMode === 'framing' ? 'editor' : 'framing';
+    setStageMode(next);
+    onNotify(next === 'editor' ? `Live ${settings.aspect} Preview` : 'Framing Canvas Mode');
+  };
+
+  const handleToggleTrackState = (key: keyof TrackStates) => {
+    setTrackStates((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handleChangeLayout = (nextLayout: LayoutModeId) => {
+    if (nextLayout === 'trio') {
+      onUpdateSettings(
+        {
+          layout: 'trio',
+          facecamEnabled: false,
+          mainVideoAspect: '9:16',
+          aspect: settings.aspect === '16:9' ? '9:16' : settings.aspect,
+        },
+        true
+      );
+      onNotify('Layout: 3-Speaker Podcast Trio');
+    } else if (nextLayout === 'split') {
+      onUpdateSettings(
+        {
+          layout: 'split',
+          facecamEnabled: false,
+          mainVideoAspect: '9:16',
+          aspect: settings.aspect === '16:9' ? '9:16' : settings.aspect,
+        },
+        true
+      );
+      onNotify('Layout: Dual 9:8 Split (2 Speakers)');
+    } else if (nextLayout === 'pip') {
+      onUpdateSettings(
+        {
+          layout: 'pip',
+          facecamEnabled: true,
+          facecamPlacement:
+            settings.facecamPlacement === 'split-top' ||
+            settings.facecamPlacement === 'split-bottom'
+              ? 'bottom'
+              : settings.facecamPlacement,
+          facecamOutputX: 50,
+          facecamOutputY: 78,
+          mainVideoAspect: settings.mainVideoAspect === '9:16' ? '4:3' : settings.mainVideoAspect,
+          mainVideoOffsetY: 36,
+          aspect: settings.aspect === '16:9' ? '9:16' : settings.aspect,
+        },
+        true
+      );
+      onNotify('Layout: Reaction PiP (Main + Streamer Cam)');
+    } else if (nextLayout === 'centered') {
+      onUpdateSettings(
+        {
+          layout: 'centered',
+          facecamEnabled: false,
+          mainVideoAspect: '16:9',
+          mainVideoOffsetY: 50,
+          aspect: settings.aspect === '16:9' ? '9:16' : settings.aspect,
+        },
+        true
+      );
+      onNotify('Layout: Framed 16:9 Card');
+    } else if (nextLayout === 'widescreen') {
+      onUpdateSettings(
+        {
+          layout: 'widescreen',
+          facecamEnabled: false,
+          aspect: '16:9',
+          mainVideoAspect: '16:9',
+          mainVideoOffsetY: 50,
+        },
+        true
+      );
+      onNotify('Layout: Widescreen 16:9');
+    } else {
+      onUpdateSettings(
+        {
+          layout: 'solo',
+          facecamEnabled: false,
+          mainVideoAspect: '9:16',
+          mainVideoOffsetY: 50,
+          aspect: settings.aspect === '16:9' ? '9:16' : settings.aspect,
+        },
+        true
+      );
+      onNotify('Layout: Single Speaker');
+    }
+  };
+
+  const handleImportSrt = async (file: File) => {
+    if (!currentClip) return;
+    try {
+      const text = await file.text();
+      const cues = parseSrtToWordCues(text);
+      if (cues.length === 0) {
+        onNotify('No valid subtitle cues found in file — check .srt or .vtt timestamps');
+        return;
+      }
+      onImportSrtCues(currentClip.id, cues);
+    } catch {
+      onNotify('Could not read subtitle file');
+    }
+  };
 
   const handleToggleFullscreen = () => {
     if (!currentClip) {
@@ -202,6 +326,7 @@ export function EditorPage({
     const spec = getSafeZoneSpec(settings.safeZonePlatform, settings.template);
     onUpdateSettings({ subtitleX: 50, subtitleVerticalPos: spec.autoAlignSubtitlePct }, true);
     setShowSafeZones(true);
+    setStageMode('editor');
     onNotify(`Subtitles aligned inside ${spec.label} safe zone (${spec.autoAlignSubtitlePct}%)`);
   };
 
@@ -234,10 +359,10 @@ export function EditorPage({
     } else if (e.code === 'ArrowRight' && currentClip) {
       e.preventDefault();
       setCurrentTimeSec((t) => Math.min(durationSec, t + 5));
-    } else if (e.key === '[' && currentClip) {
+    } else if ((e.key === '[' || e.key.toLowerCase() === 'i') && !e.ctrlKey && !e.metaKey && currentClip) {
       e.preventDefault();
       handleSetIn();
-    } else if (e.key === ']' && currentClip) {
+    } else if ((e.key === ']' || e.key.toLowerCase() === 'o') && !e.ctrlKey && !e.metaKey && currentClip) {
       e.preventDefault();
       handleSetOut();
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
@@ -248,7 +373,7 @@ export function EditorPage({
       onRedo();
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l') {
       e.preventDefault();
-      handleToggleFullscreen();
+      handleToggleStageMode();
     }
   };
 
@@ -284,7 +409,7 @@ export function EditorPage({
               aria-haspopup="menu"
               aria-expanded={projectMenuOpen}
               onClick={() => setProjectMenuOpen((v) => !v)}
-              className="h-8 max-w-[240px] sm:max-w-[300px] px-2.5 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs font-medium text-[var(--pc-ink)] hover:border-[var(--pc-muted)] inline-flex items-center gap-2 cursor-pointer transition-colors"
+              className="h-8 max-w-[170px] xl:max-w-[230px] px-2.5 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs font-medium text-[var(--pc-ink)] hover:border-[var(--pc-muted)] inline-flex items-center gap-2 cursor-pointer transition-colors"
             >
               <Film className="w-3.5 h-3.5 text-[var(--pc-sub)] shrink-0 stroke-[1.75]" />
               <span className="truncate">
@@ -372,6 +497,23 @@ export function EditorPage({
                 )}
               </div>
             )}
+          </div>
+
+          {/* YIZERGE Framing ↔ Live Editor Stage Mode Toggle */}
+          <div data-testid="stage-mode-toggle" className="shrink-0">
+            <SegmentedControl<StageViewModeId>
+              ariaLabel="Stage view mode"
+              size="sm"
+              value={stageMode}
+              options={[
+                { value: 'framing', label: 'Framing' },
+                { value: 'editor', label: 'Editor' },
+              ]}
+              onChange={(mode) => {
+                setStageMode(mode);
+                onNotify(mode === 'editor' ? `Live ${settings.aspect} Preview` : 'Framing Canvas Mode');
+              }}
+            />
           </div>
         </div>
 
@@ -567,49 +709,80 @@ export function EditorPage({
 
       {/* LOCKED 3-PANE 100dvh NLE WORKSPACE */}
       <div className="flex-1 min-h-0 flex overflow-hidden">
-        {/* Left/Center Column: Video Stage (Top) + Compact Timeline (Bottom) */}
-        <div className="flex-1 min-w-0 min-h-0 p-3 flex flex-col gap-3 overflow-hidden">
-          <VideoStage
-            clip={currentClip}
-            settings={settings}
-            brandKit={brandKit}
-            customFonts={customFonts}
-            playing={playing}
-            playbackSpeed={playbackSpeed}
-            currentTimeSec={currentTimeSec}
-            showSafeZones={showSafeZones}
-            stageRef={stageRef}
-            onUpdateSettings={onUpdateSettings}
-            onDurationLoaded={(dur) => {
-              if (currentClip && dur > 0 && Math.abs(dur - currentClip.duration_sec) >= 1) {
-                onUpdateClipDuration?.(currentClip.id, dur);
-              }
-            }}
-            onToggleFullscreen={handleToggleFullscreen}
-            onOpenClipPicker={() => setProjectMenuOpen(true)}
-            onGoToDashboard={onGoToDashboard}
-          />
+        {/* Left/Center Column: Framing Canvas OR Live Video Stage (Top) + YIZERGE Layout & Pro Timeline (Bottom) */}
+        <div className="flex-1 min-w-0 min-h-0 p-3 flex flex-col gap-2.5 overflow-hidden">
+          {stageMode === 'framing' ? (
+            <FramingCanvas
+              clip={currentClip}
+              settings={settings}
+              playing={playing}
+              playbackSpeed={playbackSpeed}
+              currentTimeSec={currentTimeSec}
+              muted={trackStates.a1Muted}
+              stageRef={stageRef}
+              onUpdateSettings={onUpdateSettings}
+              onDurationLoaded={(dur) => {
+                if (currentClip && dur > 0 && Math.abs(dur - currentClip.duration_sec) >= 1) {
+                  onUpdateClipDuration?.(currentClip.id, dur);
+                }
+              }}
+              onSwitchToLivePreview={() => setStageMode('editor')}
+              onToggleFullscreen={handleToggleFullscreen}
+              onOpenClipPicker={() => setProjectMenuOpen(true)}
+              onGoToDashboard={onGoToDashboard}
+            />
+          ) : (
+            <VideoStage
+              clip={currentClip}
+              settings={settings}
+              brandKit={brandKit}
+              customFonts={customFonts}
+              playing={playing}
+              playbackSpeed={playbackSpeed}
+              currentTimeSec={currentTimeSec}
+              trimOutSec={trimOutSec}
+              trackStates={trackStates}
+              showSafeZones={showSafeZones}
+              stageRef={stageRef}
+              onUpdateSettings={onUpdateSettings}
+              onDurationLoaded={(dur) => {
+                if (currentClip && dur > 0 && Math.abs(dur - currentClip.duration_sec) >= 1) {
+                  onUpdateClipDuration?.(currentClip.id, dur);
+                }
+              }}
+              onSwitchToFraming={() => setStageMode('framing')}
+              onToggleFullscreen={handleToggleFullscreen}
+              onOpenClipPicker={() => setProjectMenuOpen(true)}
+              onGoToDashboard={onGoToDashboard}
+            />
+          )}
 
           <EditorTimeline
             clip={currentClip}
+            layout={settings.layout}
+            onChangeLayout={handleChangeLayout}
             playing={playing}
             currentTimeSec={currentTimeSec}
             durationSec={durationSec}
             trimInSec={trimInSec}
             trimOutSec={trimOutSec}
-            playbackSpeed={playbackSpeed}
+            onChangeTrimWindow={(inSec, outSec) => {
+              const clamped = clampTrimWindow(inSec, outSec, durationSec);
+              setTrimInSec(clamped.inSec);
+              setTrimOutSec(clamped.outSec);
+            }}
             zoomPct={zoomPct}
             audioPeak={settings.audioPeak}
+            audioBaseVol={settings.audioBaseVol}
+            audioPeakVol={settings.audioPeakVol}
             customAudioName={settings.customAudioName}
+            trackStates={trackStates}
+            onToggleTrackState={handleToggleTrackState}
             onTogglePlay={() => setPlaying((p) => !p)}
             onSeekDelta={(delta) =>
               setCurrentTimeSec((t) => Math.max(0, Math.min(durationSec, t + delta)))
             }
             onSeekTo={(sec) => setCurrentTimeSec(sec)}
-            onChangeSpeed={(spd) => {
-              setPlaybackSpeed(spd);
-              onNotify(`Preview speed: ${spd}x`);
-            }}
             onSetIn={handleSetIn}
             onSetOut={handleSetOut}
             onResetTrim={handleResetTrim}
@@ -622,6 +795,8 @@ export function EditorPage({
         <EditorInspector
           clip={currentClip}
           currentTimeSec={currentTimeSec}
+          stageMode={stageMode}
+          onToggleStageMode={handleToggleStageMode}
           activeTab={activeTab}
           onChangeTab={setActiveTab}
           textSubtab={textSubtab}
@@ -634,6 +809,7 @@ export function EditorPage({
           onUpdateBrandKit={onUpdateBrandKit}
           customFonts={customFonts}
           onUploadCustomFont={onUploadCustomFont}
+          onImportSrt={handleImportSrt}
           onUpdateCueWord={(idx, text) => {
             if (currentClip) onUpdateCueWord(currentClip.id, idx, text);
           }}
@@ -643,6 +819,7 @@ export function EditorPage({
           onAutoAlignSubtitles={handleAutoAlignSubtitles}
           onOpenTemplateLibrary={() => setTemplateLibraryOpen(true)}
           onOpenClipPicker={() => setProjectMenuOpen(true)}
+          onNotify={onNotify}
         />
       </div>
 

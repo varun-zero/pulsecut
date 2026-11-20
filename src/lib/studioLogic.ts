@@ -261,6 +261,111 @@ export function formatShortDuration(secs: number): string {
   return `${mins}:${String(rem).padStart(2, '0')}`;
 }
 
+/**
+ * Formats seconds as SMPTE `HH:MM:SS:FF` (e.g. `00:00:34:17`) matching NLE timeline & skim counters.
+ */
+export function formatSmpteTimecode(secs: number, fps = 30): string {
+  const safe = Number.isFinite(secs) && secs > 0 ? secs : 0;
+  const totalFrames = Math.round(safe * fps);
+  const frames = totalFrames % fps;
+  const totalSecs = Math.floor(totalFrames / fps);
+  const hrs = Math.floor(totalSecs / 3600);
+  const mins = Math.floor((totalSecs % 3600) / 60);
+  const wholeSecs = totalSecs % 60;
+  return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(wholeSecs).padStart(2, '0')}:${String(frames).padStart(2, '0')}`;
+}
+
+function parseSrtTimestampMs(raw: string): number | null {
+  const trimmed = raw.trim();
+  const full = trimmed.match(/^(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})$/);
+  if (full) {
+    const hours = Number(full[1]);
+    const mins = Number(full[2]);
+    const secs = Number(full[3]);
+    const ms = Number(full[4].padEnd(3, '0'));
+    return (hours * 3600 + mins * 60 + secs) * 1000 + ms;
+  }
+  const short = trimmed.match(/^(\d{1,2}):(\d{2})[,.](\d{1,3})$/);
+  if (short) {
+    const mins = Number(short[1]);
+    const secs = Number(short[2]);
+    const ms = Number(short[3].padEnd(3, '0'));
+    return (mins * 60 + secs) * 1000 + ms;
+  }
+  return null;
+}
+
+/**
+ * Parses standard `.srt` or `.vtt` subtitle text into timed `WordCue[]` entries
+ * suitable for immediate live karaoke playback and ASS export.
+ */
+export function parseSrtToWordCues(rawContent: string): WordCue[] {
+  const cleaned = rawContent
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/^WEBVTT[^\n]*\n+/i, '')
+    .trim();
+  if (!cleaned) return [];
+
+  const blocks = cleaned.split(/\n{2,}/);
+  const cues: WordCue[] = [];
+
+  for (const block of blocks) {
+    const lines = block
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const arrowIdx = lines.findIndex((l) => l.includes('-->'));
+    if (arrowIdx < 0) continue;
+
+    const timeLine = lines[arrowIdx];
+    const [startRaw, endRaw] = timeLine.split('-->').map((s) => s.trim().split(/\s+/)[0]);
+    const startMs = parseSrtTimestampMs(startRaw || '');
+    const endMs = parseSrtTimestampMs(endRaw || '');
+    if (startMs === null || endMs === null) continue;
+
+    const text = lines
+      .slice(arrowIdx + 1)
+      .join(' ')
+      .replace(/<[^>]+>/g, '')
+      .replace(/\{\\[^}]+\}/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!text) continue;
+    cues.push({
+      start_ms: startMs,
+      end_ms: Math.max(startMs + 200, endMs),
+      text,
+    });
+  }
+
+  return cues.sort((a, b) => a.start_ms - b.start_ms);
+}
+
+/**
+ * Computes real-time background music gain (0..1) for the YIZERGE Score audio riser:
+ * sits at `baseVolPct` under the speaker's voice, then ramps linearly up to `peakVolPct`
+ * over the final `riserSec` seconds before `trimOutSec`.
+ */
+export function computeScoreVolume(
+  currentTimeSec: number,
+  trimOutSec: number,
+  audioPeak: boolean,
+  baseVolPct: number,
+  peakVolPct: number,
+  riserSec: number
+): number {
+  const base = Math.max(0, Math.min(1, baseVolPct / 100));
+  if (!audioPeak || riserSec <= 0 || trimOutSec <= 0) return Number(base.toFixed(3));
+  const peak = Math.max(0, Math.min(1, peakVolPct / 100));
+  const rampStart = Math.max(0, trimOutSec - riserSec);
+  if (currentTimeSec <= rampStart) return Number(base.toFixed(3));
+  if (currentTimeSec >= trimOutSec) return Number(peak.toFixed(3));
+  const ratio = (currentTimeSec - rampStart) / Math.max(0.05, trimOutSec - rampStart);
+  return Number((base + (peak - base) * ratio).toFixed(3));
+}
+
 export function applyTextCasing(text: string, casing: TextCasingId): string {
   if (casing === 'upper') return text.toUpperCase();
   if (casing === 'title') {
@@ -399,7 +504,15 @@ export function buildConfigurePayload(
     layout: settings.layout,
     canvas: settings.canvas,
     corner_radius: settings.cornerRadius,
+    frame_padding: settings.framePadding,
     outer_fill: settings.outerFill,
+    outer_fill_active: settings.outerFillActive,
+    playback_speed: settings.playbackSpeed,
+    speaker_crops: {
+      primary: clampFacecamSourceBox(settings.speakerCrops.primary),
+      secondary: clampFacecamSourceBox(settings.speakerCrops.secondary),
+      tertiary: clampFacecamSourceBox(settings.speakerCrops.tertiary),
+    },
     facecam_crop: clampFacecamSourceBox(settings.facecamSourceBox),
     facecam_layout: {
       enabled: settings.facecamEnabled,
@@ -456,6 +569,8 @@ export function buildConfigurePayload(
       : null,
     watermark: brandKit.showWatermark ? normalizedHandle : '',
     audio_peak: settings.audioPeak,
+    audio_base_vol: settings.audioBaseVol,
+    audio_peak_vol: settings.audioPeakVol,
     audio_peak_ms: settings.riserDurationSec * 1000,
   };
 }

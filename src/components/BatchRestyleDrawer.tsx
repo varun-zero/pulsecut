@@ -145,6 +145,7 @@ export function BatchRestyleDrawer({
             </span>
             <SegmentedControl<LayoutModeId>
               ariaLabel="Batch layout mode"
+              size="sm"
               fullWidth
               value={settings.layout}
               options={LAYOUT_MODES.map((l) => ({ value: l.id, label: l.label }))}
@@ -157,6 +158,7 @@ export function BatchRestyleDrawer({
             <span className="block text-xs font-medium text-[var(--pc-sub)]">Canvas Fill</span>
             <SegmentedControl<CanvasModeId>
               ariaLabel="Batch canvas fill"
+              size="sm"
               fullWidth
               value={settings.canvas}
               options={CANVAS_MODES.map((c) => ({ value: c.id, label: c.label }))}

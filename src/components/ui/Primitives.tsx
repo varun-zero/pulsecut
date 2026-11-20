@@ -397,10 +397,12 @@ export function StudioSelect<T extends string>({
 
 export function InspectorAccordion({
   title,
+  badge,
   defaultOpen = true,
   children,
 }: {
   title: string;
+  badge?: string;
   defaultOpen?: boolean;
   children: React.ReactNode;
 }) {
@@ -412,14 +414,21 @@ export function InspectorAccordion({
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="w-full py-3 px-4 flex items-center justify-between text-left bg-transparent border-0 cursor-pointer hover:bg-[var(--pc-surface-2)]/60 transition-colors"
+        className="w-full py-3 px-4 flex items-center justify-between gap-2 text-left bg-transparent border-0 cursor-pointer hover:bg-[var(--pc-surface-2)]/60 transition-colors"
       >
-        <span className="text-[13px] font-semibold text-[var(--pc-ink)]">{title}</span>
-        {open ? (
-          <ChevronDown className="w-4 h-4 text-[var(--pc-sub)] shrink-0" />
-        ) : (
-          <ChevronRight className="w-4 h-4 text-[var(--pc-sub)] shrink-0" />
-        )}
+        <span className="text-[13px] font-semibold text-[var(--pc-ink)] truncate">{title}</span>
+        <span className="inline-flex items-center gap-2 shrink-0">
+          {badge && (
+            <span className="font-mono-tabular text-[11px] px-1.5 py-0.5 rounded bg-[var(--pc-surface-2)] border border-[var(--pc-border)] text-[var(--pc-sub)]">
+              {badge}
+            </span>
+          )}
+          {open ? (
+            <ChevronDown className="w-4 h-4 text-[var(--pc-sub)] shrink-0" />
+          ) : (
+            <ChevronRight className="w-4 h-4 text-[var(--pc-sub)] shrink-0" />
+          )}
+        </span>
       </button>
       {open && <div className="px-4 pb-4 space-y-3.5">{children}</div>}
     </div>
@@ -870,7 +879,7 @@ export function Toast({ message }: { message: string | null }) {
     <div
       role="status"
       aria-live="polite"
-      className="fixed bottom-5 right-5 z-[90] px-4 py-2.5 rounded-lg bg-[var(--pc-cta-bg)] text-[var(--pc-cta-fg)] text-xs font-medium shadow-lg border border-[var(--pc-border)]"
+      className="fixed top-14 left-1/2 -translate-x-1/2 z-[90] px-4 py-2 rounded-lg bg-[var(--pc-cta-bg)] text-[var(--pc-cta-fg)] text-xs font-medium shadow-lg border border-[var(--pc-border)] pointer-events-none"
     >
       {message}
     </div>

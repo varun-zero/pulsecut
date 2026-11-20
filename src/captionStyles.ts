@@ -668,7 +668,8 @@ export function generateAssSubtitle(
   const fontMeta = getViralFont(settings.subtitleFont, customFonts);
   const safeSpec = getSafeZoneSpec(settings.safeZonePlatform, settings.template);
   const playResX = settings.aspect === '16:9' ? 1920 : 1080;
-  const playResY = settings.aspect === '9:16' ? 1920 : 1080;
+  const playResY =
+    settings.aspect === '9:16' ? 1920 : settings.aspect === '4:5' ? 1350 : 1080;
   const posX = Math.round((playResX * settings.subtitleX) / 100);
   const posY = Math.round((playResY * settings.subtitleVerticalPos) / 100);
   const marginV = Math.max(40, Math.round(playResY * (1 - settings.subtitleVerticalPos / 100)));
@@ -764,7 +765,8 @@ export function buildRenderParitySpec(
   const headlineMeta = getViralFont(settings.font, customFonts);
   const subtitleMeta = getViralFont(settings.subtitleFont, customFonts);
   const width = settings.aspect === '16:9' ? 1920 : 1080;
-  const height = settings.aspect === '9:16' ? 1920 : 1080;
+  const height =
+    settings.aspect === '9:16' ? 1920 : settings.aspect === '4:5' ? 1350 : 1080;
 
   const overlayAssets: string[] = [];
   const resolvedPlatform =
@@ -821,11 +823,34 @@ export function buildRenderParitySpec(
   }
 
   const assScript = generateAssSubtitle(cues, settings, trimInSec, customFonts);
+  const speedFilter =
+    settings.playbackSpeed && Math.abs(settings.playbackSpeed - 1) > 0.01
+      ? `,setpts=${(1 / settings.playbackSpeed).toFixed(3)}*PTS`
+      : '';
   let ffmpegFiltergraph: string;
 
-  if (settings.facecamEnabled) {
+  const cropBoxExpr = (box: { x: number; y: number; width: number; height: number }) =>
+    `crop=iw*${(box.width / 100).toFixed(2)}:ih*${(box.height / 100).toFixed(2)}:iw*${(box.x / 100).toFixed(2)}:ih*${(box.y / 100).toFixed(2)}`;
+
+  if (settings.layout === 'trio') {
+    const halfW = Math.round(width / 2);
+    const topH = Math.round(height / 2);
+    const botH = height - topH;
+    const c1 = cropBoxExpr(settings.speakerCrops.primary);
+    const c2 = cropBoxExpr(settings.speakerCrops.secondary);
+    const c3 = cropBoxExpr(settings.speakerCrops.tertiary);
+    overlayAssets.push(`trio_speakers (3x cropped regions -> 2-over-1 grid)`);
+    ffmpegFiltergraph = [
+      `[0:v]split=3[s1][s2][s3]`,
+      `[s1]${c1},scale=${halfW}:${topH}:force_original_aspect_ratio=increase,crop=${halfW}:${topH}[tl]`,
+      `[s2]${c2},scale=${width - halfW}:${topH}:force_original_aspect_ratio=increase,crop=${width - halfW}:${topH}[tr]`,
+      `[tl][tr]hstack=inputs=2[top]`,
+      `[s3]${c3},scale=${width}:${botH}:force_original_aspect_ratio=increase,crop=${width}:${botH}[bot]`,
+      `[top][bot]vstack=inputs=2${speedFilter},ass=captions.ass:fontsdir=./fonts`,
+    ].join(';');
+  } else if (settings.facecamEnabled) {
     const fc = settings.facecamSourceBox;
-    const cropExpr = `crop=iw*${(fc.width / 100).toFixed(2)}:ih*${(fc.height / 100).toFixed(2)}:iw*${(fc.x / 100).toFixed(2)}:ih*${(fc.y / 100).toFixed(2)}`;
+    const cropExpr = cropBoxExpr(fc);
     if (settings.facecamPlacement === 'split-top' || settings.facecamPlacement === 'split-bottom') {
       const camH = Math.round((height * settings.facecamSplitRatio) / 100);
       const mainH = height - camH;
@@ -834,7 +859,7 @@ export function buildRenderParitySpec(
         `[0:v]split=2[src_main][src_cam]`,
         `[src_main]scale=${width}:${mainH}:force_original_aspect_ratio=increase,crop=${width}:${mainH}[main]`,
         `[src_cam]${cropExpr},scale=${width}:${camH}:force_original_aspect_ratio=increase,crop=${width}:${camH}[cam]`,
-        `${stackOrder}vstack=inputs=2,ass=captions.ass:fontsdir=./fonts`,
+        `${stackOrder}vstack=inputs=2${speedFilter},ass=captions.ass:fontsdir=./fonts`,
       ].join(';');
     } else {
       const camW = Math.round((width * settings.facecamOutputWidth) / 100);
@@ -853,13 +878,30 @@ export function buildRenderParitySpec(
         `[0:v]split=2[src_main][src_cam]`,
         `[src_main]scale=${width}:${height}:force_original_aspect_ratio=${settings.mainVideoFit === 'contain' ? 'decrease' : 'increase'},pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=${settings.outerFill}[bg]`,
         `[src_cam]${cropExpr},scale=${camW}:${camH}:force_original_aspect_ratio=increase,crop=${camW}:${camH}[cam]`,
-        `[bg][cam]overlay=${ovX}:${ovY},ass=captions.ass:fontsdir=./fonts`,
+        `[bg][cam]overlay=${ovX}:${ovY}${speedFilter},ass=captions.ass:fontsdir=./fonts`,
       ].join(';');
     }
-  } else {
+  } else if (settings.layout === 'split') {
+    const topH = Math.round(height / 2);
+    const botH = height - topH;
+    const c1 = cropBoxExpr(settings.speakerCrops.primary);
+    const c2 = cropBoxExpr(settings.speakerCrops.secondary);
+    overlayAssets.push(`dual_split_speakers (Top + Bottom 9:8 crops)`);
     ffmpegFiltergraph = [
-      `scale=${width}:${height}:force_original_aspect_ratio=${settings.layout === 'centered' || settings.mainVideoFit === 'contain' ? 'decrease' : 'increase'}`,
-      settings.canvas === 'blur' ? `gblur=sigma=24` : `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=${settings.outerFill}`,
+      `[0:v]split=2[s1][s2]`,
+      `[s1]${c1},scale=${width}:${topH}:force_original_aspect_ratio=increase,crop=${width}:${topH}[top]`,
+      `[s2]${c2},scale=${width}:${botH}:force_original_aspect_ratio=increase,crop=${width}:${botH}[bot]`,
+      `[top][bot]vstack=inputs=2${speedFilter},ass=captions.ass:fontsdir=./fonts`,
+    ].join(';');
+  } else {
+    const soloCrop =
+      settings.layout === 'solo' ? `${cropBoxExpr(settings.speakerCrops.primary)},` : '';
+    ffmpegFiltergraph = [
+      `${soloCrop}scale=${width}:${height}:force_original_aspect_ratio=${settings.layout === 'centered' || settings.mainVideoFit === 'contain' ? 'decrease' : 'increase'}`,
+      settings.canvas === 'blur'
+        ? `gblur=sigma=24`
+        : `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=${settings.outerFillActive ? settings.outerFill : '#000000'}`,
+      ...(speedFilter ? [speedFilter.slice(1)] : []),
       `ass=captions.ass:fontsdir=./fonts`,
     ].join(',');
   }

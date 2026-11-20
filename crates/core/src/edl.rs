@@ -40,6 +40,82 @@ pub enum EditOp {
     SocialCard { handle: String, style: String },
     /// Duck the bed under speech then rise to `peak` at the end.
     AudioPeak { rise_ms: i64, peak: f64 },
+    /// 16:9 source region (0..100%) to crop for the streamer facecam in Reaction PiP / Split Stream.
+    FacecamCrop { x: f32, y: f32, width: f32, height: f32 },
+    /// Output placement of the cropped facecam inside the vertical frame.
+    FacecamLayout {
+        enabled: bool,
+        placement: String,
+        output_x: f32,
+        output_y: f32,
+        output_width: f32,
+        output_aspect: String,
+        split_ratio: f32,
+        rounded: u32,
+    },
+    /// Framing of the primary video inside the vertical mobile canvas (9:16 | 4:3 | 16:9 | 1:1).
+    MainVideoFrame { aspect: String, fit: String, offset_y: f32 },
+    /// Smart camera framing mode: active_speaker | podcast_split | face | static,
+    /// with optional manual 0..100% crop boxes for Speaker 1 and Speaker 2 in 2-person podcasts.
+    FramingMode {
+        mode: String,
+        #[serde(default)]
+        speaker1_x: Option<f32>,
+        #[serde(default)]
+        speaker1_y: Option<f32>,
+        #[serde(default)]
+        speaker1_w: Option<f32>,
+        #[serde(default)]
+        speaker1_h: Option<f32>,
+        #[serde(default)]
+        speaker2_x: Option<f32>,
+        #[serde(default)]
+        speaker2_y: Option<f32>,
+        #[serde(default)]
+        speaker2_w: Option<f32>,
+        #[serde(default)]
+        speaker2_h: Option<f32>,
+        #[serde(default)]
+        split_ratio: Option<f32>,
+        #[serde(default)]
+        swap_speakers: Option<bool>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FacecamCropSpec {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FacecamLayoutSpec {
+    pub enabled: bool,
+    pub placement: String,
+    pub output_x: f32,
+    pub output_y: f32,
+    pub output_width: f32,
+    pub output_aspect: String,
+    pub split_ratio: f32,
+    pub rounded: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MainVideoFrameSpec {
+    pub aspect: String,
+    pub fit: String,
+    pub offset_y: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FramingModeSpec {
+    pub mode: String,
+    pub speaker1: Option<(f32, f32, f32, f32)>,
+    pub speaker2: Option<(f32, f32, f32, f32)>,
+    pub split_ratio: f32,
+    pub swap_speakers: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -145,6 +221,72 @@ impl EditDecisionList {
         })
     }
 
+    pub fn facecam_crop(&self) -> Option<FacecamCropSpec> {
+        self.ops.iter().rev().find_map(|op| match op {
+            EditOp::FacecamCrop { x, y, width, height } => Some(FacecamCropSpec {
+                x: *x, y: *y, width: *width, height: *height,
+            }),
+            _ => None,
+        })
+    }
+
+    pub fn facecam_layout(&self) -> Option<FacecamLayoutSpec> {
+        self.ops.iter().rev().find_map(|op| match op {
+            EditOp::FacecamLayout {
+                enabled, placement, output_x, output_y, output_width, output_aspect, split_ratio, rounded,
+            } => Some(FacecamLayoutSpec {
+                enabled: *enabled,
+                placement: placement.clone(),
+                output_x: *output_x,
+                output_y: *output_y,
+                output_width: *output_width,
+                output_aspect: output_aspect.clone(),
+                split_ratio: *split_ratio,
+                rounded: *rounded,
+            }),
+            _ => None,
+        })
+    }
+
+    pub fn main_video_frame(&self) -> Option<MainVideoFrameSpec> {
+        self.ops.iter().rev().find_map(|op| match op {
+            EditOp::MainVideoFrame { aspect, fit, offset_y } => Some(MainVideoFrameSpec {
+                aspect: aspect.clone(),
+                fit: fit.clone(),
+                offset_y: *offset_y,
+            }),
+            _ => None,
+        })
+    }
+
+    pub fn framing_mode(&self) -> Option<FramingModeSpec> {
+        self.ops.iter().rev().find_map(|op| match op {
+            EditOp::FramingMode {
+                mode,
+                speaker1_x, speaker1_y, speaker1_w, speaker1_h,
+                speaker2_x, speaker2_y, speaker2_w, speaker2_h,
+                split_ratio, swap_speakers,
+            } => {
+                let speaker1 = match (speaker1_x, speaker1_y, speaker1_w, speaker1_h) {
+                    (Some(x), Some(y), Some(w), Some(h)) => Some((*x, *y, *w, *h)),
+                    _ => None,
+                };
+                let speaker2 = match (speaker2_x, speaker2_y, speaker2_w, speaker2_h) {
+                    (Some(x), Some(y), Some(w), Some(h)) => Some((*x, *y, *w, *h)),
+                    _ => None,
+                };
+                Some(FramingModeSpec {
+                    mode: mode.clone(),
+                    speaker1,
+                    speaker2,
+                    split_ratio: split_ratio.unwrap_or(50.0).clamp(30.0, 70.0),
+                    swap_speakers: swap_speakers.unwrap_or(false),
+                })
+            }
+            _ => None,
+        })
+    }
+
     pub fn to_json(&self) -> crate::Result<String> { Ok(serde_json::to_string_pretty(self)?) }
 
     pub fn from_json(s: &str) -> crate::Result<Self> { Ok(serde_json::from_str(s)?) }
@@ -179,8 +321,30 @@ mod tests {
     fn edl_roundtrip() {
         let mut edl = EditDecisionList::new("c1");
         edl.push(EditOp::Hook { text: "wait for it".into(), duration_ms: 1500 });
+        edl.push(EditOp::FacecamCrop { x: 68.0, y: 60.0, width: 28.0, height: 35.0 });
+        edl.push(EditOp::FacecamLayout {
+            enabled: true,
+            placement: "bottom".into(),
+            output_x: 50.0,
+            output_y: 78.0,
+            output_width: 54.0,
+            output_aspect: "4:3".into(),
+            split_ratio: 42.0,
+            rounded: 12,
+        });
+        edl.push(EditOp::MainVideoFrame { aspect: "4:3".into(), fit: "cover".into(), offset_y: 36.0 });
+        edl.push(EditOp::FramingMode {
+            mode: "podcast_split".into(),
+            speaker1_x: Some(4.0), speaker1_y: Some(8.0), speaker1_w: Some(44.0), speaker1_h: Some(84.0),
+            speaker2_x: Some(52.0), speaker2_y: Some(8.0), speaker2_w: Some(44.0), speaker2_h: Some(84.0),
+            split_ratio: Some(50.0), swap_speakers: Some(false),
+        });
         let json = edl.to_json().unwrap();
         let back = EditDecisionList::from_json(&json).unwrap();
         assert_eq!(back, edl);
+        assert_eq!(back.facecam_crop().unwrap().width, 28.0);
+        assert_eq!(back.facecam_layout().unwrap().placement, "bottom");
+        assert_eq!(back.main_video_frame().unwrap().aspect, "4:3");
+        assert_eq!(back.framing_mode().unwrap().mode, "podcast_split");
     }
 }

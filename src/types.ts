@@ -2,13 +2,15 @@ export type PageId = 'dashboard' | 'clips' | 'editor';
 
 export type EditorTabId = 'framing' | 'templates' | 'text' | 'media';
 export type TextSubtabId = 'headline' | 'subs';
+export type StageViewModeId = 'framing' | 'editor';
 
-export type AspectRatioId = '9:16' | '1:1' | '16:9';
-export type LayoutModeId = 'solo' | 'pip' | 'split' | 'centered';
-export type CanvasModeId = 'solid' | 'blur' | 'padding';
+export type AspectRatioId = '9:16' | '4:5' | '1:1' | '16:9';
+export type LayoutModeId = 'split' | 'solo' | 'trio' | 'pip' | 'centered' | 'widescreen';
+export type CanvasModeId = 'solid' | 'blur' | 'gradient' | 'padding' | 'image';
 export type FacecamPlacementId = 'bottom' | 'top' | 'split-top' | 'split-bottom' | 'pip-free';
 export type FrameAspectId = '9:16' | '4:3' | '16:9' | '1:1';
 export type VideoFitId = 'cover' | 'contain';
+export type SpeakerCropKey = 'primary' | 'secondary' | 'tertiary';
 
 export interface FacecamSourceBox {
   /** Left edge in % of the source 16:9 video width (0..88) */
@@ -19,6 +21,36 @@ export interface FacecamSourceBox {
   width: number;
   /** Height in % of the source 16:9 video height (12..100) */
   height: number;
+}
+
+export interface SpeakerCropSet {
+  /** Top Speaker (Split), Top-Left (Trio), or Main Speaker (Solo) */
+  primary: FacecamSourceBox;
+  /** Bottom Speaker (Split) or Top-Right (Trio) */
+  secondary: FacecamSourceBox;
+  /** Bottom Speaker (Trio) */
+  tertiary: FacecamSourceBox;
+}
+
+export interface SavedStylePreset {
+  id: string;
+  name: string;
+  layout: LayoutModeId;
+  aspect: AspectRatioId;
+  canvas: CanvasModeId;
+  cornerRadius: number;
+  framePadding: number;
+  outerFill: string;
+  outerFillActive: boolean;
+  outerGradient: string;
+  playbackSpeed: number;
+}
+
+export interface TrackStates {
+  ccVisible: boolean;
+  v1Visible: boolean;
+  a1Muted: boolean;
+  a2Muted: boolean;
 }
 
 export type ViralCaptionPresetId =
@@ -148,8 +180,17 @@ export interface EditorSettings {
   cornerRadius: number;
   framePadding: number;
   outerFill: string;
+  outerFillActive: boolean;
+  outerGradient: string;
+  bgImageUrl: string;
+  bgImageBlur: number;
+  bgImageDim: number;
   cardTheme: CardThemeId;
   pinnedStatement: string;
+  playbackSpeed: number;
+
+  /* Multi-Speaker Framing Crop Regions (Solo / Split / Trio interactive canvas boxes) */
+  speakerCrops: SpeakerCropSet;
 
   /* Reaction PiP / Streamer Facecam Crop & Output Placement */
   facecamEnabled: boolean;
@@ -228,10 +269,13 @@ export interface EditorSettings {
   /* Safe Zone Override */
   safeZonePlatform: SafeZonePlatformId;
 
-  /* Media & Finishing */
+  /* Media, Score & Finishing */
   audioPeak: boolean;
+  audioBaseVol: number;
+  audioPeakVol: number;
   riserDurationSec: number;
   customAudioName: string;
+  customAudioUrl: string;
   outroText: string;
   outroDurationSec: number;
 }

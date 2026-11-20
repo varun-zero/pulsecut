@@ -26,12 +26,15 @@ import {
   clampFacecamSourceBox,
   clampTrimWindow,
   computeCropTransform,
+  computeScoreVolume,
   createHistory,
   detectVideoSource,
   filterClips,
+  formatSmpteTimecode,
   formatTimecode,
   getClipsEmptyState,
   normalizeHandle,
+  parseSrtToWordCues,
   pushHistory,
   redoHistory,
   undoHistory,
@@ -92,6 +95,17 @@ const SAMPLE_SETTINGS: EditorSettings = {
   cornerRadius: 0,
   framePadding: 0,
   outerFill: '#09090B',
+  outerFillActive: true,
+  outerGradient: 'linear-gradient(135deg, #09090B 0%, #1E1B4B 100%)',
+  bgImageUrl: '',
+  bgImageBlur: 12,
+  bgImageDim: 35,
+  playbackSpeed: 1.0,
+  speakerCrops: {
+    primary: { x: 4, y: 12, width: 44, height: 76 },
+    secondary: { x: 52, y: 12, width: 44, height: 76 },
+    tertiary: { x: 25, y: 12, width: 50, height: 76 },
+  },
   cardTheme: 'dark',
   pinnedStatement: 'Pinned insight',
   facecamEnabled: false,
@@ -156,8 +170,11 @@ const SAMPLE_SETTINGS: EditorSettings = {
   subtitleBgStyle: 'white-stepped',
   safeZonePlatform: 'auto',
   audioPeak: true,
+  audioBaseVol: 15,
+  audioPeakVol: 85,
   riserDurationSec: 4,
   customAudioName: '',
+  customAudioUrl: '',
   outroText: 'Follow for part 2',
   outroDurationSec: 3,
 };
@@ -208,7 +225,7 @@ test('shared viral preset registry exposes 9 featured / 12 total modern formats 
   assert.equal(getTemplatePreset('unknown_id').id, 'default');
 
   const layoutIds = LAYOUT_MODES.map((l) => l.id);
-  assert.deepEqual(layoutIds, ['solo', 'pip', 'split', 'centered']);
+  assert.deepEqual(layoutIds, ['split', 'solo', 'trio', 'pip', 'centered', 'widescreen']);
   assert.equal(
     OUTER_FILL_SWATCHES.some((s) => s.hex.toUpperCase() === '#E0FE10'),
     false
@@ -487,4 +504,65 @@ test('Reaction PiP facecam source box clamping, crop transform math, and FFmpeg 
   );
   assert.ok(splitParity.ffmpegFiltergraph.includes('[cam][main]vstack=inputs=2'));
 });
+
+test('YIZERGE Studio features: SMPTE timecode, SRT/VTT importer, Score riser volume, 4:5 export, Trio & speed FFmpeg parity', () => {
+  // 1. SMPTE HH:MM:SS:FF formatting at 30fps
+  assert.equal(formatSmpteTimecode(0), '00:00:00:00');
+  assert.equal(formatSmpteTimecode(34.5, 30), '00:00:34:15');
+  assert.equal(formatSmpteTimecode(3661.2, 30), '01:01:01:06');
+
+  // 2. SRT & WebVTT subtitle parser
+  const sampleSrt = `1
+00:00:00,500 --> 00:00:02,250
+<i>No way</i> chat we pulled that off
+
+2
+00:00:02,300 --> 00:00:05,000
+CLIP IT RIGHT NOW`;
+  const parsedSrt = parseSrtToWordCues(sampleSrt);
+  assert.equal(parsedSrt.length, 2);
+  assert.equal(parsedSrt[0].start_ms, 500);
+  assert.equal(parsedSrt[0].end_ms, 2250);
+  assert.equal(parsedSrt[0].text, 'No way chat we pulled that off');
+  assert.equal(parsedSrt[1].start_ms, 2300);
+  assert.equal(parsedSrt[1].text, 'CLIP IT RIGHT NOW');
+
+  const sampleVtt = `WEBVTT
+
+00:01.000 --> 00:03.500
+Podcast trio test cue`;
+  const parsedVtt = parseSrtToWordCues(sampleVtt);
+  assert.equal(parsedVtt.length, 1);
+  assert.equal(parsedVtt[0].start_ms, 1000);
+  assert.equal(parsedVtt[0].end_ms, 3500);
+
+  // 3. Score base -> peak riser volume math
+  assert.equal(computeScoreVolume(5, 30, true, 15, 85, 5), 0.15);
+  assert.equal(computeScoreVolume(27.5, 30, true, 15, 85, 5), 0.5);
+  assert.equal(computeScoreVolume(30, 30, true, 15, 85, 5), 0.85);
+  assert.equal(computeScoreVolume(29, 30, false, 20, 90, 5), 0.2);
+
+  // 4. 4:5 portrait export (1080x1350), Trio 3-speaker filtergraph & playback speed setpts
+  const trioParity = buildRenderParitySpec(
+    parsedSrt,
+    {
+      ...SAMPLE_SETTINGS,
+      aspect: '4:5',
+      layout: 'trio',
+      facecamEnabled: false,
+      playbackSpeed: 1.5,
+    },
+    SAMPLE_BRAND_KIT,
+    0,
+    []
+  );
+  assert.equal(trioParity.dimensions.width, 1080);
+  assert.equal(trioParity.dimensions.height, 1350);
+  assert.ok(trioParity.assScript.includes('PlayResY: 1350'));
+  assert.ok(trioParity.ffmpegFiltergraph.includes('split=3'));
+  assert.ok(trioParity.ffmpegFiltergraph.includes('hstack=inputs=2'));
+  assert.ok(trioParity.ffmpegFiltergraph.includes('vstack=inputs=2'));
+  assert.ok(trioParity.ffmpegFiltergraph.includes('setpts=0.667*PTS'));
+});
+
 

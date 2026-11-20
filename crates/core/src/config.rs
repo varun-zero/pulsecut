@@ -181,12 +181,13 @@ pub struct RenderConfig {
     pub subtitle_font: String,
     /// Empty = let ffmpeg pick a system font. On Windows we fall back to arial.ttf.
     pub font_file: String,
-    /// static | face. "face" runs the bundled SeetaFace detector and pans the
-    /// 9:16 crop to keep the speaker centred.
+    /// static | face | active_speaker | podcast_split.
+    /// "active_speaker" detects all faces and cuts to whoever is talking (ideal for 2-person podcasts).
+    /// "podcast_split" stacks Speaker 1 (top) and Speaker 2 (bottom) simultaneously.
     pub framing: String,
     /// Path to the SeetaFace model shipped in models/.
     pub face_model: String,
-    /// Built-in template id: default | x_light | x_dark | tiktok_hook | breaking_news | gradient_cta | clean
+    /// Built-in template id: default | kick-stream | insta-short | yt-short | podcast_split | reaction-pip | ...
     pub template: String,
     /// Optional handle shown by templates that support a watermark.
     pub watermark: String,
@@ -208,7 +209,7 @@ impl Default for RenderConfig {
             caption_style: "karaoke".into(),
             subtitle_font: "Inter".into(),
             font_file: String::new(),
-            framing: "static".into(),
+            framing: "active_speaker".into(),
             face_model: "models/seeta_fd_frontal_v1.0.bin".into(),
             template: "default".into(),
             watermark: String::new(),
@@ -216,7 +217,7 @@ impl Default for RenderConfig {
             safe_zone_top: 180,
             safe_zone_bottom: 320,
             max_duration_secs: 60,
-            crf: 20,
+            crf: 18,
         }
     }
 }

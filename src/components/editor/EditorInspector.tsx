@@ -4,11 +4,17 @@ import {
   AlignLeft,
   AlignRight,
   AlignVerticalSpaceAround,
+  BookmarkPlus,
+  Eye,
+  FileText,
   Frame,
+  Image as ImageIcon,
   LayoutTemplate,
   Lock,
   Music,
+  RotateCcw,
   Sparkles,
+  Trash2,
   Type,
   Upload,
 } from 'lucide-react';
@@ -22,10 +28,13 @@ import type {
   EditorSettings,
   EditorTabId,
   FacecamPlacementId,
+  FacecamSourceBox,
   FrameAspectId,
   HeadlineLayoutStyleId,
   KickBadgeMode,
-  LayoutModeId,
+  SavedStylePreset,
+  SpeakerCropKey,
+  StageViewModeId,
   StreamerPlatformId,
   SubtitleBgStyleId,
   TextAlignId,
@@ -36,12 +45,17 @@ import type {
 } from '../../types';
 import {
   CANVAS_MODES,
+  CORNER_RADIUS_PRESETS,
+  DEFAULT_FACECAM_SOURCE_BOX,
+  DEFAULT_SPEAKER_CROPS,
   FACECAM_PLACEMENT_OPTIONS,
   FEATURED_PRESETS,
   FRAME_ASPECT_OPTIONS,
+  FRAME_PADDING_PRESETS,
+  GRADIENT_PRESETS,
   HEADLINE_LAYOUT_OPTIONS,
-  LAYOUT_MODES,
   OUTER_FILL_SWATCHES,
+  PLAYBACK_SPEEDS,
   STREAMER_PLATFORM_OPTIONS,
   SUBTITLE_BG_OPTIONS,
   WATERMARK_POSITIONS,
@@ -55,6 +69,7 @@ import {
   getSafeZoneSpec,
   type ViralCaptionPreset,
 } from '../../captionStyles';
+import { clampFacecamSourceBox } from '../../lib/studioLogic';
 import {
   Button,
   InspectorAccordion,
@@ -68,9 +83,24 @@ import {
 } from '../ui/Primitives';
 import { FacecamSourcePicker } from './FacecamSourcePicker';
 
+const STYLE_PRESETS_STORAGE_KEY = 'pulsecut-style-presets';
+
+function loadSavedStylePresets(): SavedStylePreset[] {
+  try {
+    const raw = localStorage.getItem(STYLE_PRESETS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 interface EditorInspectorProps {
   clip: ClipItem | null;
   currentTimeSec: number;
+  stageMode: StageViewModeId;
+  onToggleStageMode: () => void;
   activeTab: EditorTabId;
   onChangeTab: (tab: EditorTabId) => void;
   textSubtab: TextSubtabId;
@@ -83,11 +113,13 @@ interface EditorInspectorProps {
   onUpdateBrandKit: (next: BrandKit) => void;
   customFonts: readonly CustomFontEntry[];
   onUploadCustomFont: (file: File) => void;
+  onImportSrt: (file: File) => void;
   onUpdateCueWord: (index: number, nextText: string) => void;
   onSetWordEmphasis: (cueIndex: number, tokenIndex: number, color: string | null) => void;
   onAutoAlignSubtitles: () => void;
   onOpenTemplateLibrary: () => void;
   onOpenClipPicker: () => void;
+  onNotify?: (msg: string) => void;
 }
 
 const INSPECTOR_TABS: readonly { id: EditorTabId; label: string; icon: React.ReactNode }[] = [
@@ -110,6 +142,8 @@ const ALIGN_OPTIONS: readonly { value: TextAlignId; label: string; icon: React.R
 export function EditorInspector({
   clip,
   currentTimeSec,
+  stageMode,
+  onToggleStageMode,
   activeTab,
   onChangeTab,
   textSubtab,
@@ -122,18 +156,80 @@ export function EditorInspector({
   onUpdateBrandKit,
   customFonts,
   onUploadCustomFont,
+  onImportSrt,
   onUpdateCueWord,
   onSetWordEmphasis,
   onAutoAlignSubtitles,
   onOpenTemplateLibrary,
   onOpenClipPicker,
+  onNotify,
 }: EditorInspectorProps) {
   const audioInputRef = useRef<HTMLInputElement>(null);
+  const bgImageInputRef = useRef<HTMLInputElement>(null);
+  const srtInputRef = useRef<HTMLInputElement>(null);
+  const [stylePresets, setStylePresets] = useState<SavedStylePreset[]>(() =>
+    loadSavedStylePresets()
+  );
+  const [newPresetName, setNewPresetName] = useState('');
   const [selectedEmphasisToken, setSelectedEmphasisToken] = useState<{
     cueIndex: number;
     tokenIndex: number;
     word: string;
   } | null>(null);
+
+  const persistStylePresets = (next: SavedStylePreset[]) => {
+    setStylePresets(next);
+    try {
+      localStorage.setItem(STYLE_PRESETS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // ignore storage quota errors
+    }
+  };
+
+  const handleSaveStylePreset = () => {
+    const label = newPresetName.trim() || `${settings.layout.toUpperCase()} ${settings.cornerRadius}px`;
+    const entry: SavedStylePreset = {
+      id: `preset-${Date.now()}`,
+      name: label,
+      layout: settings.layout,
+      aspect: settings.aspect,
+      canvas: settings.canvas,
+      cornerRadius: settings.cornerRadius,
+      framePadding: settings.framePadding,
+      outerFill: settings.outerFill,
+      outerFillActive: settings.outerFillActive,
+      outerGradient: settings.outerGradient,
+      playbackSpeed: settings.playbackSpeed,
+    };
+    persistStylePresets([entry, ...stylePresets]);
+    setNewPresetName('');
+    onNotify?.(`Saved style preset "${label}"`);
+  };
+
+  const handleDeleteStylePreset = (id: string) => {
+    persistStylePresets(stylePresets.filter((p) => p.id !== id));
+    onNotify?.('Removed saved style preset');
+  };
+
+  const updateCoordinateField = (
+    target: SpeakerCropKey | 'facecam',
+    field: keyof FacecamSourceBox,
+    rawVal: string
+  ) => {
+    const num = Number(rawVal);
+    if (!Number.isFinite(num)) return;
+    if (target === 'facecam') {
+      const next = clampFacecamSourceBox({ ...settings.facecamSourceBox, [field]: num });
+      onUpdateSettings({ facecamSourceBox: next }, true);
+    } else {
+      const current = settings.speakerCrops[target];
+      const next = clampFacecamSourceBox({ ...current, [field]: num });
+      onUpdateSettings(
+        { speakerCrops: { ...settings.speakerCrops, [target]: next } },
+        true
+      );
+    }
+  };
 
   const activePreset = getTemplatePreset(settings.template);
   const activeSafeZone = getSafeZoneSpec(settings.safeZonePlatform, settings.template);
@@ -189,99 +285,261 @@ export function EditorInspector({
         </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto studio-scroll">
-          {/* ===================== TAB 1: FRAMING ===================== */}
+          {/* ===================== TAB 1: FRAMING (YIZERGE 1-to-1) ===================== */}
           {activeTab === 'framing' && (
             <>
-              <InspectorAccordion title="Composition Layout" defaultOpen>
-                <div className="grid grid-cols-2 gap-2">
-                  {LAYOUT_MODES.map((mode) => {
-                    const active = settings.layout === mode.id;
-                    return (
-                      <button
-                        key={mode.id}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => {
-                          const nextLayout = mode.id as LayoutModeId;
-                          if (nextLayout === 'pip') {
-                            onUpdateSettings(
-                              {
-                                layout: 'pip',
-                                facecamEnabled: true,
-                                facecamPlacement:
-                                  settings.facecamPlacement === 'split-top' ||
-                                  settings.facecamPlacement === 'split-bottom'
-                                    ? 'bottom'
-                                    : settings.facecamPlacement,
-                                facecamOutputX: 50,
-                                facecamOutputY: 78,
-                                mainVideoAspect:
-                                  settings.mainVideoAspect === '9:16'
-                                    ? '4:3'
-                                    : settings.mainVideoAspect,
-                                mainVideoOffsetY: 36,
-                              },
-                              true
-                            );
-                          } else if (nextLayout === 'split') {
-                            onUpdateSettings(
-                              {
-                                layout: 'split',
-                                facecamEnabled: true,
-                                facecamPlacement:
-                                  settings.facecamPlacement === 'split-top'
-                                    ? 'split-top'
-                                    : 'split-bottom',
-                              },
-                              true
-                            );
-                          } else if (nextLayout === 'centered') {
-                            onUpdateSettings(
-                              {
-                                layout: 'centered',
-                                facecamEnabled: false,
-                                mainVideoAspect: '16:9',
-                                mainVideoOffsetY: 50,
-                              },
-                              true
-                            );
-                          } else {
-                            onUpdateSettings(
-                              {
-                                layout: 'solo',
-                                facecamEnabled: false,
-                                mainVideoAspect: '9:16',
-                                mainVideoOffsetY: 50,
-                              },
-                              true
-                            );
+              {/* 1. Frame & Corners + Outer Margin Fill + Canvas Backdrop */}
+              <InspectorAccordion title="Frame & Corners" defaultOpen>
+                <p className="text-[11px] text-[var(--pc-muted)] m-0 leading-relaxed">
+                  Shapes the video card with rounded corners and outer margins.
+                </p>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <StudioSlider
+                      label="Radius"
+                      value={settings.cornerRadius}
+                      min={0}
+                      max={36}
+                      unit="px"
+                      onChange={(cornerRadius) => onUpdateSettings({ cornerRadius }, false)}
+                    />
+                    <StudioSelect<string>
+                      ariaLabel="Corner radius preset"
+                      value={
+                        CORNER_RADIUS_PRESETS.some((p) => p.value === settings.cornerRadius)
+                          ? String(settings.cornerRadius)
+                          : String(CORNER_RADIUS_PRESETS[0].value)
+                      }
+                      options={CORNER_RADIUS_PRESETS.map((p) => ({
+                        value: String(p.value),
+                        label: p.label,
+                      }))}
+                      onChange={(v) => onUpdateSettings({ cornerRadius: Number(v) }, true)}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <StudioSlider
+                      label="Padding"
+                      value={settings.framePadding}
+                      min={0}
+                      max={36}
+                      unit="px"
+                      onChange={(framePadding) => onUpdateSettings({ framePadding }, false)}
+                    />
+                    <StudioSelect<string>
+                      ariaLabel="Frame padding preset"
+                      value={
+                        FRAME_PADDING_PRESETS.some((p) => p.value === settings.framePadding)
+                          ? String(settings.framePadding)
+                          : String(FRAME_PADDING_PRESETS[0].value)
+                      }
+                      options={FRAME_PADDING_PRESETS.map((p) => ({
+                        value: String(p.value),
+                        label: p.label,
+                      }))}
+                      onChange={(v) => onUpdateSettings({ framePadding: Number(v) }, true)}
+                    />
+                  </div>
+                </div>
+
+                {/* Outer Margin Fill Active Toggle */}
+                <div className="pt-2 border-t border-[var(--pc-border-subtle)] flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-[var(--pc-sub)]">
+                    Outer Margin Fill
+                  </span>
+                  <button
+                    type="button"
+                    aria-pressed={settings.outerFillActive}
+                    onClick={() =>
+                      onUpdateSettings({ outerFillActive: !settings.outerFillActive }, true)
+                    }
+                    className={`h-6 px-2.5 rounded-md border text-[11px] font-medium cursor-pointer transition-colors ${
+                      settings.outerFillActive
+                        ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)] text-[var(--pc-ink)]'
+                        : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-muted)]'
+                    }`}
+                  >
+                    {settings.outerFillActive ? 'Active' : 'Off'}
+                  </button>
+                </div>
+
+                {/* Canvas Backdrop Selector (Color | Blur | Gradient | Padding | Image) */}
+                <div className="space-y-2">
+                  <SegmentedControl<CanvasModeId>
+                    ariaLabel="Canvas fill mode"
+                    size="sm"
+                    fullWidth
+                    value={settings.canvas}
+                    options={CANVAS_MODES.map((m) => ({ value: m.id, label: m.label }))}
+                    onChange={(canvas) => onUpdateSettings({ canvas }, true)}
+                  />
+
+                  {settings.canvas === 'gradient' ? (
+                    <div className="grid grid-cols-3 gap-1.5 pt-0.5">
+                      {GRADIENT_PRESETS.map((grad) => {
+                        const active = settings.outerGradient === grad.css;
+                        return (
+                          <button
+                            key={grad.id}
+                            type="button"
+                            aria-pressed={active}
+                            onClick={() =>
+                              onUpdateSettings(
+                                { outerGradient: grad.css, outerFillActive: true },
+                                true
+                              )
+                            }
+                            className={`h-9 rounded-md border text-[10px] font-medium text-white shadow-inner cursor-pointer transition-transform ${
+                              active
+                                ? 'border-[var(--pc-accent)] ring-2 ring-[var(--pc-accent)]/35'
+                                : 'border-[var(--pc-border)] hover:scale-[1.02]'
+                            }`}
+                            style={{ backgroundImage: grad.css }}
+                          >
+                            {grad.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : settings.canvas === 'image' ? (
+                    <div className="space-y-2.5 pt-0.5">
+                      <input
+                        ref={bgImageInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          if (settings.bgImageUrl?.startsWith('blob:')) {
+                            URL.revokeObjectURL(settings.bgImageUrl);
                           }
+                          onUpdateSettings(
+                            { bgImageUrl: URL.createObjectURL(file), outerFillActive: true },
+                            true
+                          );
+                          onNotify?.(`Loaded canvas backdrop image: ${file.name}`);
                         }}
-                        className={`p-2.5 rounded-lg border text-left transition-colors cursor-pointer ${
-                          active
-                            ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)] text-[var(--pc-ink)]'
-                            : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)] hover:border-[var(--pc-muted)]'
-                        }`}
-                      >
-                        <div className="text-xs font-medium text-[var(--pc-ink)]">{mode.label}</div>
-                        <div className="text-[10.5px] text-[var(--pc-muted)] mt-0.5 leading-snug">
-                          {mode.description}
+                      />
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => bgImageInputRef.current?.click()}
+                        >
+                          <ImageIcon className="w-3.5 h-3.5" />
+                          <span>{settings.bgImageUrl ? 'Replace Wallpaper' : 'Upload Image'}</span>
+                        </Button>
+                        {settings.bgImageUrl && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              if (settings.bgImageUrl.startsWith('blob:')) {
+                                URL.revokeObjectURL(settings.bgImageUrl);
+                              }
+                              onUpdateSettings({ bgImageUrl: '' }, true);
+                            }}
+                          >
+                            Clear
+                          </Button>
+                        )}
+                      </div>
+                      <StudioSlider
+                        label="Wallpaper Blur"
+                        value={settings.bgImageBlur}
+                        min={0}
+                        max={32}
+                        unit="px"
+                        onChange={(bgImageBlur) => onUpdateSettings({ bgImageBlur }, false)}
+                      />
+                      <StudioSlider
+                        label="Wallpaper Dim"
+                        value={settings.bgImageDim}
+                        min={0}
+                        max={80}
+                        unit="%"
+                        onChange={(bgImageDim) => onUpdateSettings({ bgImageDim }, false)}
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-[var(--pc-sub)]">Color</span>
+                        <div className="flex items-center gap-1.5">
+                          <label
+                            title="Pick custom outer fill color"
+                            className="w-6 h-6 rounded-full border border-[var(--pc-border)] overflow-hidden cursor-pointer shrink-0"
+                            style={{ backgroundColor: settings.outerFill }}
+                          >
+                            <input
+                              type="color"
+                              aria-label="Outer fill color picker"
+                              value={settings.outerFill}
+                              onChange={(e) =>
+                                onUpdateSettings(
+                                  { outerFill: e.target.value, outerFillActive: true },
+                                  false
+                                )
+                              }
+                              className="opacity-0 w-full h-full cursor-pointer"
+                            />
+                          </label>
+                          <input
+                            type="text"
+                            aria-label="Outer fill hex color"
+                            value={settings.outerFill}
+                            onChange={(e) =>
+                              onUpdateSettings(
+                                { outerFill: e.target.value, outerFillActive: true },
+                                false
+                              )
+                            }
+                            className="w-24 h-7 px-2 rounded-md bg-[var(--pc-surface-2)] border border-[var(--pc-border)] font-mono-tabular text-[11px] text-[var(--pc-ink)] uppercase outline-none focus:border-[var(--pc-accent)]"
+                          />
                         </div>
-                      </button>
-                    );
-                  })}
+                      </div>
+                      <div className="grid grid-cols-8 gap-1.5">
+                        {OUTER_FILL_SWATCHES.map((swatch) => {
+                          const active =
+                            settings.outerFill.toLowerCase() === swatch.hex.toLowerCase();
+                          return (
+                            <button
+                              key={swatch.hex}
+                              type="button"
+                              title={swatch.label}
+                              aria-label={`Set outer fill to ${swatch.label}`}
+                              onClick={() =>
+                                onUpdateSettings(
+                                  { outerFill: swatch.hex, outerFillActive: true },
+                                  true
+                                )
+                              }
+                              className={`h-6 rounded-md border transition-transform cursor-pointer ${
+                                active
+                                  ? 'border-[var(--pc-accent)] ring-2 ring-[var(--pc-accent)]/35 scale-105'
+                                  : 'border-[var(--pc-border)] hover:scale-105'
+                              }`}
+                              style={{ backgroundColor: swatch.hex }}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </InspectorAccordion>
 
-              {/* Streamer Facecam & Reaction PiP Manual Crop + Output Position */}
+              {/* 2. Streamer Facecam & Reaction PiP Manual Crop + Output Position */}
               <InspectorAccordion
                 title="Streamer Facecam & Reaction PiP"
                 defaultOpen={
                   settings.facecamEnabled ||
                   settings.layout === 'pip' ||
-                  settings.layout === 'split' ||
-                  settings.template === 'reaction-pip' ||
-                  settings.template === 'split-stream'
+                  settings.template === 'reaction-pip'
                 }
               >
                 <StudioSwitch
@@ -424,8 +682,15 @@ export function EditorInspector({
                 )}
               </InspectorAccordion>
 
-              {/* Main Video Aspect Inside Mobile Frame (9:16 full-bleed, 4:3, 16:9, 1:1) */}
-              <InspectorAccordion title="Main Video Frame (Inside Mobile)" defaultOpen>
+              {/* 3. Main Video Aspect Inside Mobile Frame */}
+              <InspectorAccordion
+                title="Main Video Frame (Inside Mobile)"
+                defaultOpen={
+                  settings.mainVideoAspect !== '9:16' ||
+                  settings.layout === 'pip' ||
+                  settings.layout === 'centered'
+                }
+              >
                 <div className="space-y-1.5">
                   <span className="block text-xs text-[var(--pc-sub)]">
                     Video Frame Ratio
@@ -475,67 +740,257 @@ export function EditorInspector({
                 )}
               </InspectorAccordion>
 
-              <InspectorAccordion title="Canvas Backdrop" defaultOpen>
-                <div className="space-y-1.5">
-                  <span className="block text-xs text-[var(--pc-sub)]">Fill Mode</span>
-                  <SegmentedControl<CanvasModeId>
-                    ariaLabel="Canvas fill mode"
-                    size="sm"
-                    fullWidth
-                    value={settings.canvas}
-                    options={CANVAS_MODES.map((m) => ({ value: m.id, label: m.label }))}
-                    onChange={(canvas) => onUpdateSettings({ canvas }, true)}
-                  />
+              {/* 4. YIZERGE Playback Speed Accordion */}
+              <InspectorAccordion
+                title="Playback Speed"
+                badge={`${settings.playbackSpeed.toFixed(2)}x`}
+                defaultOpen={false}
+              >
+                <div className="grid grid-cols-6 gap-1">
+                  {PLAYBACK_SPEEDS.map((spd) => {
+                    const active = Math.abs(settings.playbackSpeed - spd) < 0.01;
+                    return (
+                      <button
+                        key={spd}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => onUpdateSettings({ playbackSpeed: spd }, true)}
+                        className={`h-7 rounded-md border font-mono-tabular text-[11px] cursor-pointer transition-colors ${
+                          active
+                            ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)] text-[var(--pc-ink)] font-semibold'
+                            : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                        }`}
+                      >
+                        {spd}x
+                      </button>
+                    );
+                  })}
                 </div>
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-[var(--pc-sub)]">Outer Fill</span>
-                    <span className="font-mono-tabular text-[var(--pc-muted)]">
-                      {settings.outerFill}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {OUTER_FILL_SWATCHES.map((swatch) => {
-                      const active =
-                        settings.outerFill.toLowerCase() === swatch.hex.toLowerCase();
-                      return (
-                        <button
-                          key={swatch.hex}
-                          type="button"
-                          title={swatch.label}
-                          aria-label={`Set outer fill to ${swatch.label}`}
-                          onClick={() => onUpdateSettings({ outerFill: swatch.hex }, true)}
-                          className={`w-7 h-7 rounded-md border transition-transform cursor-pointer ${
-                            active
-                              ? 'border-[var(--pc-accent)] ring-2 ring-[var(--pc-accent)]/35 scale-105'
-                              : 'border-[var(--pc-border)] hover:scale-105'
-                          }`}
-                          style={{ backgroundColor: swatch.hex }}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
+                <StudioSlider
+                  label="Fine Speed"
+                  value={Math.round(settings.playbackSpeed * 100)}
+                  min={50}
+                  max={200}
+                  step={5}
+                  unit="%"
+                  onChange={(pct) =>
+                    onUpdateSettings({ playbackSpeed: Number((pct / 100).toFixed(2)) }, false)
+                  }
+                />
               </InspectorAccordion>
 
-              <InspectorAccordion title="Geometry & Corners" defaultOpen>
-                <StudioSlider
-                  label="Corner Radius"
-                  value={settings.cornerRadius}
-                  min={0}
-                  max={36}
-                  unit="px"
-                  onChange={(cornerRadius) => onUpdateSettings({ cornerRadius }, false)}
-                />
-                <StudioSlider
-                  label="Frame Padding"
-                  value={settings.framePadding}
-                  min={0}
-                  max={32}
-                  unit="px"
-                  onChange={(framePadding) => onUpdateSettings({ framePadding }, false)}
-                />
+              {/* 5. YIZERGE Style Presets (Save / 1-Click Apply / Delete) */}
+              <InspectorAccordion
+                title="Style Presets"
+                badge={stylePresets.length > 0 ? String(stylePresets.length) : undefined}
+                defaultOpen={false}
+              >
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    aria-label="New style preset name"
+                    value={newPresetName}
+                    onChange={(e) => setNewPresetName(e.target.value)}
+                    placeholder="Preset name (e.g. Clean Split)"
+                    className="flex-1 h-8 px-2.5 rounded-lg bg-[var(--pc-surface-2)] border border-[var(--pc-border)] text-xs text-[var(--pc-ink)] placeholder:text-[var(--pc-muted)] outline-none focus:border-[var(--pc-accent)]"
+                  />
+                  <Button variant="secondary" size="sm" onClick={handleSaveStylePreset}>
+                    <BookmarkPlus className="w-3.5 h-3.5" />
+                    <span>Save</span>
+                  </Button>
+                </div>
+
+                {stylePresets.length === 0 ? (
+                  <p className="text-[11px] text-[var(--pc-muted)] m-0">
+                    Save your current radius, padding, canvas backdrop, layout, and speed as a reusable style preset.
+                  </p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {stylePresets.map((preset) => (
+                      <div
+                        key={preset.id}
+                        className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-[var(--pc-surface-2)] border border-[var(--pc-border)]"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onUpdateSettings(
+                              {
+                                layout: preset.layout,
+                                aspect: preset.aspect,
+                                canvas: preset.canvas,
+                                cornerRadius: preset.cornerRadius,
+                                framePadding: preset.framePadding,
+                                outerFill: preset.outerFill,
+                                outerFillActive: preset.outerFillActive,
+                                outerGradient: preset.outerGradient,
+                                playbackSpeed: preset.playbackSpeed,
+                              },
+                              true
+                            );
+                            onNotify?.(`Applied style preset "${preset.name}"`);
+                          }}
+                          className="flex-1 text-left bg-transparent border-0 p-0 cursor-pointer min-w-0"
+                        >
+                          <div className="text-xs font-medium text-[var(--pc-ink)] truncate">
+                            {preset.name}
+                          </div>
+                          <div className="text-[10px] font-mono-tabular text-[var(--pc-muted)]">
+                            {preset.layout} · {preset.cornerRadius}px · {preset.playbackSpeed.toFixed(2)}x
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteStylePreset(preset.id)}
+                          aria-label={`Delete preset ${preset.name}`}
+                          className="w-6 h-6 rounded grid place-items-center text-[var(--pc-muted)] hover:text-[var(--pc-error)] bg-transparent border-0 cursor-pointer shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </InspectorAccordion>
+
+              {/* 6. YIZERGE Exact Numeric Crop Coordinates */}
+              <InspectorAccordion title="Coordinates" defaultOpen={false}>
+                {(() => {
+                  const entries: {
+                    id: SpeakerCropKey | 'facecam';
+                    label: string;
+                    dotColor: string;
+                    box: FacecamSourceBox;
+                  }[] =
+                    settings.layout === 'trio'
+                      ? [
+                          {
+                            id: 'primary',
+                            label: 'Top-Left Speaker',
+                            dotColor: '#10B981',
+                            box: settings.speakerCrops.primary,
+                          },
+                          {
+                            id: 'secondary',
+                            label: 'Top-Right Speaker',
+                            dotColor: '#38BDF8',
+                            box: settings.speakerCrops.secondary,
+                          },
+                          {
+                            id: 'tertiary',
+                            label: 'Bottom Speaker',
+                            dotColor: '#A3E635',
+                            box: settings.speakerCrops.tertiary,
+                          },
+                        ]
+                      : settings.layout === 'split' && !settings.facecamEnabled
+                        ? [
+                            {
+                              id: 'primary',
+                              label: 'Top Speaker',
+                              dotColor: '#10B981',
+                              box: settings.speakerCrops.primary,
+                            },
+                            {
+                              id: 'secondary',
+                              label: 'Bottom Speaker',
+                              dotColor: '#A3E635',
+                              box: settings.speakerCrops.secondary,
+                            },
+                          ]
+                        : settings.facecamEnabled || settings.layout === 'pip'
+                          ? [
+                              {
+                                id: 'facecam',
+                                label: 'Streamer Facecam',
+                                dotColor: '#53FC18',
+                                box: settings.facecamSourceBox,
+                              },
+                            ]
+                          : [
+                              {
+                                id: 'primary',
+                                label: 'Main Speaker',
+                                dotColor: '#10B981',
+                                box: settings.speakerCrops.primary,
+                              },
+                            ];
+
+                  return (
+                    <div className="space-y-3">
+                      {entries.map((entry) => (
+                        <div
+                          key={entry.id}
+                          className="rounded-lg bg-[var(--pc-surface-2)] border border-[var(--pc-border)] p-2.5 space-y-2"
+                        >
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="inline-flex items-center gap-1.5 font-medium text-[var(--pc-ink)]">
+                              <span
+                                className="w-2 h-2 rounded-full shrink-0"
+                                style={{ backgroundColor: entry.dotColor }}
+                              />
+                              <span>{entry.label}</span>
+                            </span>
+                            <span className="font-mono-tabular text-[10px] text-[var(--pc-muted)]">
+                              {Math.round((entry.box.width / 100) * 1920)}×
+                              {Math.round((entry.box.height / 100) * 1080)}px
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-4 gap-1.5">
+                            {(
+                              [
+                                { k: 'x' as const, l: 'X%' },
+                                { k: 'y' as const, l: 'Y%' },
+                                { k: 'width' as const, l: 'W%' },
+                                { k: 'height' as const, l: 'H%' },
+                              ]
+                            ).map((field) => (
+                              <label key={field.k} className="space-y-0.5">
+                                <span className="block text-[9.5px] font-mono-tabular text-[var(--pc-muted)]">
+                                  {field.l}
+                                </span>
+                                <input
+                                  type="number"
+                                  min={field.k === 'x' || field.k === 'y' ? 0 : 12}
+                                  max={100}
+                                  aria-label={`${entry.label} ${field.l}`}
+                                  value={entry.box[field.k]}
+                                  onChange={(e) =>
+                                    updateCoordinateField(entry.id, field.k, e.target.value)
+                                  }
+                                  className="w-full h-7 px-1.5 rounded bg-[var(--pc-surface)] border border-[var(--pc-border)] font-mono-tabular text-[11px] text-[var(--pc-ink)] outline-none focus:border-[var(--pc-accent)]"
+                                />
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full"
+                        onClick={() => {
+                          onUpdateSettings(
+                            {
+                              speakerCrops: {
+                                primary: { ...DEFAULT_SPEAKER_CROPS.primary },
+                                secondary: { ...DEFAULT_SPEAKER_CROPS.secondary },
+                                tertiary: { ...DEFAULT_SPEAKER_CROPS.tertiary },
+                              },
+                              facecamSourceBox: { ...DEFAULT_FACECAM_SOURCE_BOX },
+                            },
+                            true
+                          );
+                          onNotify?.('Reset crop box coordinates to defaults');
+                        }}
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Reset Crop Boxes</span>
+                      </Button>
+                    </div>
+                  );
+                })()}
               </InspectorAccordion>
             </>
           )}
@@ -996,6 +1451,40 @@ export function EditorInspector({
                 </>
               ) : (
                 <>
+                  {/* YIZERGE .srt / .vtt Subtitle Importer */}
+                  <InspectorAccordion
+                    title="Import Subtitles (.srt / .vtt)"
+                    badge={`${clip.words.length} cues`}
+                    defaultOpen
+                  >
+                    <input
+                      ref={srtInputRef}
+                      type="file"
+                      accept=".srt,.vtt,text/plain"
+                      data-testid="srt-file-input"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          onImportSrt(file);
+                          e.target.value = '';
+                        }
+                      }}
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => srtInputRef.current?.click()}
+                    >
+                      <FileText className="w-3.5 h-3.5 stroke-[1.75]" />
+                      <span>Import .srt or .vtt Subtitles</span>
+                    </Button>
+                    <p className="text-[11px] text-[var(--pc-muted)] m-0 leading-relaxed">
+                      Loads timestamped subtitle cues directly onto the CC timeline track and Live Preview.
+                    </p>
+                  </InspectorAccordion>
+
                   {/* 7 One-Click Viral Short-Form Caption Style Preset Cards */}
                   <InspectorAccordion title="Viral Caption Presets" defaultOpen>
                     <ViralCaptionPresetCards
@@ -1333,41 +1822,32 @@ export function EditorInspector({
             </>
           )}
 
-          {/* ===================== TAB 4: MEDIA & BRANDING ===================== */}
+          {/* ===================== TAB 4: MEDIA & SCORE ===================== */}
           {activeTab === 'media' && (
             <>
-              <InspectorAccordion title="Audio & Peak Riser" defaultOpen>
-                <StudioSwitch
-                  label="Audio Peak Riser"
-                  description="Adds rising tension sweep before highlight climax"
-                  checked={settings.audioPeak}
-                  onChange={(audioPeak) => onUpdateSettings({ audioPeak }, true)}
-                />
-
-                {settings.audioPeak && (
-                  <StudioSlider
-                    label="Riser Duration"
-                    value={settings.riserDurationSec}
-                    min={1}
-                    max={15}
-                    unit="s"
-                    onChange={(riserDurationSec) =>
-                      onUpdateSettings({ riserDurationSec }, false)
-                    }
-                  />
-                )}
-
-                <div className="space-y-1.5 pt-1">
-                  <span className="block text-xs text-[var(--pc-sub)]">Background Audio Bed</span>
+              <InspectorAccordion title="Score & Audio Peak Riser" defaultOpen>
+                <div className="space-y-1.5">
+                  <span className="block text-xs text-[var(--pc-sub)]">Background Audio Bed (A2)</span>
                   <input
                     ref={audioInputRef}
                     type="file"
                     accept="audio/*"
+                    data-testid="audio-file-input"
                     className="hidden"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
                       if (file) {
-                        onUpdateSettings({ customAudioName: file.name }, true);
+                        if (settings.customAudioUrl?.startsWith('blob:')) {
+                          URL.revokeObjectURL(settings.customAudioUrl);
+                        }
+                        onUpdateSettings(
+                          {
+                            customAudioName: file.name,
+                            customAudioUrl: URL.createObjectURL(file),
+                          },
+                          true
+                        );
+                        onNotify?.(`Loaded audio track "${file.name}" onto A2`);
                       }
                     }}
                   />
@@ -1387,13 +1867,57 @@ export function EditorInspector({
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => onUpdateSettings({ customAudioName: '' }, true)}
+                        onClick={() => {
+                          if (settings.customAudioUrl?.startsWith('blob:')) {
+                            URL.revokeObjectURL(settings.customAudioUrl);
+                          }
+                          onUpdateSettings({ customAudioName: '', customAudioUrl: '' }, true);
+                        }}
                       >
                         Clear
                       </Button>
                     )}
                   </div>
                 </div>
+
+                <StudioSlider
+                  label="Base Volume"
+                  value={settings.audioBaseVol}
+                  min={0}
+                  max={100}
+                  unit="%"
+                  onChange={(audioBaseVol) => onUpdateSettings({ audioBaseVol }, false)}
+                />
+
+                <StudioSwitch
+                  label="Audio Peak Riser"
+                  description="Smoothly ramps score volume toward highlight climax"
+                  checked={settings.audioPeak}
+                  onChange={(audioPeak) => onUpdateSettings({ audioPeak }, true)}
+                />
+
+                {settings.audioPeak && (
+                  <>
+                    <StudioSlider
+                      label="Peak Volume"
+                      value={settings.audioPeakVol}
+                      min={0}
+                      max={100}
+                      unit="%"
+                      onChange={(audioPeakVol) => onUpdateSettings({ audioPeakVol }, false)}
+                    />
+                    <StudioSlider
+                      label="Riser Duration"
+                      value={settings.riserDurationSec}
+                      min={1}
+                      max={15}
+                      unit="s"
+                      onChange={(riserDurationSec) =>
+                        onUpdateSettings({ riserDurationSec }, false)
+                      }
+                    />
+                  </>
+                )}
               </InspectorAccordion>
 
               <InspectorAccordion title="Outro Card" defaultOpen>
@@ -1422,6 +1946,34 @@ export function EditorInspector({
               </InspectorAccordion>
             </>
           )}
+        </div>
+      )}
+
+      {/* YIZERGE Pinned Bottom Live Preview Toggle Bar (single Export CTA remains in 48px Studio Bar) */}
+      {clip && (
+        <div className="p-3 border-t border-[var(--pc-border)] bg-[var(--pc-surface)] shrink-0">
+          <button
+            type="button"
+            data-testid="inspector-live-preview-btn"
+            onClick={onToggleStageMode}
+            className={`w-full h-9 px-3 rounded-lg border text-xs font-medium inline-flex items-center justify-center gap-2 cursor-pointer transition-colors ${
+              stageMode === 'editor'
+                ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)] text-[var(--pc-ink)]'
+                : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-ink)] hover:border-[var(--pc-muted)]'
+            }`}
+          >
+            {stageMode === 'framing' ? (
+              <>
+                <Eye className="w-3.5 h-3.5 stroke-[1.75]" />
+                <span>Live {settings.aspect} Preview (Ctrl+L)</span>
+              </>
+            ) : (
+              <>
+                <Frame className="w-3.5 h-3.5 stroke-[1.75]" />
+                <span>Back to Framing Canvas (Ctrl+L)</span>
+              </>
+            )}
+          </button>
         </div>
       )}
     </aside>

@@ -7,6 +7,7 @@ import type {
   HeadlineLayoutStyleId,
   LayoutModeId,
   ResolvedSafeZonePlatformId,
+  SpeakerCropSet,
   StreamerPlatformId,
   SubtitleBgStyleId,
   ViralCaptionPresetId,
@@ -384,23 +385,93 @@ export function getTemplatePreset(id: string): TemplatePreset {
 
 export const ASPECT_RATIOS: readonly { id: AspectRatioId; label: string; dimensions: string }[] = [
   { id: '9:16', label: '9:16', dimensions: '1080 × 1920' },
+  { id: '4:5', label: '4:5', dimensions: '1080 × 1350' },
   { id: '1:1', label: '1:1', dimensions: '1080 × 1080' },
   { id: '16:9', label: '16:9', dimensions: '1920 × 1080' },
 ];
 
-/** Composition layouts only — aspect ratios belong exclusively in ASPECT_RATIOS */
-export const LAYOUT_MODES: readonly { id: LayoutModeId; label: string; description: string }[] = [
-  { id: 'solo', label: 'Solo', description: 'Full-bleed tracked vertical speaker frame' },
-  { id: 'pip', label: 'PiP', description: 'Primary clip with corner facecam PiP' },
-  { id: 'split', label: 'Split', description: '50/50 stacked facecam + gameplay split' },
-  { id: 'centered', label: 'Centered', description: 'Framed 16:9 clip on clean backdrop' },
+/** All 6 Studio framing layouts (1:1 YIZERGE + Reaction PiP parity) */
+export const LAYOUT_MODES: readonly {
+  id: LayoutModeId;
+  label: string;
+  badge: string;
+  description: string;
+}[] = [
+  {
+    id: 'split',
+    label: 'Split',
+    badge: 'Dual 9:8 Split (2 Speakers)',
+    description: '2 draggable speaker crops stacked top & bottom',
+  },
+  {
+    id: 'solo',
+    label: 'Solo',
+    badge: 'Single 9:16 Speaker',
+    description: '1 tracked speaker crop filling vertical canvas',
+  },
+  {
+    id: 'trio',
+    label: 'Trio',
+    badge: '3-Speaker Podcast Trio',
+    description: '3 speaker boxes (2 top + 1 bottom) on 9:16',
+  },
+  {
+    id: 'pip',
+    label: 'PiP',
+    badge: 'Reaction PiP (Main + Cam)',
+    description: 'Primary video with draggable facecam overlay',
+  },
+  {
+    id: 'centered',
+    label: 'Centered',
+    badge: 'Framed 16:9 Card',
+    description: '16:9 footage centered on styled outer backdrop',
+  },
+  {
+    id: 'widescreen',
+    label: '16:9 Clip',
+    badge: 'Widescreen 16:9',
+    description: 'Full horizontal 16:9 clip without vertical crop',
+  },
 ];
 
 export const CANVAS_MODES: readonly { id: CanvasModeId; label: string }[] = [
-  { id: 'solid', label: 'Solid' },
+  { id: 'solid', label: 'Color' },
   { id: 'blur', label: 'Blur' },
+  { id: 'gradient', label: 'Gradient' },
   { id: 'padding', label: 'Padding' },
+  { id: 'image', label: 'Image' },
 ];
+
+export const CORNER_RADIUS_PRESETS: readonly { value: number; label: string }[] = [
+  { value: 0, label: '0px Sharp' },
+  { value: 8, label: '8px Subtle' },
+  { value: 16, label: '16px Rounded' },
+  { value: 24, label: '24px Soft Card' },
+  { value: 32, label: '32px Deep' },
+];
+
+export const FRAME_PADDING_PRESETS: readonly { value: number; label: string }[] = [
+  { value: 0, label: '0px Full' },
+  { value: 8, label: '8px Tight' },
+  { value: 16, label: '16px Inset' },
+  { value: 24, label: '24px Framed' },
+  { value: 36, label: '36px Poster' },
+];
+
+export const GRADIENT_PRESETS: readonly { id: string; label: string; css: string }[] = [
+  { id: 'obsidian', label: 'Obsidian', css: 'linear-gradient(160deg, #18181B 0%, #09090B 100%)' },
+  { id: 'midnight', label: 'Midnight', css: 'linear-gradient(160deg, #0F172A 0%, #020617 100%)' },
+  { id: 'emerald', label: 'Studio Moss', css: 'linear-gradient(160deg, #052E16 0%, #09090B 100%)' },
+  { id: 'crimson', label: 'Deep Ember', css: 'linear-gradient(160deg, #450A0A 0%, #09090B 100%)' },
+  { id: 'paper', label: 'Studio Light', css: 'linear-gradient(160deg, #F4F4F5 0%, #E4E4E7 100%)' },
+];
+
+export const DEFAULT_SPEAKER_CROPS: SpeakerCropSet = {
+  primary: { x: 4, y: 12, width: 44, height: 76 },
+  secondary: { x: 52, y: 12, width: 44, height: 76 },
+  tertiary: { x: 28, y: 50, width: 44, height: 46 },
+};
 
 export const WATERMARK_POSITIONS: readonly { value: WatermarkPositionId; label: string; x: number; y: number }[] = [
   { value: 'bottom-center', label: 'Bottom Center', x: 50, y: 76 },
@@ -468,10 +539,12 @@ export const FACECAM_CORNER_PRESETS: readonly { label: string; box: FacecamSourc
 ];
 
 export const OUTER_FILL_SWATCHES: readonly { hex: string; label: string }[] = [
-  { hex: '#0B0E0F', label: 'Kick Charcoal' },
+  { hex: '#000000', label: 'Pure Black' },
   { hex: '#09090B', label: 'Obsidian' },
   { hex: '#141417', label: 'Carbon' },
-  { hex: '#1E2128', label: 'Deep Slate' },
+  { hex: '#0F172A', label: 'Deep Slate' },
+  { hex: '#14261C', label: 'Studio Moss' },
+  { hex: '#2A1215', label: 'Deep Ember' },
   { hex: '#E7E5E0', label: 'Warm Paper' },
   { hex: '#FAFAFA', label: 'Studio White' },
 ];
