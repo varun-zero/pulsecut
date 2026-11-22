@@ -176,6 +176,45 @@ export function ShortsStage({
   const outroAnim =
     outroElapsedSec !== null ? computeOutroAnimationFrame(outroElapsedSec, shorts.outro) : null;
 
+  // Build a CSS filter string from the legacy Color & FX grading controls.
+  const buildVideoFilter = (): string => {
+    const filters: string[] = [];
+    const b = settings.brightness ?? 100;
+    const c = settings.contrast ?? 100;
+    const s = settings.saturation ?? 100;
+    const exp = settings.exposure ?? 0;
+    const temp = settings.temperature ?? 0;
+    const blur = settings.blur ?? 0;
+
+    const netBrightness = Math.max(0, b + exp);
+    if (netBrightness !== 100) filters.push(`brightness(${netBrightness}%)`);
+    if (c !== 100) filters.push(`contrast(${c}%)`);
+    if (s !== 100) filters.push(`saturate(${s}%)`);
+    if (blur > 0) filters.push(`blur(${blur}px)`);
+
+    if (temp > 0) {
+      filters.push(`sepia(${temp * 0.6}%)`);
+    } else if (temp < 0) {
+      filters.push(`hue-rotate(${temp * 0.8}deg)`);
+    }
+
+    if (settings.colorFilter === 'cinematic') {
+      filters.push('contrast(115%) saturate(110%) sepia(8%)');
+    } else if (settings.colorFilter === 'warm') {
+      filters.push('sepia(25%) saturate(115%)');
+    } else if (settings.colorFilter === 'moody') {
+      filters.push('brightness(92%) contrast(125%) saturate(85%)');
+    } else if (settings.colorFilter === 'vintage') {
+      filters.push('sepia(35%) contrast(95%) brightness(105%)');
+    } else if (settings.colorFilter === 'bw') {
+      filters.push('grayscale(100%) contrast(120%)');
+    } else if (settings.colorFilter === 'cyberpunk') {
+      filters.push('contrast(130%) hue-rotate(180deg) saturate(140%)');
+    }
+
+    return filters.length > 0 ? filters.join(' ') : 'none';
+  };
+
   return (
     <div className="flex-1 min-h-0 flex flex-col items-center justify-between p-3 gap-2 overflow-hidden bg-[var(--pc-canvas)]">
       {/* Offscreen source video element that powers the FramedCanvasView 2D compositor + master audio */}
@@ -185,7 +224,7 @@ export function ShortsStage({
           src={clip.rawMediaUrl || clip.mediaUrl}
           playsInline
           preload="auto"
-          muted={trackStates.a1Muted}
+          muted={trackStates.a1Muted || settings.muteOriginalAudio}
           onLoadedMetadata={(e) => {
             const v = e.currentTarget;
             if (Number.isFinite(v.duration) && v.duration > 0) {
@@ -244,9 +283,21 @@ export function ShortsStage({
             blueprint={blueprint}
             previewRes={previewRes}
             v1Hidden={!trackStates.v1Visible}
+            filter={buildVideoFilter()}
             testId="shorts-compositor-canvas"
             className="w-full h-full"
           />
+
+          {/* Vignette overlay (Color & FX) — above the canvas, below text/UI overlay layers */}
+          {settings.vignette > 0 && (
+            <div
+              data-testid="shorts-vignette-overlay"
+              className="absolute inset-0 z-10 pointer-events-none"
+              style={{
+                background: `radial-gradient(circle at center, transparent 40%, rgba(0, 0, 0, ${settings.vignette / 100}) 100%)`,
+              }}
+            />
+          )}
 
           {/* Layer 2: Whole-Video Template Chrome (X/Tweet Header Card or Breaking News Banner) */}
           {isXCard && (

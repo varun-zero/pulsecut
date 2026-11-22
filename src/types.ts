@@ -1,7 +1,7 @@
 export type PageId = 'dashboard' | 'live' | 'clips' | 'framing' | 'shorts';
 
-export type EditorTabId = 'framing' | 'templates' | 'text' | 'media';
-export type ShortsTabId = 'templates' | 'text' | 'media';
+export type EditorTabId = 'framing' | 'templates' | 'text' | 'adjust' | 'audio' | 'media';
+export type ShortsTabId = 'templates' | 'text' | 'media' | 'adjust' | 'audio';
 export type TextSubtabId = 'headline' | 'subs';
 export type StageViewModeId = 'framing' | 'editor';
 
@@ -281,6 +281,16 @@ export type JobStatus = 'queued' | 'downloading' | 'clipping' | 'rendering' | 'd
 
 export type SourcePlatform = 'YouTube' | 'Twitch' | 'Kick' | 'Instagram' | 'Local' | 'Direct';
 
+export type ColorFilterId = 'none' | 'cinematic' | 'warm' | 'moody' | 'vintage' | 'bw' | 'cyberpunk';
+export type TransitionStyleId = 'cut' | 'crossfade' | 'zoom-in' | 'dip-black' | 'glitch';
+
+export interface TimelineMarker {
+  id: string;
+  timeSec: number;
+  label: string;
+  color?: string;
+}
+
 export interface WordCue {
   start_ms: number;
   end_ms: number;
@@ -459,6 +469,34 @@ export interface EditorSettings {
   customAudioUrl: string;
   outroText: string;
   outroDurationSec: number;
+
+  /* Color Grading & Visual FX */
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  exposure: number;
+  temperature: number;
+  blur: number;
+  vignette: number;
+  colorFilter: ColorFilterId;
+
+  /* Advanced Audio Controls */
+  masterVolume: number;
+  audioNormalize: boolean;
+  targetLufs: number;
+  audioDucking: boolean;
+  audioFadeInSec: number;
+  audioFadeOutSec: number;
+  muteOriginalAudio: boolean;
+
+  /* Motion & Transitions */
+  speedMultiplier: number;
+  transitionStyle: TransitionStyleId;
+  transitionDurationSec: number;
+
+  /* Interactive Timeline Cuts & Markers */
+  splits: number[];
+  markers: TimelineMarker[];
 }
 
 export interface BatchRestyleSettings {

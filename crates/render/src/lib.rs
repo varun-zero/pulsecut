@@ -6,6 +6,7 @@
 //! encoder (falling back to x264).
 
 pub mod ass;
+pub mod clipship;
 pub mod framing;
 pub mod templates;
 
@@ -351,12 +352,33 @@ impl Renderer {
             cmd.args(["-ss", &format!("{:.3}", trim_start_ms as f64 / 1000.0)]);
         }
 
-        if needs_complex_filter(edl) {
+        let template = templates::resolve(&cfg, edl);
+        let clipship_graph = if clipship::is_clipship(&template.id) {
+            clipship::build(&template.id, &cfg, edl.hook().map(|(t, _)| t).as_deref(), ass_path)
+        } else {
+            None
+        };
+
+        if let Some(graph) = &clipship_graph {
+            // Loop each transparent frame PNG so it spans the whole clip, then
+            // add the source video as input 0. No Clip Ship branding layers are
+            // ever added; the hook text is already lowercase in the graph.
+            for p in &graph.extra_inputs {
+                cmd.args(["-loop", "1", "-framerate", "30", "-i"]).arg(p);
+            }
+            cmd.arg("-i").arg(input).args([
+                "-filter_complex",
+                &graph.filtergraph,
+                "-map",
+                "[vout]",
+                "-map",
+                "0:a:0",
+            ]);
+        } else if needs_complex_filter(edl) {
             let mut chain = complex_filter(&cfg, edl);
             if let Some(fp) = &framing_path {
                 chain = chain.replacen("[0:v]", &format!("[0:v]sendcmd=f='{}',", filter_path(fp)), 1);
             }
-            let template = templates::resolve(&cfg, edl);
             let overlays = TemplateOverlays {
                 headline: edl.hook().map(|(text, _)| text),
                 watermark: if cfg.watermark.is_empty() { None } else { Some(cfg.watermark.clone()) },

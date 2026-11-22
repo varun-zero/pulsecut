@@ -191,6 +191,85 @@ pub fn library() -> Vec<ShortTemplate> {
             caption_preset: "karaoke_bold", title_pattern: "{title}",
             hook_pattern: "{hook}", hashtags: &["kick", "reaction", "clips", "shorts"],
         },
+        // ---- 13 bundled ClipShip overlay templates (external PNG assets) ----
+        ShortTemplate {
+            id: "clipship-01", name: "ClipShip Tweet Card Dark", background: (0, 0, 0), accent: (232, 133, 26),
+            card: true, headline: true, ticker: false, watermark: false,
+            caption_preset: "karaoke", title_pattern: "{hook}",
+            hook_pattern: "{hook}", hashtags: &["mumfordandsons", "chrisstapleton", "cmas", "performance"],
+        },
+        ShortTemplate {
+            id: "clipship-02", name: "ClipShip Tweet Card Light", background: (0, 0, 0), accent: (232, 133, 26),
+            card: true, headline: true, ticker: false, watermark: false,
+            caption_preset: "karaoke", title_pattern: "{hook}",
+            hook_pattern: "{hook}", hashtags: &["mumfordandsons", "chrisstapleton", "cmas", "performance"],
+        },
+        ShortTemplate {
+            id: "clipship-03", name: "ClipShip Tweet + Reply", background: (0, 0, 0), accent: (232, 133, 26),
+            card: true, headline: true, ticker: false, watermark: false,
+            caption_preset: "karaoke", title_pattern: "{hook}",
+            hook_pattern: "{hook}", hashtags: &["mumfordandsons", "chrisstapleton", "cmas", "performance"],
+        },
+        ShortTemplate {
+            id: "clipship-04", name: "ClipShip Big Meme Caption", background: (0, 0, 0), accent: (232, 133, 26),
+            card: true, headline: true, ticker: false, watermark: false,
+            caption_preset: "karaoke", title_pattern: "{hook}",
+            hook_pattern: "{hook}", hashtags: &["mumfordandsons", "chrisstapleton", "cmas", "performance"],
+        },
+        ShortTemplate {
+            id: "clipship-05", name: "ClipShip White Meme", background: (0, 0, 0), accent: (232, 133, 26),
+            card: true, headline: true, ticker: false, watermark: false,
+            caption_preset: "karaoke", title_pattern: "{hook}",
+            hook_pattern: "{hook}", hashtags: &["mumfordandsons", "chrisstapleton", "cmas", "performance"],
+        },
+        ShortTemplate {
+            id: "clipship-06", name: "ClipShip Stacked Comparison", background: (0, 0, 0), accent: (232, 133, 26),
+            card: true, headline: true, ticker: false, watermark: false,
+            caption_preset: "karaoke", title_pattern: "{hook}",
+            hook_pattern: "{hook}", hashtags: &["mumfordandsons", "chrisstapleton", "cmas", "performance"],
+        },
+        ShortTemplate {
+            id: "clipship-07", name: "ClipShip Comment Reply", background: (0, 0, 0), accent: (232, 133, 26),
+            card: false, headline: true, ticker: false, watermark: false,
+            caption_preset: "karaoke", title_pattern: "{hook}",
+            hook_pattern: "{hook}", hashtags: &["mumfordandsons", "chrisstapleton", "cmas", "performance"],
+        },
+        ShortTemplate {
+            id: "clipship-08", name: "ClipShip News Card", background: (0, 0, 0), accent: (232, 133, 26),
+            card: true, headline: true, ticker: false, watermark: false,
+            caption_preset: "karaoke", title_pattern: "{hook}",
+            hook_pattern: "{hook}", hashtags: &["mumfordandsons", "chrisstapleton", "cmas", "performance"],
+        },
+        ShortTemplate {
+            id: "clipship-09", name: "ClipShip Fullscreen Text Box", background: (0, 0, 0), accent: (232, 133, 26),
+            card: false, headline: true, ticker: false, watermark: false,
+            caption_preset: "karaoke", title_pattern: "{hook}",
+            hook_pattern: "{hook}", hashtags: &["mumfordandsons", "chrisstapleton", "cmas", "performance"],
+        },
+        ShortTemplate {
+            id: "clipship-10", name: "ClipShip Reddit Thread", background: (0, 0, 0), accent: (232, 133, 26),
+            card: true, headline: true, ticker: false, watermark: false,
+            caption_preset: "karaoke", title_pattern: "{hook}",
+            hook_pattern: "{hook}", hashtags: &["mumfordandsons", "chrisstapleton", "cmas", "performance"],
+        },
+        ShortTemplate {
+            id: "clipship-11", name: "ClipShip Condensed Headline", background: (0, 0, 0), accent: (232, 133, 26),
+            card: true, headline: true, ticker: false, watermark: false,
+            caption_preset: "karaoke", title_pattern: "{hook}",
+            hook_pattern: "{hook}", hashtags: &["mumfordandsons", "chrisstapleton", "cmas", "performance"],
+        },
+        ShortTemplate {
+            id: "clipship-12", name: "ClipShip Collage Pill", background: (0, 0, 0), accent: (232, 133, 26),
+            card: false, headline: true, ticker: false, watermark: false,
+            caption_preset: "karaoke", title_pattern: "{hook}",
+            hook_pattern: "{hook}", hashtags: &["mumfordandsons", "chrisstapleton", "cmas", "performance"],
+        },
+        ShortTemplate {
+            id: "clipship-13", name: "ClipShip Reaction Split Pill", background: (0, 0, 0), accent: (232, 133, 26),
+            card: false, headline: true, ticker: false, watermark: false,
+            caption_preset: "karaoke", title_pattern: "{hook}",
+            hook_pattern: "{hook}", hashtags: &["mumfordandsons", "chrisstapleton", "cmas", "performance"],
+        },
     ]
 }
 
@@ -202,6 +281,11 @@ pub fn layout_for(id: &str) -> Option<&'static str> {
         "kick-stream" | "insta-short" | "yt-short" | "smartphone" | "centered_canvas" | "wide_16x9" | "editorial" | "street" => Some("solo"),
         _ => None,
     }
+}
+
+/// True when the template id refers to a bundled ClipShip overlay template.
+pub fn is_clipship(id: &str) -> bool {
+    id.starts_with("clipship-")
 }
 
 pub fn get(id: &str) -> Option<ShortTemplate> {

@@ -41,6 +41,7 @@ import {
   validateIngestInput,
 } from './studioLogic';
 import { normalizeServerClip } from './api';
+import { CLIPSHIP_TEMPLATES } from './clipshipTemplates';
 import type { BrandKit, ClipItem, EditorSettings, WordCue } from '../types';
 
 const require = createRequire(import.meta.url);
@@ -178,6 +179,26 @@ const SAMPLE_SETTINGS: EditorSettings = {
   customAudioUrl: '',
   outroText: 'Follow for part 2',
   outroDurationSec: 3,
+  brightness: 100,
+  contrast: 100,
+  saturation: 100,
+  exposure: 0,
+  temperature: 0,
+  blur: 0,
+  vignette: 0,
+  colorFilter: 'none',
+  masterVolume: 100,
+  audioNormalize: true,
+  targetLufs: -14,
+  audioDucking: true,
+  audioFadeInSec: 0,
+  audioFadeOutSec: 0.5,
+  muteOriginalAudio: false,
+  speedMultiplier: 1.0,
+  transitionStyle: 'cut',
+  transitionDurationSec: 0.3,
+  splits: [],
+  markers: [],
 };
 
 const SAMPLE_BRAND_KIT: BrandKit = {
@@ -190,9 +211,10 @@ const SAMPLE_BRAND_KIT: BrandKit = {
   showWatermark: true,
 };
 
-test('shared viral preset registry exposes 9 featured / 12 total modern formats with zero legacy slop', () => {
+test('shared viral preset registry exposes 9 featured / 12 core + 13 ClipShip formats with zero legacy slop', () => {
   assert.equal(FEATURED_PRESETS.length, 9);
-  assert.equal(TEMPLATE_PRESETS.length, 12);
+  assert.equal(TEMPLATE_PRESETS.length, 25);
+  assert.equal(TEMPLATE_PRESETS.filter((t) => t.category === 'ClipShip').length, 13);
 
   const featuredIds = FEATURED_PRESETS.map((t) => t.id);
   assert.deepEqual(featuredIds.slice(0, 4), ['default', 'kick-stream', 'insta-short', 'yt-short']);
@@ -608,6 +630,122 @@ test('normalizeServerClip defaults missing template to Classic Short (default) a
   assert.ok(
     dualParity.overlayAssets.some((a) => a.includes('kick_logo_53fc18.svg') && a.includes('ERAY'))
   );
+});
+
+test('ClipShip 13 templates enforce mathematically verified zero-overlap coordinates and layout specs', () => {
+  assert.equal(CLIPSHIP_TEMPLATES.length, 13);
+  for (const t of CLIPSHIP_TEMPLATES) {
+    assert.ok(t.cutouts.length >= 1, `${t.id} must define at least one video cutout`);
+    for (const c of t.cutouts) {
+      assert.equal(c.width, 1080, `${t.id} cutout width must be full 1080px`);
+      assert.equal(c.height, 608, `${t.id} cutout height must be 608px (16:9 stage preserved)`);
+    }
+    // Subtitles must always be strictly below the primary video frame
+    assert.ok(
+      (t.subY ?? 0) >= t.cutouts[0].y + t.cutouts[0].height,
+      `${t.id} subtitle Y (${t.subY}) must be below video frame (${t.cutouts[0].y + t.cutouts[0].height})`
+    );
+  }
+
+  // Group A (01, 02, 08, 10): Header -> Hook -> Video (flush at 660) -> Subtitles (1315)
+  for (const id of ['clipship-01', 'clipship-02', 'clipship-08', 'clipship-10']) {
+    const t = CLIPSHIP_TEMPLATES.find((x) => x.id === id)!;
+    assert.equal(t.cutouts[0].y, 660);
+    assert.ok(t.headerZone);
+    assert.ok(t.headerZone[1] + t.headerZone[3] <= t.textZone[1], `${id} header must not overlap hook`);
+    assert.ok(t.textZone[1] + t.textZone[3] <= t.cutouts[0].y, `${id} hook must finish above video`);
+    assert.equal(t.subY, 1315);
+  }
+
+  // Group B (03): Tweet (ends at 560) -> Video (560..1168) -> Reply (1168..1438) -> Subtitles (1475)
+  const t3 = CLIPSHIP_TEMPLATES.find((x) => x.id === 'clipship-03')!;
+  assert.equal(t3.cutouts[0].y, 560);
+  assert.ok(t3.textZone[1] + t3.textZone[3] <= t3.cutouts[0].y);
+  assert.ok(t3.cutouts[0].y + t3.cutouts[0].height <= t3.replyZone![1]);
+  assert.ok(t3.replyTextZone![1] + t3.replyTextZone![3] <= t3.subY!);
+  assert.equal(t3.subY, 1475);
+
+  // Group C (04, 05, 07, 09, 11): Centered Video (656..1264), Hook above (finishes <= 656), Subtitles (1315)
+  for (const id of ['clipship-04', 'clipship-05', 'clipship-07', 'clipship-09', 'clipship-11']) {
+    const t = CLIPSHIP_TEMPLATES.find((x) => x.id === id)!;
+    assert.equal(t.cutouts[0].y, 656);
+    assert.ok(t.textZone[1] + t.textZone[3] <= t.cutouts[0].y);
+    assert.equal(t.subY, 1315);
+  }
+
+  // Group D (06, 12, 13): Top (310..918) -> Seam Pill (938) -> Bottom (958..1566) -> Subtitles (1595)
+  for (const id of ['clipship-06', 'clipship-12', 'clipship-13']) {
+    const t = CLIPSHIP_TEMPLATES.find((x) => x.id === id)!;
+    assert.equal(t.cutouts.length, 2);
+    assert.equal(t.cutouts[0].y, 310);
+    assert.equal(t.cutouts[1].y, 958);
+    assert.ok(t.cutouts[0].y + t.cutouts[0].height <= t.textZone[1]);
+    assert.ok(t.textZone[1] + t.textZone[3] <= t.cutouts[1].y);
+    assert.equal(t.subY, 1595);
+  }
+});
+
+test('color grading, advanced audio controls, timeline markers, and AI agent interop parity', () => {
+  const customSettings: EditorSettings = {
+    ...SAMPLE_SETTINGS,
+    brightness: 115,
+    contrast: 110,
+    saturation: 125,
+    exposure: 5,
+    temperature: 15,
+    blur: 0,
+    vignette: 25,
+    colorFilter: 'cinematic',
+    masterVolume: 120,
+    audioNormalize: true,
+    targetLufs: -14,
+    audioDucking: true,
+    audioFadeInSec: 0.2,
+    audioFadeOutSec: 0.5,
+    muteOriginalAudio: false,
+    speedMultiplier: 1.25,
+    transitionStyle: 'crossfade',
+    transitionDurationSec: 0.4,
+    splits: [5.2, 11.8],
+    markers: [
+      { id: 'm1', timeSec: 5.2, label: 'Chorus Drop', color: '#38BDF8' },
+      { id: 'm2', timeSec: 11.8, label: 'Vocal Run', color: '#F59E0B' },
+    ],
+  };
+
+  assert.equal(customSettings.colorFilter, 'cinematic');
+  assert.equal(customSettings.targetLufs, -14);
+  assert.equal(customSettings.splits.length, 2);
+  assert.equal(customSettings.markers.length, 2);
+  assert.equal(customSettings.markers[0].label, 'Chorus Drop');
+
+  // Verify machine-readable JSON serialization for Agent AI & CLI parity
+  const serialized = JSON.stringify({
+    clipId: 'c1',
+    composition: {
+      template: customSettings.template,
+      aspect: customSettings.aspect,
+      layout: customSettings.layout,
+    },
+    grading: {
+      colorFilter: customSettings.colorFilter,
+      brightness: customSettings.brightness,
+      vignette: customSettings.vignette,
+    },
+    audio: {
+      masterVolume: customSettings.masterVolume,
+      targetLufs: customSettings.targetLufs,
+      ducking: customSettings.audioDucking,
+    },
+    markers: customSettings.markers,
+    splits: customSettings.splits,
+  });
+
+  const parsed = JSON.parse(serialized);
+  assert.equal(parsed.composition.template, 'kick-stream');
+  assert.equal(parsed.grading.colorFilter, 'cinematic');
+  assert.equal(parsed.audio.targetLufs, -14);
+  assert.equal(parsed.markers[1].timeSec, 11.8);
 });
 
 

@@ -1,0 +1,23 @@
+THE CLIP SHIP OVERLAY TEMPLATES (1080x1920, 9:16)
+
+Each folder = one format. 00_PREVIEW.jpg shows how the finished post looks.
+
+LAYERS (import in this order in CapCut or InShot):
+1. Your clip  -> put it on the main track, scale it to fill the clip window
+2. 1_frame.png -> add as overlay, full screen. The clip shows through the cut out
+3. 2_clipship_header / username / brand_text.png -> the Clip Ship name and handle
+4. 3_clipship_watermark.png -> faint ship logo
+5. Your caption -> type it with the app's text tool
+
+POSTING ON YOUR OWN PAGE
+- Delete the 2_clipship_... layer and the 3_clipship_watermark layer.
+- Add your own profile pic as an overlay and use the circle mask.
+- Type your own name and @handle with the text tool.
+- Add _Extras/verified_badge.png after your name if you want the blue check look.
+
+CAPTIONS
+- Tweet style (01, 02, 03, 08, 10): white or black text, normal weight, left aligned.
+- Pill formats (12, 13): put your text on top of 2_caption_pill.png, bold caps,
+  names in orange #E8851A, resize the pill to fit.
+- 09: use the app's text style with a white background box.
+- 11: tall condensed font in caps (Anton or Bebas Neue in CapCut).

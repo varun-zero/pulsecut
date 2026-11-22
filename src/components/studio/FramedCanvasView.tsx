@@ -9,6 +9,7 @@ interface FramedCanvasViewProps {
   v1Hidden?: boolean;
   className?: string;
   testId?: string;
+  filter?: string;
 }
 
 export function FramedCanvasView({
@@ -18,6 +19,7 @@ export function FramedCanvasView({
   v1Hidden = false,
   className = '',
   testId,
+  filter,
 }: FramedCanvasViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const bpRef = useRef(blueprint);
@@ -218,7 +220,7 @@ export function FramedCanvasView({
     <canvas
       ref={canvasRef}
       data-testid={testId}
-      style={{ aspectRatio: String(ar) }}
+      style={{ aspectRatio: String(ar), filter: filter || undefined }}
       className={`block w-full h-full ${className}`}
     />
   );

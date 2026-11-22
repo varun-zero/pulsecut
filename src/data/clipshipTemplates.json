@@ -1,0 +1,565 @@
+{
+  "version": 2,
+  "canvas": {
+    "width": 1080,
+    "height": 1920
+  },
+  "sourceRoot": "public/templates/clipship",
+  "branding": {
+    "excludedLayers": [
+      "2_clipship_header.png",
+      "2_clipship_username.png",
+      "2_clipship_brand_text.png",
+      "3_clipship_watermark.png"
+    ],
+    "customHeader": {
+      "pageName": "beats cut",
+      "pageHandle": "@beatscutfm",
+      "avatarPath": "public/templates/clipship/_Extras/beatscut_logo.jpg",
+      "showVerifiedBadge": true
+    }
+  },
+  "templates": [
+    {
+      "id": "clipship-01",
+      "folder": "01_Tweet_Card_Dark",
+      "preview": "public/templates/clipship/01_Tweet_Card_Dark/00_PREVIEW.jpg",
+      "frame": "public/templates/clipship/01_Tweet_Card_Dark/1_frame.png",
+      "layers": [
+        "00_PREVIEW.jpg",
+        "1_frame.png",
+        "2_clipship_header.png"
+      ],
+      "cutouts": [
+        {
+          "x": 0,
+          "y": 660,
+          "width": 1080,
+          "height": 608
+        }
+      ],
+      "measuredCutout": [
+        0,
+        660,
+        1080,
+        1268
+      ],
+      "headerZone": [
+        56,
+        280,
+        968,
+        100
+      ],
+      "textZone": [
+        56,
+        405,
+        968,
+        230
+      ],
+      "replyZone": null,
+      "replyTextZone": null,
+      "style": "tweet-dark",
+      "textCase": "lowercase",
+      "subY": 1315
+    },
+    {
+      "id": "clipship-02",
+      "folder": "02_Tweet_Card_Light",
+      "preview": "public/templates/clipship/02_Tweet_Card_Light/00_PREVIEW.jpg",
+      "frame": "public/templates/clipship/02_Tweet_Card_Light/1_frame.png",
+      "layers": [
+        "00_PREVIEW.jpg",
+        "1_frame.png",
+        "2_clipship_header.png"
+      ],
+      "cutouts": [
+        {
+          "x": 0,
+          "y": 660,
+          "width": 1080,
+          "height": 608
+        }
+      ],
+      "measuredCutout": [
+        0,
+        660,
+        1080,
+        1268
+      ],
+      "headerZone": [
+        56,
+        280,
+        968,
+        100
+      ],
+      "textZone": [
+        56,
+        405,
+        968,
+        230
+      ],
+      "replyZone": null,
+      "replyTextZone": null,
+      "style": "tweet-light",
+      "textCase": "lowercase",
+      "subY": 1315
+    },
+    {
+      "id": "clipship-03",
+      "folder": "03_Tweet_Plus_Reply",
+      "preview": "public/templates/clipship/03_Tweet_Plus_Reply/00_PREVIEW.jpg",
+      "frame": "public/templates/clipship/03_Tweet_Plus_Reply/1_frame.png",
+      "layers": [
+        "00_PREVIEW.jpg",
+        "1_frame.png",
+        "2_clipship_header.png"
+      ],
+      "cutouts": [
+        {
+          "x": 0,
+          "y": 560,
+          "width": 1080,
+          "height": 608
+        }
+      ],
+      "measuredCutout": [
+        0,
+        560,
+        1080,
+        1168
+      ],
+      "headerZone": [
+        56,
+        250,
+        968,
+        90
+      ],
+      "textZone": [
+        56,
+        360,
+        968,
+        175
+      ],
+      "replyZone": [
+        56,
+        1188,
+        968,
+        80
+      ],
+      "replyTextZone": [
+        56,
+        1285,
+        968,
+        135
+      ],
+      "style": "tweet-plus-reply",
+      "textCase": "lowercase",
+      "subY": 1475
+    },
+    {
+      "id": "clipship-04",
+      "folder": "04_Big_Meme_Caption",
+      "preview": "public/templates/clipship/04_Big_Meme_Caption/00_PREVIEW.jpg",
+      "frame": "public/templates/clipship/04_Big_Meme_Caption/1_frame.png",
+      "layers": [
+        "00_PREVIEW.jpg",
+        "1_frame.png",
+        "3_clipship_watermark.png"
+      ],
+      "cutouts": [
+        {
+          "x": 0,
+          "y": 656,
+          "width": 1080,
+          "height": 608
+        }
+      ],
+      "measuredCutout": [
+        0,
+        656,
+        1080,
+        1264
+      ],
+      "headerZone": null,
+      "textZone": [
+        56,
+        430,
+        968,
+        190
+      ],
+      "replyZone": null,
+      "replyTextZone": null,
+      "style": "meme-bold",
+      "textCase": "lowercase",
+      "subY": 1315
+    },
+    {
+      "id": "clipship-05",
+      "folder": "05_White_Meme",
+      "preview": "public/templates/clipship/05_White_Meme/00_PREVIEW.jpg",
+      "frame": "public/templates/clipship/05_White_Meme/1_frame.png",
+      "layers": [
+        "00_PREVIEW.jpg",
+        "1_frame.png",
+        "2_clipship_username.png",
+        "3_clipship_watermark.png"
+      ],
+      "cutouts": [
+        {
+          "x": 0,
+          "y": 656,
+          "width": 1080,
+          "height": 608
+        }
+      ],
+      "measuredCutout": [
+        0,
+        656,
+        1080,
+        1264
+      ],
+      "headerZone": null,
+      "textZone": [
+        56,
+        430,
+        968,
+        190
+      ],
+      "replyZone": null,
+      "replyTextZone": null,
+      "style": "white-meme",
+      "textCase": "lowercase",
+      "subY": 1315
+    },
+    {
+      "id": "clipship-06",
+      "folder": "06_Stacked_Comparison",
+      "preview": "public/templates/clipship/06_Stacked_Comparison/00_PREVIEW.jpg",
+      "frame": "public/templates/clipship/06_Stacked_Comparison/1_frame.png",
+      "layers": [
+        "00_PREVIEW.jpg",
+        "1_frame.png",
+        "3_clipship_watermark.png"
+      ],
+      "cutouts": [
+        {
+          "x": 0,
+          "y": 310,
+          "width": 1080,
+          "height": 608
+        },
+        {
+          "x": 0,
+          "y": 958,
+          "width": 1080,
+          "height": 608
+        }
+      ],
+      "measuredCutout": [
+        0,
+        310,
+        1080,
+        1566
+      ],
+      "headerZone": null,
+      "textZone": [
+        56,
+        918,
+        968,
+        40
+      ],
+      "replyZone": null,
+      "replyTextZone": null,
+      "style": "stacked-split",
+      "textCase": "lowercase",
+      "subY": 1595
+    },
+    {
+      "id": "clipship-07",
+      "folder": "07_Comment_Reply",
+      "preview": "public/templates/clipship/07_Comment_Reply/00_PREVIEW.jpg",
+      "frame": null,
+      "layers": [
+        "00_PREVIEW.jpg",
+        "1_comment_sticker_box.png",
+        "3_clipship_watermark.png"
+      ],
+      "cutouts": [
+        {
+          "x": 0,
+          "y": 656,
+          "width": 1080,
+          "height": 608
+        }
+      ],
+      "measuredCutout": [
+        0,
+        656,
+        1080,
+        1264
+      ],
+      "headerZone": null,
+      "textZone": [
+        140,
+        430,
+        800,
+        150
+      ],
+      "replyZone": null,
+      "replyTextZone": null,
+      "style": "comment-reply",
+      "textCase": "lowercase",
+      "subY": 1315
+    },
+    {
+      "id": "clipship-08",
+      "folder": "08_News_Card",
+      "preview": "public/templates/clipship/08_News_Card/00_PREVIEW.jpg",
+      "frame": "public/templates/clipship/08_News_Card/1_frame.png",
+      "layers": [
+        "00_PREVIEW.jpg",
+        "1_frame.png",
+        "2_clipship_header.png",
+        "4_news_tag.png"
+      ],
+      "cutouts": [
+        {
+          "x": 0,
+          "y": 660,
+          "width": 1080,
+          "height": 608
+        }
+      ],
+      "measuredCutout": [
+        0,
+        660,
+        1080,
+        1268
+      ],
+      "headerZone": [
+        56,
+        280,
+        968,
+        100
+      ],
+      "textZone": [
+        56,
+        405,
+        968,
+        230
+      ],
+      "replyZone": null,
+      "replyTextZone": null,
+      "style": "news",
+      "textCase": "lowercase",
+      "subY": 1315
+    },
+    {
+      "id": "clipship-09",
+      "folder": "09_Fullscreen_Text_Box",
+      "preview": "public/templates/clipship/09_Fullscreen_Text_Box/00_PREVIEW.jpg",
+      "frame": null,
+      "layers": [
+        "00_PREVIEW.jpg",
+        "2_clipship_username.png",
+        "3_clipship_watermark.png"
+      ],
+      "cutouts": [
+        {
+          "x": 0,
+          "y": 656,
+          "width": 1080,
+          "height": 608
+        }
+      ],
+      "measuredCutout": [
+        0,
+        656,
+        1080,
+        1264
+      ],
+      "headerZone": null,
+      "textZone": [
+        100,
+        480,
+        880,
+        140
+      ],
+      "replyZone": null,
+      "replyTextZone": null,
+      "style": "fullscreen-pill",
+      "textCase": "lowercase",
+      "subY": 1315
+    },
+    {
+      "id": "clipship-10",
+      "folder": "10_Reddit_Thread",
+      "preview": "public/templates/clipship/10_Reddit_Thread/00_PREVIEW.jpg",
+      "frame": "public/templates/clipship/10_Reddit_Thread/1_frame.png",
+      "layers": [
+        "00_PREVIEW.jpg",
+        "1_frame.png",
+        "3_clipship_watermark.png",
+        "4_reddit_icons.png"
+      ],
+      "cutouts": [
+        {
+          "x": 0,
+          "y": 660,
+          "width": 1080,
+          "height": 608
+        }
+      ],
+      "measuredCutout": [
+        0,
+        660,
+        1080,
+        1268
+      ],
+      "headerZone": [
+        56,
+        280,
+        968,
+        100
+      ],
+      "textZone": [
+        56,
+        405,
+        968,
+        230
+      ],
+      "replyZone": null,
+      "replyTextZone": null,
+      "style": "reddit-thread",
+      "textCase": "lowercase",
+      "subY": 1315
+    },
+    {
+      "id": "clipship-11",
+      "folder": "11_Condensed_Headline",
+      "preview": "public/templates/clipship/11_Condensed_Headline/00_PREVIEW.jpg",
+      "frame": "public/templates/clipship/11_Condensed_Headline/1_frame.png",
+      "layers": [
+        "00_PREVIEW.jpg",
+        "1_frame.png",
+        "2_clipship_brand_text.png",
+        "3_clipship_watermark.png",
+        "4_carousel_dots.png"
+      ],
+      "cutouts": [
+        {
+          "x": 0,
+          "y": 656,
+          "width": 1080,
+          "height": 608
+        }
+      ],
+      "measuredCutout": [
+        0,
+        656,
+        1080,
+        1264
+      ],
+      "headerZone": null,
+      "textZone": [
+        56,
+        430,
+        968,
+        190
+      ],
+      "replyZone": null,
+      "replyTextZone": null,
+      "style": "condensed",
+      "textCase": "lowercase",
+      "subY": 1315
+    },
+    {
+      "id": "clipship-12",
+      "folder": "12_Collage_Pill",
+      "preview": "public/templates/clipship/12_Collage_Pill/00_PREVIEW.jpg",
+      "frame": "public/templates/clipship/12_Collage_Pill/1_frame.png",
+      "layers": [
+        "00_PREVIEW.jpg",
+        "1_frame.png",
+        "2_caption_pill.png",
+        "3_clipship_watermark.png"
+      ],
+      "cutouts": [
+        {
+          "x": 0,
+          "y": 310,
+          "width": 1080,
+          "height": 608
+        },
+        {
+          "x": 0,
+          "y": 958,
+          "width": 1080,
+          "height": 608
+        }
+      ],
+      "measuredCutout": [
+        0,
+        310,
+        1080,
+        1566
+      ],
+      "headerZone": null,
+      "textZone": [
+        56,
+        918,
+        968,
+        40
+      ],
+      "replyZone": null,
+      "replyTextZone": null,
+      "style": "collage-pill",
+      "textCase": "lowercase",
+      "subY": 1595
+    },
+    {
+      "id": "clipship-13",
+      "folder": "13_Reaction_Split_Pill",
+      "preview": "public/templates/clipship/13_Reaction_Split_Pill/00_PREVIEW.jpg",
+      "frame": "public/templates/clipship/13_Reaction_Split_Pill/1_frame.png",
+      "layers": [
+        "00_PREVIEW.jpg",
+        "1_frame.png",
+        "2_caption_pill.png",
+        "3_clipship_watermark.png"
+      ],
+      "cutouts": [
+        {
+          "x": 0,
+          "y": 310,
+          "width": 1080,
+          "height": 608
+        },
+        {
+          "x": 0,
+          "y": 958,
+          "width": 1080,
+          "height": 608
+        }
+      ],
+      "measuredCutout": [
+        0,
+        310,
+        1080,
+        1566
+      ],
+      "headerZone": null,
+      "textZone": [
+        56,
+        918,
+        968,
+        40
+      ],
+      "replyZone": null,
+      "replyTextZone": null,
+      "style": "reaction-split-pill",
+      "textCase": "lowercase",
+      "subY": 1595
+    }
+  ]
+}

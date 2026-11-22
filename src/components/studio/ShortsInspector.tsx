@@ -13,6 +13,7 @@ import {
   Play,
   Plus,
   RotateCcw,
+  SlidersHorizontal,
   Trash2,
   Type,
   Upload,
@@ -377,17 +378,19 @@ export function ShortsInspector({
       aria-label="Shorts production inspector"
       className="w-[340px] shrink-0 border-l border-[var(--pc-border)] bg-[var(--pc-surface)] flex flex-col overflow-hidden"
     >
-      {/* 3 Clean Shorts-Only Tabs (ZERO Framing Tab Duplication) */}
+      {/* Shorts-Only Tabs (ZERO Framing Tab Duplication) */}
       <div
         role="tablist"
         aria-label="Shorts inspector tabs"
-        className="shrink-0 grid grid-cols-3 border-b border-[var(--pc-border)] bg-[var(--pc-surface)]"
+        className="shrink-0 grid grid-cols-5 border-b border-[var(--pc-border)] bg-[var(--pc-surface)]"
       >
         {(
           [
             { id: 'templates', label: 'Templates', icon: <Layers className="w-3.5 h-3.5" /> },
             { id: 'text', label: 'Text', icon: <Type className="w-3.5 h-3.5" /> },
             { id: 'media', label: 'Media', icon: <Music2 className="w-3.5 h-3.5" /> },
+            { id: 'adjust', label: 'Adjust', icon: <SlidersHorizontal className="w-3.5 h-3.5" /> },
+            { id: 'audio', label: 'Audio', icon: <Volume2 className="w-3.5 h-3.5" /> },
           ] as { id: ShortsTabId; label: string; icon: React.ReactNode }[]
         ).map((tab) => {
           const active = activeTab === tab.id;
@@ -398,7 +401,7 @@ export function ShortsInspector({
               role="tab"
               aria-selected={active}
               onClick={() => onChangeTab(tab.id)}
-              className={`h-11 inline-flex items-center justify-center gap-1.5 text-xs font-medium border-0 border-b-2 bg-transparent cursor-pointer transition-colors ${
+              className={`h-11 inline-flex items-center justify-center gap-1 text-[10px] font-medium border-0 border-b-2 bg-transparent cursor-pointer transition-colors ${
                 active
                   ? 'border-[var(--pc-ink)] text-[var(--pc-ink)]'
                   : 'border-transparent text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
@@ -1837,6 +1840,253 @@ export function ShortsInspector({
                     </Button>
                   </>
                 )}
+              </div>
+            </InspectorAccordion>
+          </div>
+        )}
+
+        {/* ================= ADJUST TAB (COLOR GRADING, FX, MOTION & TRANSITIONS) ================= */}
+        {activeTab === 'adjust' && (
+          <div className="space-y-3">
+            <InspectorAccordion title="Color Grading Filters" defaultOpen>
+              <div className="grid grid-cols-3 gap-1.5">
+                {([
+                  { id: 'none', label: 'Natural' },
+                  { id: 'cinematic', label: 'Cinematic' },
+                  { id: 'warm', label: 'Warm Gold' },
+                  { id: 'moody', label: 'Moody Dark' },
+                  { id: 'vintage', label: 'Vintage 90s' },
+                  { id: 'bw', label: 'B&W Film' },
+                  { id: 'cyberpunk', label: 'Cyberpunk' },
+                ] as const).map((f) => {
+                  const active = (settings.colorFilter || 'none') === f.id;
+                  return (
+                    <button
+                      key={f.id}
+                      type="button"
+                      aria-pressed={active}
+                      data-testid={`color-filter-${f.id}`}
+                      onClick={() => onUpdateSettings({ colorFilter: f.id }, true)}
+                      className={`h-8 px-1.5 rounded-lg text-[11px] font-medium border transition-colors cursor-pointer ${
+                        active
+                          ? 'border-[var(--pc-accent)] bg-[var(--pc-accent-soft)] text-[var(--pc-ink)] font-semibold'
+                          : 'border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </InspectorAccordion>
+
+            <InspectorAccordion title="Color Adjustments" defaultOpen>
+              <div className="space-y-3.5">
+                <StudioSlider
+                  label="Brightness"
+                  value={settings.brightness ?? 100}
+                  min={50}
+                  max={150}
+                  unit="%"
+                  onChange={(brightness) => onUpdateSettings({ brightness }, false)}
+                />
+                <StudioSlider
+                  label="Contrast"
+                  value={settings.contrast ?? 100}
+                  min={50}
+                  max={150}
+                  unit="%"
+                  onChange={(contrast) => onUpdateSettings({ contrast }, false)}
+                />
+                <StudioSlider
+                  label="Saturation"
+                  value={settings.saturation ?? 100}
+                  min={0}
+                  max={200}
+                  unit="%"
+                  onChange={(saturation) => onUpdateSettings({ saturation }, false)}
+                />
+                <StudioSlider
+                  label="Exposure"
+                  value={settings.exposure ?? 0}
+                  min={-50}
+                  max={50}
+                  onChange={(exposure) => onUpdateSettings({ exposure }, false)}
+                />
+                <StudioSlider
+                  label="Temperature (Warm / Cool)"
+                  value={settings.temperature ?? 0}
+                  min={-50}
+                  max={50}
+                  onChange={(temperature) => onUpdateSettings({ temperature }, false)}
+                />
+              </div>
+            </InspectorAccordion>
+
+            <InspectorAccordion title="Effects & Optics" defaultOpen>
+              <div className="space-y-3.5">
+                <StudioSlider
+                  label="Vignette"
+                  value={settings.vignette ?? 0}
+                  min={0}
+                  max={100}
+                  unit="%"
+                  onChange={(vignette) => onUpdateSettings({ vignette }, false)}
+                />
+                <StudioSlider
+                  label="Background Soften / Blur"
+                  value={settings.blur ?? 0}
+                  min={0}
+                  max={20}
+                  unit="px"
+                  onChange={(blur) => onUpdateSettings({ blur }, false)}
+                />
+              </div>
+            </InspectorAccordion>
+
+            <InspectorAccordion title="Motion & Speed Ramping" defaultOpen>
+              <div className="space-y-2.5">
+                <div className="space-y-1.5">
+                  <span className="block text-[11px] text-[var(--pc-sub)]">
+                    Clip Speed Multiplier
+                  </span>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {[0.5, 0.75, 1, 1.25, 1.5, 2].map((spd) => {
+                      const active = (settings.speedMultiplier ?? 1) === spd;
+                      return (
+                        <button
+                          key={spd}
+                          type="button"
+                          aria-pressed={active}
+                          data-testid={`speed-${spd}`}
+                          onClick={() => onUpdateSettings({ speedMultiplier: spd }, true)}
+                          className={`h-7 px-2 rounded-md font-mono-tabular text-xs border transition-colors cursor-pointer ${
+                            active
+                              ? 'border-[var(--pc-accent)] bg-[var(--pc-accent-soft)] text-[var(--pc-accent)] font-bold'
+                              : 'border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                          }`}
+                        >
+                          {spd}x
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 pt-2 border-t border-[var(--pc-border-subtle)]">
+                  <span className="block text-[11px] text-[var(--pc-sub)]">
+                    Cut Transition Style
+                  </span>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {([
+                      { id: 'cut', label: 'Hard Cut' },
+                      { id: 'crossfade', label: 'Crossfade' },
+                      { id: 'zoom-in', label: 'Zoom Punch' },
+                      { id: 'dip-black', label: 'Dip to Black' },
+                      { id: 'glitch', label: 'Glitch Flash' },
+                    ] as const).map((t) => {
+                      const active = (settings.transitionStyle || 'cut') === t.id;
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          aria-pressed={active}
+                          data-testid={`transition-${t.id}`}
+                          onClick={() => onUpdateSettings({ transitionStyle: t.id }, true)}
+                          className={`h-7 px-1.5 rounded-md text-[11px] border transition-colors cursor-pointer ${
+                            active
+                              ? 'border-[var(--pc-accent)] bg-[var(--pc-accent-soft)] text-[var(--pc-ink)] font-semibold'
+                              : 'border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                          }`}
+                        >
+                          {t.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <StudioSlider
+                  label="Transition Duration"
+                  value={settings.transitionDurationSec ?? 0.3}
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  unit="s"
+                  onChange={(transitionDurationSec) =>
+                    onUpdateSettings({ transitionDurationSec }, false)
+                  }
+                />
+              </div>
+            </InspectorAccordion>
+          </div>
+        )}
+
+        {/* ================= AUDIO TAB (ADVANCED MASTER AUDIO) ================= */}
+        {activeTab === 'audio' && (
+          <div className="space-y-3">
+            <InspectorAccordion title="Master Audio Controls" defaultOpen>
+              <div className="space-y-3.5">
+                <StudioSlider
+                  label="Master Volume"
+                  value={settings.masterVolume ?? 100}
+                  min={0}
+                  max={200}
+                  unit="%"
+                  onChange={(masterVolume) => onUpdateSettings({ masterVolume }, false)}
+                />
+                <StudioSwitch
+                  label="EBU R128 Loudness Normalization"
+                  description="Normalizes broadcast audio level to prevent distortion and clipping"
+                  checked={settings.audioNormalize ?? true}
+                  onChange={(audioNormalize) => onUpdateSettings({ audioNormalize }, true)}
+                />
+                {settings.audioNormalize && (
+                  <StudioSlider
+                    label="Target Integrated LUFS"
+                    value={settings.targetLufs ?? -14}
+                    min={-24}
+                    max={-9}
+                    step={0.5}
+                    unit=" LUFS"
+                    onChange={(targetLufs) => onUpdateSettings({ targetLufs }, false)}
+                  />
+                )}
+                <StudioSwitch
+                  label="Smart Audio Ducking"
+                  description="Dips background music bed when dialogue or lyrics are detected"
+                  checked={settings.audioDucking ?? true}
+                  onChange={(audioDucking) => onUpdateSettings({ audioDucking }, true)}
+                />
+                <StudioSwitch
+                  label="Mute Native Source Audio"
+                  description="Silences camera audio to replace entirely with music bed"
+                  checked={settings.muteOriginalAudio ?? false}
+                  onChange={(muteOriginalAudio) => onUpdateSettings({ muteOriginalAudio }, true)}
+                />
+              </div>
+            </InspectorAccordion>
+
+            <InspectorAccordion title="Fades & Sound FX" defaultOpen>
+              <div className="space-y-3.5">
+                <StudioSlider
+                  label="Audio Fade In"
+                  value={settings.audioFadeInSec ?? 0}
+                  min={0}
+                  max={3}
+                  step={0.1}
+                  unit="s"
+                  onChange={(audioFadeInSec) => onUpdateSettings({ audioFadeInSec }, false)}
+                />
+                <StudioSlider
+                  label="Audio Fade Out"
+                  value={settings.audioFadeOutSec ?? 0.5}
+                  min={0}
+                  max={3}
+                  step={0.1}
+                  unit="s"
+                  onChange={(audioFadeOutSec) => onUpdateSettings({ audioFadeOutSec }, false)}
+                />
               </div>
             </InspectorAccordion>
           </div>

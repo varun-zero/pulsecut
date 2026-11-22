@@ -241,6 +241,34 @@ function createEditorSettingsForClip(clip: ClipItem | null, brandKit: BrandKit):
     customAudioUrl: '',
     outroText: clip?.outroText ?? brandKit.defaultOutro,
     outroDurationSec: 3,
+
+    /* Color Grading & Visual FX */
+    brightness: 100,
+    contrast: 100,
+    saturation: 100,
+    exposure: 0,
+    temperature: 0,
+    blur: 0,
+    vignette: 0,
+    colorFilter: 'none',
+
+    /* Advanced Audio Controls */
+    masterVolume: 100,
+    audioNormalize: true,
+    targetLufs: -14,
+    audioDucking: true,
+    audioFadeInSec: 0,
+    audioFadeOutSec: 0.5,
+    muteOriginalAudio: false,
+
+    /* Motion & Transitions */
+    speedMultiplier: 1.0,
+    transitionStyle: 'cut',
+    transitionDurationSec: 0.3,
+
+    /* Interactive Timeline Cuts & Markers */
+    splits: [],
+    markers: [],
   };
 }
 

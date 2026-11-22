@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  Bookmark,
+  Bot,
   ChevronDown,
   Crop,
   Download,
@@ -10,6 +12,7 @@ import {
   Plus,
   Redo2,
   Scan,
+  Scissors,
   Sun,
   Undo2,
 } from 'lucide-react';
@@ -33,7 +36,7 @@ import {
   type EditableTemplatePreset,
   type LogoAsset,
 } from '../lib/creatorCatalog';
-import { clampTrimWindow, formatShortDuration } from '../lib/studioLogic';
+import { clampTrimWindow, formatShortDuration, formatTimecode } from '../lib/studioLogic';
 import {
   computeMusicOffset,
   computeMusicRiserVolume,
@@ -48,6 +51,7 @@ import {
 import { Button } from '../components/ui/Primitives';
 import { TemplateLibraryModal } from '../components/editor/TemplateLibraryModal';
 import { TemplateEditorModal } from '../components/editor/TemplateEditorModal';
+import { AgentInteropModal } from '../components/editor/AgentInteropModal';
 import { ShortsStage } from '../components/studio/ShortsStage';
 import { ShortsTimeline } from '../components/studio/ShortsTimeline';
 import { ShortsInspector } from '../components/studio/ShortsInspector';
@@ -158,6 +162,7 @@ export function ShortsPage({
   const [editingTemplate, setEditingTemplate] = useState<EditableTemplatePreset | null>(null);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [agentModalOpen, setAgentModalOpen] = useState(false);
 
   const [previewRes, setPreviewRes] = useState<PreviewResolutionId>('auto');
   const [showSafeZones, setShowSafeZones] = useState(false);
@@ -193,12 +198,14 @@ export function ShortsPage({
     prevTimeRef.current = 0;
   }, [currentClip?.id]);
 
-  // Sync video playback speed from Section 1's FramingBlueprint
+  // Sync video playback speed (Framing blueprint × speed ramp) and master volume
   useEffect(() => {
     if (videoRef.current) {
-      videoRef.current.playbackRate = Math.max(0.25, Math.min(4, blueprint.speed || 1));
+      videoRef.current.playbackRate =
+        (settings.speedMultiplier ?? 1) * Math.max(0.25, Math.min(4, blueprint.speed || 1));
+      videoRef.current.volume = Math.max(0, Math.min(1, (settings.masterVolume ?? 100) / 100));
     }
-  }, [blueprint.speed, currentClip?.id]);
+  }, [blueprint.speed, settings.speedMultiplier, settings.masterVolume, currentClip?.id]);
 
   // Sync play/pause with <video>
   useEffect(() => {
@@ -497,6 +504,27 @@ export function ShortsPage({
     onNotify(`Aligned captions inside ${spec.label} safe zone (${spec.autoAlignSubtitlePct}%)`);
   };
 
+  const handleSplitAtPlayhead = () => {
+    if (!currentClip || durationSec <= 0) return;
+    const nextSplits = [...(settings.splits || []), currentTimeSec].sort((a, b) => a - b);
+    onUpdateSettings({ splits: nextSplits }, true);
+    onNotify(`Split cut placed at ${formatTimecode(currentTimeSec)}`);
+  };
+
+  const handleAddMarker = (label?: string) => {
+    if (!currentClip || durationSec <= 0) return;
+    const newMarker = {
+      id: `m-${Date.now()}`,
+      timeSec: currentTimeSec,
+      label: label || `Marker ${formatTimecode(currentTimeSec)}`,
+    };
+    const nextMarkers = [...(settings.markers || []), newMarker].sort(
+      (a, b) => a.timeSec - b.timeSec
+    );
+    onUpdateSettings({ markers: nextMarkers }, true);
+    onNotify(`Marker added at ${formatTimecode(currentTimeSec)}`);
+  };
+
   const handleExport = async () => {
     if (!currentClip) {
       onNotify('Load a clip before exporting');
@@ -534,6 +562,12 @@ export function ShortsPage({
       e.preventDefault();
       handleChangeTrimWindow(trimInSec, currentTimeSec);
       onNotify(`Out point set to ${currentTimeSec.toFixed(1)}s`);
+    } else if (e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey && currentClip) {
+      e.preventDefault();
+      handleSplitAtPlayhead();
+    } else if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey && currentClip) {
+      e.preventDefault();
+      handleAddMarker();
     } else if (e.shiftKey && e.key.toLowerCase() === 'l' && currentClip) {
       e.preventDefault();
       handleToggleFinalPreview();
@@ -701,8 +735,41 @@ export function ShortsPage({
           </button>
         </div>
 
-        {/* Right: Utilities + Export Short CTA */}
+        {/* Right: Split / Marker / Agent utilities + Export Short CTA */}
         <div className="flex items-center gap-2 shrink-0">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={!currentClip}
+            data-testid="split-at-playhead-btn"
+            title="Split clip at playhead (S)"
+            onClick={handleSplitAtPlayhead}
+          >
+            <Scissors className="w-3.5 h-3.5 text-amber-400" />
+            <span>Split</span>
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={!currentClip}
+            data-testid="add-marker-btn"
+            title="Add timeline marker at playhead (M)"
+            onClick={() => handleAddMarker()}
+          >
+            <Bookmark className="w-3.5 h-3.5 text-sky-400" />
+            <span>Marker</span>
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            data-testid="agent-interop-btn"
+            title="AI Agent, IDE & CLI Interop"
+            onClick={() => setAgentModalOpen(true)}
+          >
+            <Bot className="w-3.5 h-3.5 text-sky-400" />
+            <span>AI Agent / CLI</span>
+          </Button>
+
           <button
             type="button"
             onClick={onToggleTheme}
@@ -811,6 +878,8 @@ export function ShortsPage({
                 riserDurationSec={settings.riserDurationSec}
                 customAudioName={settings.customAudioName}
                 trackStates={trackStates}
+                splits={settings.splits}
+                markers={settings.markers}
                 onToggleTrackState={(k) =>
                   setTrackStates((prev) => ({ ...prev, [k]: !prev[k] }))
                 }
@@ -957,6 +1026,17 @@ export function ShortsPage({
         onChangeResolution={(exportResolution) => onUpdateShorts({ exportResolution })}
         onChangeEncoder={(exportEncoder) => onUpdateShorts({ exportEncoder })}
         onClose={() => setExportModalOpen(false)}
+        onNotify={onNotify}
+      />
+
+      {/* AI Agent & IDE Compatibility Hub Modal */}
+      <AgentInteropModal
+        open={agentModalOpen}
+        clip={currentClip}
+        settings={settings}
+        trimInSec={trimInSec}
+        trimOutSec={trimOutSec}
+        onClose={() => setAgentModalOpen(false)}
         onNotify={onNotify}
       />
     </div>

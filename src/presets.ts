@@ -19,7 +19,8 @@ export type TemplateCategory =
   | 'Platforms'
   | 'Streamer Clips'
   | 'Viral Hooks'
-  | 'Podcasts & X';
+  | 'Podcasts & X'
+  | 'ClipShip';
 
 export interface TemplatePreset {
   id: string;
@@ -53,8 +54,53 @@ export interface TemplatePreset {
     | 'story'
     | 'podcast'
     | 'social'
-    | 'plain';
+    | 'plain'
+    | 'clipship';
 }
+
+/** The 13 bundled ClipShip overlay templates (1080x1920, alpha-measured cutouts). */
+const CLIPSHIP_FOLDERS = [
+  ['clipship-01', 'ClipShip Tweet Dark'],
+  ['clipship-02', 'ClipShip Tweet Light'],
+  ['clipship-03', 'ClipShip Tweet + Reply'],
+  ['clipship-04', 'ClipShip Big Meme'],
+  ['clipship-05', 'ClipShip White Meme'],
+  ['clipship-06', 'ClipShip Stacked'],
+  ['clipship-07', 'ClipShip Comment Reply'],
+  ['clipship-08', 'ClipShip News Card'],
+  ['clipship-09', 'ClipShip Fullscreen Text'],
+  ['clipship-10', 'ClipShip Reddit Thread'],
+  ['clipship-11', 'ClipShip Condensed Headline'],
+  ['clipship-12', 'ClipShip Collage Pill'],
+  ['clipship-13', 'ClipShip Reaction Split'],
+] as const;
+
+const CLIPSHIP_PRESET_ENTRIES: readonly TemplatePreset[] = CLIPSHIP_FOLDERS.map(
+  ([id, name], i) => ({
+    id,
+    name,
+    fullName: name,
+    category: 'ClipShip',
+    description:
+      'ClipShip 1080x1920 overlay: full 16:9 stage frame preserved, blurred fill, custom page header (no Clip Ship watermark), lowercase hook text and synced lyric subtitles.',
+    featured: false,
+    defaultLayout: (i === 5 || i === 11 ? 'split' : 'solo') as LayoutModeId,
+    defaultCaptionStyle: 'podcast-pill' as ViralCaptionPresetId,
+    defaultSafeZone: 'universal' as ResolvedSafeZonePlatformId,
+    defaultHeadlineFont: 'Anton',
+    defaultSubtitleFont: 'Montserrat',
+    defaultHeadlineLayout: 'white-stepped',
+    defaultSubtitleBg: 'none',
+    defaultStreamerPlatform: 'youtube',
+    defaultOuterFill: '#000000',
+    defaultCornerRadius: 0,
+    hasCard: i !== 6 && i !== 8,
+    hasHeadline: true,
+    hasTicker: false,
+    accentHex: '#E8851A',
+    wireframe: 'clipship',
+  })
+);
 
 /**
  * Single Shared Viral Preset Registry — strictly curated around real, currently trending
@@ -353,7 +399,15 @@ export const TEMPLATE_PRESETS: readonly TemplatePreset[] = [
     accentHex: '#53FC18',
     wireframe: 'split',
   },
+
+  /* ---------- 13 ClipShip overlay templates ---------- */
+  ...CLIPSHIP_PRESET_ENTRIES,
 ] as const;
+
+/** ClipShip-only subset for the dedicated Framing Studio strip. */
+export const CLIPSHIP_PRESETS: readonly TemplatePreset[] = TEMPLATE_PRESETS.filter(
+  (t) => t.category === 'ClipShip'
+);
 
 export const FEATURED_PRESETS: readonly TemplatePreset[] = TEMPLATE_PRESETS.filter((t) => t.featured);
 

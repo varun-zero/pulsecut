@@ -22,6 +22,7 @@ import type {
   ClipSegment,
   SfxCue,
   ShortsProductionConfig,
+  TimelineMarker,
   TrackStates,
 } from '../../types';
 import { formatSmpteTimecode, formatTimecode } from '../../lib/studioLogic';
@@ -49,6 +50,8 @@ interface ShortsTimelineProps {
   riserDurationSec: number;
   customAudioName: string;
   trackStates: TrackStates;
+  splits?: number[];
+  markers?: TimelineMarker[];
   onToggleTrackState: (key: keyof TrackStates) => void;
   onTogglePlay: () => void;
   onToggleFinalPreview: () => void;
@@ -84,6 +87,8 @@ export function ShortsTimeline({
   riserDurationSec,
   customAudioName,
   trackStates,
+  splits = [],
+  markers = [],
   onToggleTrackState,
   onTogglePlay,
   onToggleFinalPreview,
@@ -525,6 +530,30 @@ export function ShortsTimeline({
                   />
                 </div>
               )}
+
+              {/* Split cut lines placed at the playhead */}
+              {durationSec > 0 &&
+                splits.map((sSec, sIdx) => (
+                  <div
+                    key={`split-${sIdx}`}
+                    data-testid="shorts-timeline-split"
+                    title={`Split cut at ${formatTimecode(sSec)}`}
+                    className="absolute top-0 bottom-0 w-0.5 bg-amber-400 z-10 pointer-events-none"
+                    style={{ left: `${(sSec / durationSec) * 100}%` }}
+                  />
+                ))}
+
+              {/* Timeline markers (memo pins) */}
+              {durationSec > 0 &&
+                markers.map((m) => (
+                  <div
+                    key={m.id}
+                    data-testid="shorts-timeline-marker"
+                    title={`Marker: ${m.label} (${formatTimecode(m.timeSec)})`}
+                    className="absolute top-0.5 w-1.5 h-1.5 rounded-full bg-sky-400 border border-black z-20 pointer-events-none -translate-x-1/2"
+                    style={{ left: `${(m.timeSec / durationSec) * 100}%`, backgroundColor: m.color }}
+                  />
+                ))}
 
               {/* Orange OUTRO block indicator when Outro is enabled */}
               {shorts.outro.enabled && (
