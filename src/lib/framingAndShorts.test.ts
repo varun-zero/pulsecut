@@ -14,17 +14,29 @@ import {
   swapLayoutCrops,
 } from './framingEngine';
 import {
+  addWordCue,
   autoSuggestMusicLevels,
   buildFullShortExportSpec,
   buildSubtitleTimelineBlocks,
+  buildVideoGradingCssFilter,
+  buildVideoTransformCss,
+  computeAudioEnvelopeGain,
+  computeEffectivePlaybackSpeed,
   computeMusicOffset,
   computeMusicRiserVolume,
   computeOutroAnimationFrame,
   computeStitchedDuration,
+  computeTransitionPreviewEffect,
   createDefaultShortsProduction,
+  deleteSegmentById,
+  deleteWordCue,
+  duplicateSegmentById,
   findTriggeredSfxCues,
   mapSourceTimeToStitched,
   resolveStitchedPlaybackStep,
+  splitSegmentsAtTime,
+  updateWordCueText,
+  updateWordCueTiming,
 } from './shortsEngine';
 import type { BrandKit, EditorSettings } from '../types';
 
@@ -286,3 +298,157 @@ test('ShortsEngine: buildSubtitleTimelineBlocks covers >60 words across full cli
     );
   }
 });
+
+test('NLE Engine: razor split, segment delete/duplicate, transforms, LUTs, transitions, audio envelope & cue CRUD', () => {
+  // 1. Razor split at playhead
+  const splitRes = splitSegmentsAtTime([{ id: 's1', start: 0, end: 20 }], 8.5);
+  assert.equal(splitRes.didSplit, true);
+  assert.equal(splitRes.segments.length, 2);
+  assert.equal(splitRes.segments[0].end, 8.5);
+  assert.equal(splitRes.segments[1].start, 8.5);
+  assert.equal(splitRes.segments[1].end, 20);
+
+  // Reject split too close to edge
+  const edgeSplit = splitSegmentsAtTime([{ id: 's1', start: 0, end: 20 }], 0.1, 0.25);
+  assert.equal(edgeSplit.didSplit, false);
+
+  // Duplicate & delete segment
+  const dupRes = duplicateSegmentById([{ id: 's1', start: 2, end: 6 }], 's1', 20);
+  assert.ok(dupRes.created);
+  assert.equal(dupRes.segments.length, 2);
+  assert.equal(dupRes.created!.start, 6.1);
+  assert.equal(dupRes.created!.end, 10.1);
+  assert.equal(deleteSegmentById(dupRes.segments, 's1').length, 1);
+
+  // 2. Unified playback speed
+  assert.equal(computeEffectivePlaybackSpeed(1.25, 1.2), 1.5);
+  assert.equal(computeEffectivePlaybackSpeed(3, 3), 4);
+
+  // 3. Color grading & transforms
+  const gradingCss = buildVideoGradingCssFilter({
+    colorFilter: 'cinematic',
+    brightness: 110,
+    exposure: 5,
+    contrast: 108,
+    saturation: 115,
+    temperature: 10,
+    blur: 0,
+  });
+  assert.ok(gradingCss.includes('brightness(115%)'));
+  assert.ok(gradingCss.includes('contrast(108%)'));
+  assert.ok(gradingCss.includes('sepia('));
+
+  const transformCss = buildVideoTransformCss({
+    videoScale: 130,
+    videoPosX: 10,
+    videoPosY: -5,
+    videoRotation: 15,
+    videoFlipH: true,
+    videoFlipV: false,
+    videoOpacity: 85,
+  });
+  assert.ok(transformCss.transform.includes('scale(-1.300, 1.300)'));
+  assert.ok(transformCss.transform.includes('rotate(15deg)'));
+  assert.ok(transformCss.transform.includes('translate(10%, -5%)'));
+  assert.equal(transformCss.opacity, 0.85);
+
+  // 4. Transition preview effects around cut boundary
+  const segs = [
+    { id: 'a', start: 0, end: 10 },
+    { id: 'b', start: 10, end: 20 },
+  ];
+  const dipMid = computeTransitionPreviewEffect(10, segs, 'dip-black', 0.4);
+  assert.ok(dipMid.dipBlackOpacity > 0.85);
+  const crossMid = computeTransitionPreviewEffect(10, segs, 'crossfade', 0.4);
+  assert.ok(crossMid.opacity < 0.5);
+  const farAway = computeTransitionPreviewEffect(5, segs, 'dip-black', 0.4);
+  assert.equal(farAway.dipBlackOpacity, 0);
+
+  // 5. Audio fade envelope (0..2.0 gain)
+  assert.equal(computeAudioEnvelopeGain(0, 10, 100, 1, 1), 0);
+  assert.equal(computeAudioEnvelopeGain(0.5, 10, 100, 1, 1), 0.5);
+  assert.equal(computeAudioEnvelopeGain(5, 10, 150, 1, 1), 1.5);
+  assert.equal(computeAudioEnvelopeGain(9.5, 10, 100, 1, 1), 0.5);
+
+  // 6. Subtitle cue CRUD
+  let cues = addWordCue([], 1.0, 'First beat');
+  cues = addWordCue(cues, 3.0, 'Second beat');
+  assert.equal(cues.length, 2);
+  cues = updateWordCueText(cues, 0, 'Updated beat');
+  assert.equal(cues[0].text, 'Updated beat');
+  cues = updateWordCueTiming(cues, 0, 500, 2000);
+  assert.equal(cues[0].start_ms, 500);
+  assert.equal(cues[0].end_ms, 2000);
+  cues = deleteWordCue(cues, 0);
+  assert.equal(cues.length, 1);
+
+  // 7. Export FFmpeg filtergraph wires transforms, grading, and audio mastering
+  const bp = createDefaultFramingBlueprint('solo', '9:16');
+  const shorts = createDefaultShortsProduction();
+  const proSettings = {
+    template: 'default',
+    aspect: '9:16',
+    layout: 'solo',
+    captionStyle: 'hormozi-classic',
+    subtitleFont: 'Montserrat',
+    subtitleSize: 26,
+    subtitleCasing: 'upper',
+    subtitleBaseColor: '#FFFFFF',
+    subtitleActiveColor: '#FFE600',
+    subtitleEmphasisColor: '#FFE600',
+    subtitleStrokeWidth: 4,
+    subtitleStrokeColor: '#000000',
+    subtitleDropShadow: true,
+    subtitleNeonGlow: false,
+    subtitleAnimation: 'pop-scale',
+    subtitleVerticalPos: 74,
+    subtitleX: 50,
+    subtitleAlign: 'center',
+    subtitleBgStyle: 'none',
+    safeZonePlatform: 'auto',
+    playbackSpeed: 1,
+    speedMultiplier: 1.25,
+    videoScale: 120,
+    videoFlipH: true,
+    videoSharpen: 40,
+    brightness: 110,
+    contrast: 115,
+    saturation: 120,
+    vignette: 30,
+    masterVolume: 130,
+    audioNormalize: true,
+    targetLufs: -14,
+    audioFadeInSec: 0.3,
+    audioFadeOutSec: 0.6,
+    muteOriginalAudio: false,
+    audioBaseVol: 15,
+    audioPeakVol: 85,
+    riserDurationSec: 5,
+    customAudioName: '',
+  } as unknown as EditorSettings;
+
+  const exportSpec = buildFullShortExportSpec(
+    bp,
+    shorts,
+    proSettings,
+    {
+      handle: '@studio',
+      displayName: 'Studio',
+      verified: false,
+      defaultOutro: '',
+      watermarkPosition: 'bottom-center',
+      watermarkOpacity: 95,
+      showWatermark: true,
+    },
+    cues,
+    0,
+    15
+  );
+  assert.ok(exportSpec.ffmpegFiltergraph.includes('hflip'));
+  assert.ok(exportSpec.ffmpegFiltergraph.includes('eq='));
+  assert.ok(exportSpec.ffmpegFiltergraph.includes('unsharp='));
+  assert.ok(exportSpec.ffmpegFiltergraph.includes('vignette='));
+  assert.ok(exportSpec.ffmpegCommand.includes('loudnorm=I=-14'));
+  assert.ok(exportSpec.ffmpegCommand.includes('volume=1.30'));
+});
+

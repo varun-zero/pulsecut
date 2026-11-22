@@ -1,15 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Bookmark,
   Check,
+  Columns2,
   Copy,
   Crop,
   ExternalLink,
+  Eye,
+  EyeOff,
   FileText,
   Flame,
+  FlipHorizontal2,
+  FlipVertical2,
   Hash,
   ImagePlus,
   Layers,
-  Music2,
+  Palette,
   Pencil,
   Play,
   Plus,
@@ -23,11 +29,14 @@ import {
   X,
 } from 'lucide-react';
 import type {
+  AspectRatioId,
   BrandKit,
   CaptionAnimationId,
   ClipItem,
+  ColorFilterId,
   CustomFontEntry,
   EditorSettings,
+  FramingBlueprint,
   HeadlineLayoutStyleId,
   ShortsProductionConfig,
   ShortsTabId,
@@ -37,12 +46,21 @@ import type {
   TextCasingId,
   TextSubtabId,
   TrackStates,
+  TransitionStyleId,
   WordCue,
   WordPacingId,
 } from '../../types';
 import { VIRAL_FONTS } from '../../captionStyles';
 import { formatTimecode, parseSrtToWordCues } from '../../lib/studioLogic';
-import { autoSuggestMusicLevels, playSfxAsset } from '../../lib/shortsEngine';
+import {
+  addWordCue,
+  autoSuggestMusicLevels,
+  deleteWordCue,
+  playSfxAsset,
+  updateWordCueText,
+  updateWordCueTiming,
+} from '../../lib/shortsEngine';
+import { reconcileCrops } from '../../lib/framingEngine';
 import {
   auditionTrackMood,
   detectVideoNiche,
@@ -70,18 +88,23 @@ interface ShortsInspectorProps {
   activeTab: ShortsTabId;
   onChangeTab: (tab: ShortsTabId) => void;
   clip: ClipItem | null;
+  blueprint: FramingBlueprint;
   settings: EditorSettings;
   shorts: ShortsProductionConfig;
   brandKit: BrandKit;
   trackStates: TrackStates;
   currentTimeSec: number;
   stitchedDurationSec: number;
+  compareOriginal: boolean;
+  onToggleCompareOriginal: () => void;
   templates: readonly EditableTemplatePreset[];
   captionPresets: readonly EditableCaptionPreset[];
   customFonts: readonly CustomFontEntry[];
   logos: readonly LogoAsset[];
   canRestoreTemplates: boolean;
   canRestoreCaptions: boolean;
+  onUpdateBlueprint: (next: FramingBlueprint, recordHistory?: boolean) => void;
+  onEditFraming: () => void;
   onUpdateSettings: (patch: Partial<EditorSettings>, recordHistory?: boolean) => void;
   onUpdateShorts: (patch: Partial<ShortsProductionConfig>) => void;
   onUpdateBrandKit: (next: BrandKit) => void;
@@ -100,31 +123,69 @@ interface ShortsInspectorProps {
   onUploadLogo: (file: File) => void;
   onDeleteLogo: (id: string) => void;
   onUpdateClipHashtags: (clipId: string, hashtags: string[]) => void;
+  onUpdateClipWords: (clipId: string, words: WordCue[]) => void;
   onOpenTemplateLibrary: () => void;
   onImportSrtCues: (clipId: string, cues: WordCue[]) => void;
   onAutoAlignSubtitles: () => void;
   onAddSfxCueAtPlayhead: (asset: SfxAsset) => void;
   onRemoveSfxCue: (cueId: string) => void;
+  onAddMarker: (label?: string) => void;
+  onRenameMarker: (markerId: string, label: string) => void;
+  onDeleteMarker: (markerId: string) => void;
+  onSeekTo: (timeSec: number) => void;
   onReplayOutro: () => void;
   onNotify: (msg: string) => void;
 }
+
+const OVERLAY_LAYER_ITEMS: Array<{ id: string; label: string }> = [
+  { id: 'headline', label: 'Headline Hook' },
+  { id: 'subtitles', label: 'Subtitles (CC)' },
+  { id: 'channel-card', label: 'Social / X Card' },
+  { id: 'streamer', label: 'Platform Attribution' },
+  { id: 'watermark1', label: 'Primary Watermark' },
+  { id: 'watermark2', label: 'Secondary Tag Overlay' },
+];
+
+const COLOR_LUT_OPTIONS: Array<{ id: ColorFilterId; label: string; swatch: string }> = [
+  { id: 'none', label: 'Natural', swatch: 'linear-gradient(135deg, #71717A, #A1A1AA)' },
+  { id: 'cinematic', label: 'Cinematic', swatch: 'linear-gradient(135deg, #1E3A5F, #C2824E)' },
+  { id: 'warm', label: 'Warm Gold', swatch: 'linear-gradient(135deg, #92400E, #F59E0B)' },
+  { id: 'cool', label: 'Cool Slate', swatch: 'linear-gradient(135deg, #0F172A, #38BDF8)' },
+  { id: 'moody', label: 'Moody', swatch: 'linear-gradient(135deg, #18181B, #52525B)' },
+  { id: 'vintage', label: 'Vintage', swatch: 'linear-gradient(135deg, #78350F, #D6C3A5)' },
+  { id: 'contrast', label: 'Punch', swatch: 'linear-gradient(135deg, #09090B, #F4F4F5)' },
+  { id: 'bw', label: 'B&W Film', swatch: 'linear-gradient(135deg, #000000, #E4E4E7)' },
+];
+
+const TRANSITION_OPTIONS: Array<{ id: TransitionStyleId; label: string }> = [
+  { id: 'cut', label: 'Hard Cut' },
+  { id: 'crossfade', label: 'Crossfade' },
+  { id: 'zoom-in', label: 'Zoom Punch' },
+  { id: 'dip-black', label: 'Dip Black' },
+  { id: 'slide-left', label: 'Slide Left' },
+];
 
 export function ShortsInspector({
   activeTab,
   onChangeTab,
   clip,
+  blueprint,
   settings,
   shorts,
   brandKit,
   trackStates,
   currentTimeSec,
   stitchedDurationSec,
+  compareOriginal,
+  onToggleCompareOriginal,
   templates,
   captionPresets,
   customFonts,
   logos,
   canRestoreTemplates,
   canRestoreCaptions,
+  onUpdateBlueprint,
+  onEditFraming,
   onUpdateSettings,
   onUpdateShorts,
   onUpdateBrandKit,
@@ -143,11 +204,16 @@ export function ShortsInspector({
   onUploadLogo,
   onDeleteLogo,
   onUpdateClipHashtags,
+  onUpdateClipWords,
   onOpenTemplateLibrary,
   onImportSrtCues,
   onAutoAlignSubtitles,
   onAddSfxCueAtPlayhead,
   onRemoveSfxCue,
+  onAddMarker,
+  onRenameMarker,
+  onDeleteMarker,
+  onSeekTo,
   onReplayOutro,
   onNotify,
 }: ShortsInspectorProps) {
@@ -159,14 +225,23 @@ export function ShortsInspector({
   const [newCapBase, setNewCapBase] = useState(settings.subtitleBaseColor || '#FFFFFF');
   const [newCapActive, setNewCapActive] = useState(settings.subtitleActiveColor || '#FFE600');
   const [newCapStroke, setNewCapStroke] = useState(settings.subtitleStrokeWidth || 5);
-  const [newCapPacing, setNewCapPacing] = useState<WordPacingId>(settings.subtitleWordsPerScreen || '2-3');
-  const [newCapAnim, setNewCapAnim] = useState<CaptionAnimationId>(settings.subtitleAnimation || 'pop-scale');
+  const [newCapPacing, setNewCapPacing] = useState<WordPacingId>(
+    settings.subtitleWordsPerScreen || '2-3'
+  );
+  const [newCapAnim, setNewCapAnim] = useState<CaptionAnimationId>(
+    settings.subtitleAnimation || 'pop-scale'
+  );
 
   const [musicMood, setMusicMood] = useState<MusicMoodId>('all');
   const [viralOnlyMusic, setViralOnlyMusic] = useState(true);
 
   const detectedNiche = useMemo(
-    () => detectVideoNiche(clip?.title || settings.headline || '', clip?.description || '', clip?.platform || ''),
+    () =>
+      detectVideoNiche(
+        clip?.title || settings.headline || '',
+        clip?.description || '',
+        clip?.platform || ''
+      ),
     [clip?.id, clip?.title, clip?.description, clip?.platform, settings.headline]
   );
   const [selectedNiche, setSelectedNiche] = useState<VideoNicheId>(detectedNiche);
@@ -182,8 +257,7 @@ export function ShortsInspector({
   const wmLogoInputRef = useRef<HTMLInputElement>(null);
   const outroFileInputRef = useRef<HTMLInputElement>(null);
 
-  const activeTemplate =
-    templates.find((t) => t.id === settings.template) || templates[0];
+  const activeTemplate = templates.find((t) => t.id === settings.template) || templates[0];
   const visibleTemplates = useMemo(() => {
     const customAndFeatured = templates.filter((t) => t.isCustom || t.featured);
     return customAndFeatured.length > 0 ? customAndFeatured : templates;
@@ -204,6 +278,81 @@ export function ShortsInspector({
     () => new Set((clip?.hashtags || []).map((h) => h.replace(/^#/, '').toLowerCase())),
     [clip?.hashtags]
   );
+
+  const hiddenElements = settings.hiddenElements || [];
+  const isFullFramePrimary = Boolean(blueprint.fullFrameSlots?.[0]);
+
+  const handleToggleOverlayHidden = (layerId: string) => {
+    const next = hiddenElements.includes(layerId)
+      ? hiddenElements.filter((id) => id !== layerId)
+      : [...hiddenElements, layerId];
+    onUpdateSettings({ hiddenElements: next }, true);
+  };
+
+  const handleResetTransform = () => {
+    onUpdateSettings(
+      {
+        videoScale: 100,
+        videoPosX: 0,
+        videoPosY: 0,
+        videoRotation: 0,
+        videoFlipH: false,
+        videoFlipV: false,
+        videoOpacity: 100,
+      },
+      true
+    );
+    onNotify('Video transform reset to default');
+  };
+
+  const handleResetColorGrading = () => {
+    onUpdateSettings(
+      {
+        colorFilter: 'none',
+        brightness: 100,
+        contrast: 100,
+        saturation: 100,
+        exposure: 0,
+        temperature: 0,
+        videoSharpen: 0,
+        vignette: 0,
+        blur: 0,
+      },
+      true
+    );
+    onNotify('Color grading reset to Natural');
+  };
+
+  const handleQuickAspectChange = (aspect: AspectRatioId) => {
+    const nextCrops = reconcileCrops(blueprint.layout, aspect, 16 / 9, blueprint.crops, {
+      splitRatio: blueprint.splitRatio,
+      pip: blueprint.pip,
+      fullFrameSlots: blueprint.fullFrameSlots,
+    });
+    onUpdateBlueprint({ ...blueprint, aspect, crops: nextCrops }, true);
+  };
+
+  const handleToggleQuickFullFrame = (enabled: boolean) => {
+    const { 0: _removed, ...restSlots } = blueprint.fullFrameSlots || {};
+    const nextFullSlots: Record<number, boolean> = enabled
+      ? { ...restSlots, 0: true }
+      : restSlots;
+    const nextCrops = blueprint.crops.map((c, idx) =>
+      idx === 0 && enabled ? { x: 0, y: 0, w: 1, h: 1 } : c
+    );
+    const reconciled = enabled
+      ? nextCrops
+      : reconcileCrops(blueprint.layout, blueprint.aspect, 16 / 9, nextCrops, {
+          splitRatio: blueprint.splitRatio,
+          pip: blueprint.pip,
+          fullFrameSlots: nextFullSlots,
+        });
+    onUpdateBlueprint(
+      { ...blueprint, fullFrameSlots: nextFullSlots, crops: reconciled },
+      true
+    );
+    onNotify(enabled ? 'Full Screen (100%) video enabled' : 'Returned to framed crop');
+  };
 
   const handleSrtUpload = async (file: File) => {
     if (!clip) return;
@@ -374,24 +523,30 @@ export function ShortsInspector({
     setGoogleFontDraft('');
   };
 
+  const handleAddSubtitleCueAtPlayhead = () => {
+    if (!clip) return;
+    const nextWords = addWordCue(clip.words, currentTimeSec, 'New caption cue');
+    onUpdateClipWords(clip.id, nextWords);
+    onNotify(`Added caption cue at ${formatTimecode(currentTimeSec)}`);
+  };
+
   return (
     <aside
       aria-label="Shorts production inspector"
-      className="w-[340px] shrink-0 border-l border-[var(--pc-border)] bg-[var(--pc-surface)] flex flex-col overflow-hidden"
+      className="w-[368px] shrink-0 border-l border-[var(--pc-border)] bg-[var(--pc-surface)] flex flex-col overflow-hidden"
     >
-      {/* Shorts-Only Tabs (ZERO Framing Tab Duplication) */}
+      {/* Clean 5-Tab NLE Inspector Bar */}
       <div
         role="tablist"
         aria-label="Shorts inspector tabs"
-        className="shrink-0 grid grid-cols-6 border-b border-[var(--pc-border)] bg-[var(--pc-surface)]"
+        className="shrink-0 grid grid-cols-5 border-b border-[var(--pc-border)] bg-[var(--pc-surface)]"
       >
         {(
           [
-            { id: 'frame', label: 'Frame', icon: <Crop className="w-3.5 h-3.5" /> },
+            { id: 'edit', label: 'Edit', icon: <SlidersHorizontal className="w-3.5 h-3.5" /> },
             { id: 'templates', label: 'Templates', icon: <Layers className="w-3.5 h-3.5" /> },
             { id: 'text', label: 'Text', icon: <Type className="w-3.5 h-3.5" /> },
-            { id: 'media', label: 'Media', icon: <Music2 className="w-3.5 h-3.5" /> },
-            { id: 'adjust', label: 'Adjust', icon: <SlidersHorizontal className="w-3.5 h-3.5" /> },
+            { id: 'color', label: 'Color', icon: <Palette className="w-3.5 h-3.5" /> },
             { id: 'audio', label: 'Audio', icon: <Volume2 className="w-3.5 h-3.5" /> },
           ] as { id: ShortsTabId; label: string; icon: React.ReactNode }[]
         ).map((tab) => {
@@ -401,9 +556,10 @@ export function ShortsInspector({
               key={tab.id}
               type="button"
               role="tab"
+              data-testid={`inspector-tab-${tab.id}`}
               aria-selected={active}
               onClick={() => onChangeTab(tab.id)}
-              className={`h-11 inline-flex items-center justify-center gap-1 text-[10px] font-medium border-0 border-b-2 bg-transparent cursor-pointer transition-colors ${
+              className={`h-11 inline-flex flex-col items-center justify-center gap-0.5 text-[10.5px] font-medium border-0 border-b-2 bg-transparent cursor-pointer transition-colors ${
                 active
                   ? 'border-[var(--pc-ink)] text-[var(--pc-ink)]'
                   : 'border-transparent text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
@@ -418,44 +574,314 @@ export function ShortsInspector({
 
       {/* Scrollable Inspector Content */}
       <div className="flex-1 overflow-y-auto studio-scroll px-4 py-3 space-y-3">
-        {/* ================= FRAME TAB (main stage hosts the interactive editor) ================= */}
-        {activeTab === 'frame' && (
-          <div className="space-y-3" data-testid="frame-tab-helper">
-            <div className="rounded-lg border border-[var(--pc-border)] bg-[var(--pc-surface-2)] p-3 flex items-start gap-2.5">
-              <span className="w-8 h-8 shrink-0 rounded-lg bg-[var(--pc-accent-soft)] border border-[var(--pc-accent)] text-[var(--pc-accent)] grid place-items-center">
-                <Crop className="w-4 h-4 stroke-[1.75]" />
-              </span>
-              <div className="min-w-0">
-                <h3 className="text-xs font-semibold text-[var(--pc-ink)] m-0">
-                  Interactive Source-Frame Editor
-                </h3>
-                <p className="text-[11px] text-[var(--pc-muted)] m-0 mt-1 leading-snug">
-                  The main stage now shows the framing workflow. Edit the source crop boxes
-                  right there — no second canvas lives in this panel.
-                </p>
-              </div>
-            </div>
+        {/* ================= 1. EDIT TAB (TRANSFORM, SPEED, TRANSITIONS, FRAMING, LAYERS, MARKERS) ================= */}
+        {activeTab === 'edit' && (
+          <div className="divide-y divide-[var(--pc-border-subtle)]" data-testid="edit-tab-panel">
+            {/* Video Transform */}
+            <InspectorAccordion title="Video Transform" defaultOpen>
+              <div className="space-y-2.5">
+                <StudioSlider
+                  label="Scale / Zoom"
+                  value={settings.videoScale ?? 100}
+                  min={50}
+                  max={250}
+                  step={1}
+                  valueLabel={`${settings.videoScale ?? 100}%`}
+                  onChange={(videoScale) => onUpdateSettings({ videoScale }, false)}
+                />
+                <div className="grid grid-cols-2 gap-2.5">
+                  <StudioSlider
+                    label="Position X"
+                    value={settings.videoPosX ?? 0}
+                    min={-50}
+                    max={50}
+                    step={1}
+                    valueLabel={`${settings.videoPosX ?? 0}%`}
+                    onChange={(videoPosX) => onUpdateSettings({ videoPosX }, false)}
+                  />
+                  <StudioSlider
+                    label="Position Y"
+                    value={settings.videoPosY ?? 0}
+                    min={-50}
+                    max={50}
+                    step={1}
+                    valueLabel={`${settings.videoPosY ?? 0}%`}
+                    onChange={(videoPosY) => onUpdateSettings({ videoPosY }, false)}
+                  />
+                </div>
+                <StudioSlider
+                  label="Rotation"
+                  value={settings.videoRotation ?? 0}
+                  min={-180}
+                  max={180}
+                  step={1}
+                  valueLabel={`${settings.videoRotation ?? 0}°`}
+                  onChange={(videoRotation) => onUpdateSettings({ videoRotation }, false)}
+                />
+                <StudioSlider
+                  label="Opacity"
+                  value={settings.videoOpacity ?? 100}
+                  min={0}
+                  max={100}
+                  step={1}
+                  valueLabel={`${settings.videoOpacity ?? 100}%`}
+                  onChange={(videoOpacity) => onUpdateSettings({ videoOpacity }, false)}
+                />
 
-            <InspectorAccordion title="Framing Controls" defaultOpen>
-              <ul className="m-0 p-0 list-none space-y-2">
-                <li className="flex items-start gap-2 text-[11px] text-[var(--pc-sub)] leading-snug">
-                  <span className="mt-0.5 w-4 h-4 shrink-0 rounded border border-[var(--pc-border)] grid place-items-center text-[9px] font-mono-tabular text-[var(--pc-accent)]">1</span>
-                  <span>Drag a colored box to move its crop region on the 16:9 source.</span>
-                </li>
-                <li className="flex items-start gap-2 text-[11px] text-[var(--pc-sub)] leading-snug">
-                  <span className="mt-0.5 w-4 h-4 shrink-0 rounded border border-[var(--pc-border)] grid place-items-center text-[9px] font-mono-tabular text-[var(--pc-accent)]">2</span>
-                  <span>Drag any of the four corner handles to resize a box.</span>
-                </li>
-                <li className="flex items-start gap-2 text-[11px] text-[var(--pc-sub)] leading-snug">
-                  <span className="mt-0.5 w-4 h-4 shrink-0 rounded border border-[var(--pc-border)] grid place-items-center text-[9px] font-mono-tabular text-[var(--pc-accent)]">3</span>
-                  <span>Changes apply directly to the framing blueprint used by this short (and its export).</span>
-                </li>
-              </ul>
+                <div className="flex items-center gap-1.5 pt-1">
+                  <button
+                    type="button"
+                    aria-pressed={Boolean(settings.videoFlipH)}
+                    data-testid="transform-flip-h"
+                    onClick={() => onUpdateSettings({ videoFlipH: !settings.videoFlipH }, true)}
+                    className={`flex-1 h-7 px-2 rounded-md border text-[11px] font-medium inline-flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                      settings.videoFlipH
+                        ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)] text-[var(--pc-ink)]'
+                        : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                    }`}
+                  >
+                    <FlipHorizontal2 className="w-3.5 h-3.5" />
+                    <span>Flip H</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={Boolean(settings.videoFlipV)}
+                    data-testid="transform-flip-v"
+                    onClick={() => onUpdateSettings({ videoFlipV: !settings.videoFlipV }, true)}
+                    className={`flex-1 h-7 px-2 rounded-md border text-[11px] font-medium inline-flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                      settings.videoFlipV
+                        ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)] text-[var(--pc-ink)]'
+                        : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                    }`}
+                  >
+                    <FlipVertical2 className="w-3.5 h-3.5" />
+                    <span>Flip V</span>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="transform-reset-btn"
+                    onClick={handleResetTransform}
+                    title="Reset all video transforms"
+                    className="h-7 px-2.5 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-[11px] text-[var(--pc-sub)] hover:text-[var(--pc-ink)] inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Reset</span>
+                  </button>
+                </div>
+              </div>
+            </InspectorAccordion>
+
+            {/* Speed & Cut Transitions */}
+            <InspectorAccordion title="Speed & Transitions" defaultOpen>
+              <div className="space-y-3">
+                <StudioSlider
+                  label="Playback Speed"
+                  value={settings.speedMultiplier ?? 1.0}
+                  min={0.25}
+                  max={2.5}
+                  step={0.05}
+                  valueLabel={`${(settings.speedMultiplier ?? 1.0).toFixed(2)}×`}
+                  onChange={(speedMultiplier) => onUpdateSettings({ speedMultiplier }, false)}
+                />
+                <div className="grid grid-cols-5 gap-1">
+                  {[0.5, 0.75, 1.0, 1.25, 1.5].map((spd) => {
+                    const active = Math.abs((settings.speedMultiplier ?? 1) - spd) < 0.02;
+                    return (
+                      <button
+                        key={spd}
+                        type="button"
+                        onClick={() => onUpdateSettings({ speedMultiplier: spd }, true)}
+                        className={`h-6 rounded text-[10.5px] font-mono-tabular border cursor-pointer ${
+                          active
+                            ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)] text-[var(--pc-ink)] font-semibold'
+                            : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                        }`}
+                      >
+                        {spd}×
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="space-y-1.5 pt-1">
+                  <span className="text-[11px] text-[var(--pc-sub)] block">
+                    Segment Cut Transition
+                  </span>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {TRANSITION_OPTIONS.map((t) => {
+                      const active = (settings.transitionStyle || 'cut') === t.id;
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => onUpdateSettings({ transitionStyle: t.id }, true)}
+                          className={`h-7 px-2 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
+                            active
+                              ? 'border-[var(--pc-accent)] bg-[var(--pc-accent-soft)] text-[var(--pc-ink)]'
+                              : 'border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                          }`}
+                        >
+                          {t.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {settings.transitionStyle && settings.transitionStyle !== 'cut' && (
+                  <StudioSlider
+                    label="Transition Duration"
+                    value={settings.transitionDurationSec ?? 0.3}
+                    min={0.1}
+                    max={1.5}
+                    step={0.05}
+                    valueLabel={`${(settings.transitionDurationSec ?? 0.3).toFixed(2)}s`}
+                    onChange={(transitionDurationSec) =>
+                      onUpdateSettings({ transitionDurationSec }, false)
+                    }
+                  />
+                )}
+              </div>
+            </InspectorAccordion>
+
+            {/* Quick Framing & Aspect */}
+            <InspectorAccordion title="Quick Framing & Canvas" defaultOpen={false}>
+              <div className="space-y-2.5">
+                <SegmentedControl<AspectRatioId>
+                  ariaLabel="Canvas aspect ratio"
+                  size="sm"
+                  fullWidth
+                  value={blueprint.aspect}
+                  options={[
+                    { value: '9:16', label: '9:16' },
+                    { value: '4:5', label: '4:5' },
+                    { value: '1:1', label: '1:1' },
+                    { value: '16:9', label: '16:9' },
+                    { value: '4:3', label: '4:3' },
+                  ]}
+                  onChange={handleQuickAspectChange}
+                />
+                <StudioSwitch
+                  checked={isFullFramePrimary}
+                  label="Full Screen (100% Uncropped Source)"
+                  onChange={handleToggleQuickFullFrame}
+                />
+                <Button variant="secondary" size="sm" className="w-full" onClick={onEditFraming}>
+                  <Crop className="w-3.5 h-3.5" />
+                  <span>Open Full Framing Studio</span>
+                </Button>
+              </div>
+            </InspectorAccordion>
+
+            {/* Overlay Layers Visibility Manager */}
+            <InspectorAccordion
+              title="Overlay Layers"
+              badge={hiddenElements.length > 0 ? `${hiddenElements.length} hidden` : 'All visible'}
+              defaultOpen={false}
+            >
+              <div className="space-y-1.5" data-testid="overlay-layers-panel">
+                {OVERLAY_LAYER_ITEMS.map((layer) => {
+                  const hidden = hiddenElements.includes(layer.id);
+                  return (
+                    <div
+                      key={layer.id}
+                      className="flex items-center justify-between px-2.5 py-1.5 rounded-md bg-[var(--pc-surface-2)] border border-[var(--pc-border)] text-xs"
+                    >
+                      <span
+                        className={
+                          hidden ? 'text-[var(--pc-muted)] line-through' : 'text-[var(--pc-ink)]'
+                        }
+                      >
+                        {layer.label}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={hidden ? `Show ${layer.label}` : `Hide ${layer.label}`}
+                        onClick={() => handleToggleOverlayHidden(layer.id)}
+                        className="h-6 w-6 rounded grid place-items-center text-[var(--pc-sub)] hover:text-[var(--pc-ink)] bg-transparent border-0 cursor-pointer"
+                      >
+                        {hidden ? <EyeOff className="w-3.5 h-3.5 opacity-60" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  );
+                })}
+                {hiddenElements.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => onUpdateSettings({ hiddenElements: [] }, true)}
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Show All Overlays</span>
+                  </Button>
+                )}
+              </div>
+            </InspectorAccordion>
+
+            {/* Timeline Markers Manager */}
+            <InspectorAccordion
+              title="Timeline Markers"
+              badge={`${(settings.markers || []).length}`}
+              defaultOpen={false}
+            >
+              <div className="space-y-2" data-testid="markers-manager-panel">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="w-full"
+                  disabled={!clip}
+                  onClick={() => onAddMarker()}
+                >
+                  <Bookmark className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Add Marker @ {formatTimecode(currentTimeSec)}</span>
+                </Button>
+
+                {(settings.markers || []).length > 0 ? (
+                  <div className="space-y-1.5">
+                    {(settings.markers || []).map((m) => (
+                      <div
+                        key={m.id}
+                        className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-[var(--pc-surface-2)] border border-[var(--pc-border)]"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => onSeekTo(m.timeSec)}
+                          className="text-[10.5px] font-mono-tabular text-[var(--pc-accent)] hover:underline bg-transparent border-0 p-0 cursor-pointer shrink-0"
+                        >
+                          {formatTimecode(m.timeSec)}
+                        </button>
+                        <input
+                          type="text"
+                          aria-label="Marker label"
+                          value={m.label}
+                          onChange={(e) => onRenameMarker(m.id, e.target.value)}
+                          className="flex-1 min-w-0 h-6 px-1.5 rounded bg-[var(--pc-surface)] border border-[var(--pc-border)] text-[11px] text-[var(--pc-ink)]"
+                        />
+                        <button
+                          type="button"
+                          aria-label={`Delete marker ${m.label}`}
+                          onClick={() => onDeleteMarker(m.id)}
+                          className="h-6 w-6 grid place-items-center text-[var(--pc-sub)] hover:text-[var(--pc-error)] bg-transparent border-0 cursor-pointer shrink-0"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-[var(--pc-muted)] m-0">
+                    Press <kbd className="px-1 rounded bg-[var(--pc-surface-2)]">M</kbd> while
+                    scrubbing to pin edit beats or punchlines.
+                  </p>
+                )}
+              </div>
             </InspectorAccordion>
           </div>
         )}
 
-        {/* ================= TEMPLATES TAB ================= */}
+        {/* ================= 2. TEMPLATES TAB (TEMPLATES, ATTRIBUTION, HASHTAGS, LOGOS, OUTRO) ================= */}
         {activeTab === 'templates' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-2">
@@ -573,7 +999,9 @@ export function ShortsInspector({
                 {settings.showStreamerBadge && (
                   <>
                     <label className="block space-y-1">
-                      <span className="text-[11px] text-[var(--pc-sub)]">Streamer / Channel Name</span>
+                      <span className="text-[11px] text-[var(--pc-sub)]">
+                        Streamer / Channel Name
+                      </span>
                       <input
                         type="text"
                         value={settings.streamerHandle}
@@ -623,6 +1051,342 @@ export function ShortsInspector({
               </div>
             </InspectorAccordion>
 
+            {/* Logos Library & Dual Watermark */}
+            <InspectorAccordion
+              title="Logos & Watermarks"
+              badge={`${logos.length} logos`}
+              defaultOpen={false}
+            >
+              <input
+                ref={wmLogoInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) onUploadLogo(f);
+                  e.target.value = '';
+                }}
+              />
+              <div className="space-y-2.5" data-testid="logos-library-panel">
+                <StudioSwitch
+                  checked={brandKit.showWatermark}
+                  label="Show Primary Watermark"
+                  onChange={(showWatermark) => onUpdateBrandKit({ ...brandKit, showWatermark })}
+                />
+
+                {brandKit.showWatermark && (
+                  <>
+                    <SegmentedControl<'handle' | 'image'>
+                      ariaLabel="Primary watermark mode"
+                      size="sm"
+                      fullWidth
+                      value={shorts.dualWatermark.useCustomLogo ? 'image' : 'handle'}
+                      options={[
+                        { value: 'handle', label: 'Handle Text' },
+                        { value: 'image', label: 'Logo Asset' },
+                      ]}
+                      onChange={(mode) =>
+                        onUpdateShorts({
+                          dualWatermark: {
+                            ...shorts.dualWatermark,
+                            useCustomLogo: mode === 'image',
+                          },
+                        })
+                      }
+                    />
+
+                    {shorts.dualWatermark.useCustomLogo ? (
+                      <div className="space-y-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => wmLogoInputRef.current?.click()}
+                        >
+                          <ImagePlus className="w-3.5 h-3.5" />
+                          <span>Upload Logo (PNG / SVG)</span>
+                        </Button>
+
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {logos.map((logo) => {
+                            const active = shorts.dualWatermark.customLogoUrl === logo.dataUrl;
+                            return (
+                              <div
+                                key={logo.id}
+                                className={`rounded-md border p-1.5 flex flex-col gap-1.5 ${
+                                  active
+                                    ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)]'
+                                    : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)]'
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onUpdateBrandKit({ ...brandKit, showWatermark: true });
+                                    onUpdateShorts({
+                                      dualWatermark: {
+                                        ...shorts.dualWatermark,
+                                        useCustomLogo: true,
+                                        customLogoUrl: logo.dataUrl,
+                                        customLogoName: logo.name,
+                                      },
+                                    });
+                                    onNotify(`Applied logo: ${logo.name}`);
+                                  }}
+                                  className="flex items-center gap-2 text-left bg-transparent border-0 p-0 cursor-pointer w-full"
+                                >
+                                  <img
+                                    src={logo.dataUrl}
+                                    alt={logo.name}
+                                    className="w-7 h-7 rounded object-contain bg-black/40 p-0.5 shrink-0"
+                                  />
+                                  <span className="text-[10.5px] font-medium text-[var(--pc-ink)] truncate">
+                                    {logo.name}
+                                  </span>
+                                </button>
+                                <div className="flex items-center justify-between gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      onUpdateShorts({
+                                        outro: {
+                                          ...shorts.outro,
+                                          enabled: true,
+                                          mode: 'template',
+                                          logoDataUrl: logo.dataUrl,
+                                        },
+                                      });
+                                      onNotify(`Set "${logo.name}" as Outro Card logo`);
+                                    }}
+                                    className="text-[9.5px] text-[var(--pc-sub)] hover:text-[var(--pc-ink)] bg-transparent border-0 p-0 cursor-pointer"
+                                  >
+                                    Use in Outro
+                                  </button>
+                                  {logo.isCustom && (
+                                    <button
+                                      type="button"
+                                      aria-label={`Delete logo ${logo.name}`}
+                                      onClick={() => onDeleteLogo(logo.id)}
+                                      className="text-[var(--pc-sub)] hover:text-[var(--pc-error)] bg-transparent border-0 p-0 cursor-pointer"
+                                    >
+                                      <Trash2 className="w-2.5 h-2.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <StudioSlider
+                          label="Logo Size"
+                          value={shorts.dualWatermark.customLogoScale}
+                          min={8}
+                          max={50}
+                          valueLabel={`${shorts.dualWatermark.customLogoScale}%`}
+                          onChange={(customLogoScale) =>
+                            onUpdateShorts({
+                              dualWatermark: { ...shorts.dualWatermark, customLogoScale },
+                            })
+                          }
+                        />
+                      </div>
+                    ) : (
+                      <input
+                        type="text"
+                        placeholder="@yourchannel"
+                        value={brandKit.handle}
+                        onChange={(e) => onUpdateBrandKit({ ...brandKit, handle: e.target.value })}
+                        className="w-full h-8 px-2.5 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs text-[var(--pc-ink)]"
+                      />
+                    )}
+
+                    <StudioSlider
+                      label="Opacity"
+                      value={brandKit.watermarkOpacity}
+                      min={15}
+                      max={100}
+                      valueLabel={`${brandKit.watermarkOpacity}%`}
+                      onChange={(watermarkOpacity) =>
+                        onUpdateBrandKit({ ...brandKit, watermarkOpacity })
+                      }
+                    />
+                  </>
+                )}
+
+                <div className="pt-2 border-t border-[var(--pc-border-subtle)] space-y-2">
+                  <StudioSwitch
+                    checked={shorts.dualWatermark.secondaryEnabled}
+                    label="Secondary Hashtag / Credit"
+                    onChange={(secondaryEnabled) =>
+                      onUpdateShorts({
+                        dualWatermark: { ...shorts.dualWatermark, secondaryEnabled },
+                      })
+                    }
+                  />
+                  {shorts.dualWatermark.secondaryEnabled && (
+                    <input
+                      type="text"
+                      value={shorts.dualWatermark.secondaryText}
+                      placeholder="#YourHashtag"
+                      onChange={(e) =>
+                        onUpdateShorts({
+                          dualWatermark: {
+                            ...shorts.dualWatermark,
+                            secondaryText: e.target.value,
+                          },
+                        })
+                      }
+                      className="w-full h-8 px-2.5 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs text-[var(--pc-ink)]"
+                    />
+                  )}
+                </div>
+              </div>
+            </InspectorAccordion>
+
+            {/* Outro Media */}
+            <InspectorAccordion
+              title="Outro Card"
+              badge={shorts.outro.enabled ? `${shorts.outro.duration}s` : 'Off'}
+              defaultOpen={false}
+            >
+              <input
+                ref={outroFileInputRef}
+                type="file"
+                accept="video/*,image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) {
+                    onUpdateShorts({
+                      outro: {
+                        ...shorts.outro,
+                        mode: 'custom',
+                        enabled: true,
+                        customUrl: URL.createObjectURL(f),
+                        customName: f.name,
+                        customIsVideo: f.type.startsWith('video/'),
+                      },
+                    });
+                    onNotify(`Loaded custom outro: ${f.name}`);
+                  }
+                  e.target.value = '';
+                }}
+              />
+              <div className="space-y-3">
+                <StudioSwitch
+                  checked={shorts.outro.enabled}
+                  label="Enable Outro Card"
+                  onChange={(enabled) =>
+                    onUpdateShorts({ outro: { ...shorts.outro, enabled } })
+                  }
+                />
+
+                {shorts.outro.enabled && (
+                  <>
+                    <SegmentedControl<'template' | 'custom'>
+                      ariaLabel="Outro mode"
+                      size="sm"
+                      fullWidth
+                      value={shorts.outro.mode}
+                      options={[
+                        { value: 'template', label: 'Outro Template' },
+                        { value: 'custom', label: 'Custom File' },
+                      ]}
+                      onChange={(mode) =>
+                        onUpdateShorts({ outro: { ...shorts.outro, mode } })
+                      }
+                    />
+
+                    <StudioSlider
+                      label="Outro Duration"
+                      value={shorts.outro.duration}
+                      min={1.5}
+                      max={8}
+                      step={0.5}
+                      valueLabel={`${shorts.outro.duration.toFixed(1)}s`}
+                      onChange={(duration) =>
+                        onUpdateShorts({ outro: { ...shorts.outro, duration } })
+                      }
+                    />
+
+                    {shorts.outro.mode === 'template' ? (
+                      <div className="space-y-2">
+                        <input
+                          type="text"
+                          value={shorts.outro.text}
+                          placeholder="Outro CTA text..."
+                          onChange={(e) =>
+                            onUpdateShorts({ outro: { ...shorts.outro, text: e.target.value } })
+                          }
+                          className="w-full h-8 px-2.5 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs text-[var(--pc-ink)]"
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            type="text"
+                            value={shorts.outro.btnText}
+                            placeholder="Button text"
+                            onChange={(e) =>
+                              onUpdateShorts({
+                                outro: { ...shorts.outro, btnText: e.target.value },
+                              })
+                            }
+                            className="h-7 px-2 rounded border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs text-[var(--pc-ink)]"
+                          />
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="color"
+                              aria-label="Outro background color"
+                              value={shorts.outro.bgColor}
+                              onChange={(e) =>
+                                onUpdateShorts({
+                                  outro: { ...shorts.outro, bgColor: e.target.value },
+                                })
+                              }
+                              className="h-7 w-8 rounded border border-[var(--pc-border)] bg-transparent cursor-pointer"
+                            />
+                            <input
+                              type="color"
+                              aria-label="Outro button color"
+                              value={shorts.outro.btnColor}
+                              onChange={(e) =>
+                                onUpdateShorts({
+                                  outro: { ...shorts.outro, btnColor: e.target.value },
+                                })
+                              }
+                              className="h-7 w-8 rounded border border-[var(--pc-border)] bg-transparent cursor-pointer"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="w-full"
+                        onClick={() => outroFileInputRef.current?.click()}
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>{shorts.outro.customName || 'Upload Outro MP4 / PNG'}</span>
+                      </Button>
+                    )}
+
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="w-full"
+                      data-testid="replay-outro-btn"
+                      onClick={onReplayOutro}
+                    >
+                      <Play className="w-3 h-3" />
+                      <span>Play Outro Preview</span>
+                    </Button>
+                  </>
+                )}
+              </div>
+            </InspectorAccordion>
+
             {/* Trending Hashtags by Video Type */}
             <InspectorAccordion
               title="Trending Hashtags"
@@ -648,7 +1412,7 @@ export function ShortsInspector({
                 </label>
 
                 <p className="text-[11px] text-[var(--pc-muted)] m-0 leading-snug">
-                  {hashtagPack.description} — click tags to add/remove from this clip.
+                  {hashtagPack.description} — click tags to toggle on this clip.
                 </p>
 
                 <div className="space-y-1.5">
@@ -729,7 +1493,7 @@ export function ShortsInspector({
           </div>
         )}
 
-        {/* ================= TEXT TAB (HEADLINE HOOK + SUBTITLES .SRT + FONT MANAGER) ================= */}
+        {/* ================= 3. TEXT TAB (HEADLINE + SUBTITLES + CUE EDITOR + FONT MANAGER) ================= */}
         {activeTab === 'text' && (
           <div className="space-y-3">
             <input
@@ -836,7 +1600,6 @@ export function ShortsInspector({
                   onChange={(headlineY) => onUpdateSettings({ headlineY }, false)}
                 />
 
-                {/* Decompiled Headline Custom Timing & In/Out SFX */}
                 <InspectorAccordion title="Hook Timing & Entry SFX" defaultOpen={false}>
                   <div className="space-y-2.5">
                     <SegmentedControl<'always' | 'custom'>
@@ -948,7 +1711,6 @@ export function ShortsInspector({
               </div>
             ) : (
               <div className="space-y-3">
-                {/* .srt / .vtt Importer */}
                 <input
                   ref={srtInputRef}
                   data-testid="srt-file-input"
@@ -1087,18 +1849,27 @@ export function ShortsInspector({
                       onChange={setNewCapStroke}
                     />
                     <div className="flex items-center justify-end gap-1.5">
-                      <Button type="button" variant="ghost" size="sm" onClick={() => setCreatingCaption(false)}>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCreatingCaption(false)}
+                      >
                         Cancel
                       </Button>
-                      <Button type="submit" variant="primary" size="sm" data-testid="save-caption-style-btn">
+                      <Button
+                        type="submit"
+                        variant="primary"
+                        size="sm"
+                        data-testid="save-caption-style-btn"
+                      >
                         Save Style
                       </Button>
                     </div>
                   </form>
                 )}
 
-                {/* Viral Caption Style Presets Grid (with Delete) */}
-                <div className="grid grid-cols-2 gap-1.5 max-h-56 overflow-y-auto studio-scroll pr-0.5">
+                <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto studio-scroll pr-0.5">
                   {captionPresets.map((cp) => {
                     const active = settings.captionStyle === cp.id;
                     return (
@@ -1170,7 +1941,9 @@ export function ShortsInspector({
                   min={15}
                   max={92}
                   valueLabel={`${settings.subtitleVerticalPos}%`}
-                  onChange={(subtitleVerticalPos) => onUpdateSettings({ subtitleVerticalPos }, false)}
+                  onChange={(subtitleVerticalPos) =>
+                    onUpdateSettings({ subtitleVerticalPos }, false)
+                  }
                 />
 
                 <div>
@@ -1190,15 +1963,121 @@ export function ShortsInspector({
                   />
                 </div>
 
-                {clip && clip.words.length > 0 && (
-                  <div className="text-[11px] font-mono-tabular text-[var(--pc-muted)]">
-                    Loaded {clip.words.length} timed subtitle cues onto CC track.
+                {/* Inline Subtitle Cue Editor */}
+                <InspectorAccordion
+                  title="Cue Transcript Editor"
+                  badge={`${clip?.words.length ?? 0} cues`}
+                  defaultOpen
+                >
+                  <div className="space-y-2" data-testid="subtitle-cue-editor">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="w-full"
+                      disabled={!clip}
+                      data-testid="add-subtitle-cue-btn"
+                      onClick={handleAddSubtitleCueAtPlayhead}
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Cue @ {formatTimecode(currentTimeSec)}</span>
+                    </Button>
+
+                    {clip && clip.words.length > 0 ? (
+                      <div className="space-y-1.5 max-h-56 overflow-y-auto studio-scroll pr-0.5">
+                        {clip.words.slice(0, 80).map((cue, idx) => (
+                          <div
+                            key={`${cue.start_ms}-${idx}`}
+                            className="p-2 rounded-md bg-[var(--pc-surface-2)] border border-[var(--pc-border)] space-y-1.5"
+                          >
+                            <div className="flex items-center justify-between gap-1.5">
+                              <div className="flex items-center gap-1 text-[10px] font-mono-tabular">
+                                <button
+                                  type="button"
+                                  onClick={() => onSeekTo(cue.start_ms / 1000)}
+                                  title="Jump playhead to cue"
+                                  className="text-[var(--pc-accent)] hover:underline bg-transparent border-0 p-0 cursor-pointer"
+                                >
+                                  #{idx + 1}
+                                </button>
+                                <input
+                                  type="number"
+                                  aria-label={`Cue ${idx + 1} start seconds`}
+                                  step={0.1}
+                                  min={0}
+                                  value={Number((cue.start_ms / 1000).toFixed(2))}
+                                  onChange={(e) => {
+                                    const s = Math.max(0, Number(e.target.value) || 0);
+                                    onUpdateClipWords(
+                                      clip.id,
+                                      updateWordCueTiming(
+                                        clip.words,
+                                        idx,
+                                        Math.round(s * 1000),
+                                        cue.end_ms
+                                      )
+                                    );
+                                  }}
+                                  className="w-14 h-5 px-1 rounded bg-[var(--pc-surface)] border border-[var(--pc-border)] text-[var(--pc-ink)]"
+                                />
+                                <span className="text-[var(--pc-muted)]">→</span>
+                                <input
+                                  type="number"
+                                  aria-label={`Cue ${idx + 1} end seconds`}
+                                  step={0.1}
+                                  min={0.1}
+                                  value={Number((cue.end_ms / 1000).toFixed(2))}
+                                  onChange={(e) => {
+                                    const end = Math.max(0.1, Number(e.target.value) || 0.1);
+                                    onUpdateClipWords(
+                                      clip.id,
+                                      updateWordCueTiming(
+                                        clip.words,
+                                        idx,
+                                        cue.start_ms,
+                                        Math.round(end * 1000)
+                                      )
+                                    );
+                                  }}
+                                  className="w-14 h-5 px-1 rounded bg-[var(--pc-surface)] border border-[var(--pc-border)] text-[var(--pc-ink)]"
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                aria-label={`Delete subtitle cue ${idx + 1}`}
+                                onClick={() =>
+                                  onUpdateClipWords(clip.id, deleteWordCue(clip.words, idx))
+                                }
+                                className="h-5 w-5 grid place-items-center text-[var(--pc-sub)] hover:text-[var(--pc-error)] bg-transparent border-0 cursor-pointer"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                            <input
+                              type="text"
+                              aria-label={`Subtitle cue ${idx + 1} text`}
+                              value={cue.text}
+                              onChange={(e) =>
+                                onUpdateClipWords(
+                                  clip.id,
+                                  updateWordCueText(clip.words, idx, e.target.value)
+                                )
+                              }
+                              className="w-full h-7 px-2 rounded bg-[var(--pc-surface)] border border-[var(--pc-border)] text-xs text-[var(--pc-ink)]"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-[var(--pc-muted)] m-0">
+                        Import an .srt/.vtt file or add timed captions directly at the playhead.
+                      </p>
+                    )}
                   </div>
-                )}
+                </InspectorAccordion>
               </div>
             )}
 
-            {/* Custom Fonts Manager (Upload TTF/OTF + Add Google Font Live) */}
+            {/* Custom Fonts Manager */}
             <InspectorAccordion
               title="Fonts Library"
               badge={`${allFontFamilies.length} fonts`}
@@ -1227,7 +2106,7 @@ export function ShortsInspector({
                         handleAddGoogleFontSubmit();
                       }
                     }}
-                    placeholder="Add Google Font (e.g. Orbitron)"
+                    placeholder="Add Google Font (e.g. Syne)"
                     className="flex-1 h-7 px-2 rounded border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs text-[var(--pc-ink)]"
                   />
                   <Button
@@ -1266,19 +2145,214 @@ export function ShortsInspector({
           </div>
         )}
 
-        {/* ================= MEDIA TAB (BGM + COPYRIGHT-FREE MUSIC + SFX + LOGOS LIBRARY + OUTRO) ================= */}
-        {activeTab === 'media' && (
-          <div className="divide-y divide-[var(--pc-border-subtle)]">
-            {/* 1. Master Video Audio */}
-            <InspectorAccordion title="Master Video Audio" defaultOpen>
-              <StudioSwitch
-                checked={!trackStates.a1Muted}
-                label={trackStates.a1Muted ? 'Master Audio Muted' : 'Master Audio Active'}
-                onChange={() => onToggleTrackState('a1Muted')}
-              />
+        {/* ================= 4. COLOR TAB (PRO LUTs, TONE, EXPOSURE, SHARPEN, VIGNETTE, COMPARE) ================= */}
+        {activeTab === 'color' && (
+          <div className="space-y-3" data-testid="color-tab-panel">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                aria-pressed={compareOriginal}
+                data-testid="inspector-compare-btn"
+                onClick={onToggleCompareOriginal}
+                className={`flex-1 h-8 px-2.5 rounded-md border text-xs font-medium inline-flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                  compareOriginal
+                    ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)] text-[var(--pc-ink)]'
+                    : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                }`}
+              >
+                <Columns2 className="w-3.5 h-3.5" />
+                <span>{compareOriginal ? 'Split Compare ON' : 'Compare Original'}</span>
+              </button>
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="reset-color-grading-btn"
+                onClick={handleResetColorGrading}
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Reset All</span>
+              </Button>
+            </div>
+
+            <InspectorAccordion title="Color Look Presets" defaultOpen>
+              <div className="grid grid-cols-2 gap-1.5">
+                {COLOR_LUT_OPTIONS.map((lut) => {
+                  const active = (settings.colorFilter || 'none') === lut.id;
+                  return (
+                    <button
+                      key={lut.id}
+                      type="button"
+                      aria-pressed={active}
+                      data-testid={`color-filter-${lut.id}`}
+                      onClick={() => onUpdateSettings({ colorFilter: lut.id }, true)}
+                      className={`h-8 px-2 rounded-md text-[11px] font-medium border flex items-center gap-2 transition-colors cursor-pointer ${
+                        active
+                          ? 'border-[var(--pc-accent)] bg-[var(--pc-accent-soft)] text-[var(--pc-ink)] font-semibold'
+                          : 'border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+                      }`}
+                    >
+                      <span
+                        className="w-3.5 h-3.5 rounded-xs shrink-0 border border-white/20"
+                        style={{ background: lut.swatch }}
+                      />
+                      <span className="truncate">{lut.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </InspectorAccordion>
 
-            {/* 2. Background Music + Copyright-Free Viral Music Catalog */}
+            <InspectorAccordion title="Light & Color Balance" defaultOpen>
+              <div className="space-y-3">
+                <StudioSlider
+                  label="Exposure"
+                  value={settings.exposure ?? 0}
+                  min={-50}
+                  max={50}
+                  valueLabel={`${(settings.exposure ?? 0) > 0 ? '+' : ''}${settings.exposure ?? 0}`}
+                  onChange={(exposure) => onUpdateSettings({ exposure }, false)}
+                />
+                <StudioSlider
+                  label="Brightness"
+                  value={settings.brightness ?? 100}
+                  min={50}
+                  max={150}
+                  valueLabel={`${settings.brightness ?? 100}%`}
+                  onChange={(brightness) => onUpdateSettings({ brightness }, false)}
+                />
+                <StudioSlider
+                  label="Contrast"
+                  value={settings.contrast ?? 100}
+                  min={50}
+                  max={150}
+                  valueLabel={`${settings.contrast ?? 100}%`}
+                  onChange={(contrast) => onUpdateSettings({ contrast }, false)}
+                />
+                <StudioSlider
+                  label="Saturation"
+                  value={settings.saturation ?? 100}
+                  min={0}
+                  max={200}
+                  valueLabel={`${settings.saturation ?? 100}%`}
+                  onChange={(saturation) => onUpdateSettings({ saturation }, false)}
+                />
+                <StudioSlider
+                  label="Temperature"
+                  value={settings.temperature ?? 0}
+                  min={-50}
+                  max={50}
+                  valueLabel={`${(settings.temperature ?? 0) > 0 ? '+' : ''}${settings.temperature ?? 0}`}
+                  onChange={(temperature) => onUpdateSettings({ temperature }, false)}
+                />
+              </div>
+            </InspectorAccordion>
+
+            <InspectorAccordion title="Optics & Detail" defaultOpen>
+              <div className="space-y-3">
+                <StudioSlider
+                  label="Sharpen"
+                  value={settings.videoSharpen ?? 0}
+                  min={0}
+                  max={100}
+                  valueLabel={`${settings.videoSharpen ?? 0}%`}
+                  onChange={(videoSharpen) => onUpdateSettings({ videoSharpen }, false)}
+                />
+                <StudioSlider
+                  label="Vignette"
+                  value={settings.vignette ?? 0}
+                  min={0}
+                  max={100}
+                  valueLabel={`${settings.vignette ?? 0}%`}
+                  onChange={(vignette) => onUpdateSettings({ vignette }, false)}
+                />
+                <StudioSlider
+                  label="Gaussian Blur"
+                  value={settings.blur ?? 0}
+                  min={0}
+                  max={12}
+                  step={0.5}
+                  valueLabel={`${(settings.blur ?? 0).toFixed(1)}px`}
+                  onChange={(blur) => onUpdateSettings({ blur }, false)}
+                />
+              </div>
+            </InspectorAccordion>
+          </div>
+        )}
+
+        {/* ================= 5. AUDIO TAB (MASTER A1, EBU R128, BGM A2 + CATALOG, SFX) ================= */}
+        {activeTab === 'audio' && (
+          <div className="divide-y divide-[var(--pc-border-subtle)]" data-testid="audio-tab-panel">
+            {/* 1. Master Video Audio & Mastering */}
+            <InspectorAccordion title="Master Audio (A1)" defaultOpen>
+              <div className="space-y-3">
+                <StudioSwitch
+                  checked={!trackStates.a1Muted && !settings.muteOriginalAudio}
+                  label={
+                    trackStates.a1Muted || settings.muteOriginalAudio
+                      ? 'Original Audio Muted'
+                      : 'Original Audio Active'
+                  }
+                  onChange={(active) => {
+                    onUpdateSettings({ muteOriginalAudio: !active }, true);
+                    if (active && trackStates.a1Muted) onToggleTrackState('a1Muted');
+                  }}
+                />
+                <StudioSlider
+                  label="Master Gain"
+                  value={settings.masterVolume ?? 100}
+                  min={0}
+                  max={200}
+                  valueLabel={`${settings.masterVolume ?? 100}%`}
+                  onChange={(masterVolume) => onUpdateSettings({ masterVolume }, false)}
+                />
+                <div className="grid grid-cols-2 gap-2.5">
+                  <StudioSlider
+                    label="Fade In"
+                    value={settings.audioFadeInSec ?? 0}
+                    min={0}
+                    max={3}
+                    step={0.1}
+                    valueLabel={`${(settings.audioFadeInSec ?? 0).toFixed(1)}s`}
+                    onChange={(audioFadeInSec) => onUpdateSettings({ audioFadeInSec }, false)}
+                  />
+                  <StudioSlider
+                    label="Fade Out"
+                    value={settings.audioFadeOutSec ?? 0.5}
+                    min={0}
+                    max={3}
+                    step={0.1}
+                    valueLabel={`${(settings.audioFadeOutSec ?? 0.5).toFixed(1)}s`}
+                    onChange={(audioFadeOutSec) => onUpdateSettings({ audioFadeOutSec }, false)}
+                  />
+                </div>
+                <StudioSwitch
+                  checked={settings.audioNormalize ?? true}
+                  label="EBU R128 Broadcast Normalization"
+                  onChange={(audioNormalize) => onUpdateSettings({ audioNormalize }, true)}
+                />
+                {settings.audioNormalize && (
+                  <SegmentedControl<string>
+                    ariaLabel="Target loudness LUFS"
+                    size="sm"
+                    fullWidth
+                    value={String(settings.targetLufs ?? -14)}
+                    options={[
+                      { value: '-16', label: '-16 LUFS' },
+                      { value: '-14', label: '-14 LUFS' },
+                      { value: '-12', label: '-12 LUFS' },
+                    ]}
+                    onChange={(v) => onUpdateSettings({ targetLufs: Number(v) }, true)}
+                  />
+                )}
+                <StudioSwitch
+                  checked={settings.audioDucking ?? true}
+                  label="Smart Music Ducking Under Speech"
+                  onChange={(audioDucking) => onUpdateSettings({ audioDucking }, true)}
+                />
+              </div>
+            </InspectorAccordion>
+
+            {/* 2. Background Music (A2) + Copyright-Free Viral Music Catalog */}
             <InspectorAccordion
               title="Background Music (A2)"
               badge={settings.customAudioName ? 'Loaded' : undefined}
@@ -1548,584 +2622,6 @@ export function ShortsInspector({
                     ))}
                   </div>
                 )}
-              </div>
-            </InspectorAccordion>
-
-            {/* 4. Logos Library & Dual Watermark */}
-            <InspectorAccordion title="Logos & Dual Watermark" badge={`${logos.length} logos`} defaultOpen>
-              <input
-                ref={wmLogoInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) onUploadLogo(f);
-                  e.target.value = '';
-                }}
-              />
-              <div className="space-y-2.5" data-testid="logos-library-panel">
-                <StudioSwitch
-                  checked={brandKit.showWatermark}
-                  label="Show Primary Watermark"
-                  onChange={(showWatermark) => onUpdateBrandKit({ ...brandKit, showWatermark })}
-                />
-
-                {brandKit.showWatermark && (
-                  <>
-                    <SegmentedControl<'handle' | 'image'>
-                      ariaLabel="Primary watermark mode"
-                      size="sm"
-                      fullWidth
-                      value={shorts.dualWatermark.useCustomLogo ? 'image' : 'handle'}
-                      options={[
-                        { value: 'handle', label: 'Handle Text' },
-                        { value: 'image', label: 'Logo Asset' },
-                      ]}
-                      onChange={(mode) =>
-                        onUpdateShorts({
-                          dualWatermark: {
-                            ...shorts.dualWatermark,
-                            useCustomLogo: mode === 'image',
-                          },
-                        })
-                      }
-                    />
-
-                    {shorts.dualWatermark.useCustomLogo ? (
-                      <div className="space-y-2">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          className="w-full"
-                          onClick={() => wmLogoInputRef.current?.click()}
-                        >
-                          <ImagePlus className="w-3.5 h-3.5" />
-                          <span>Upload Logo (PNG / SVG)</span>
-                        </Button>
-
-                        <div className="grid grid-cols-2 gap-1.5">
-                          {logos.map((logo) => {
-                            const active = shorts.dualWatermark.customLogoUrl === logo.dataUrl;
-                            return (
-                              <div
-                                key={logo.id}
-                                className={`rounded-md border p-1.5 flex flex-col gap-1.5 ${
-                                  active
-                                    ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)]'
-                                    : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)]'
-                                }`}
-                              >
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    onUpdateBrandKit({ ...brandKit, showWatermark: true });
-                                    onUpdateShorts({
-                                      dualWatermark: {
-                                        ...shorts.dualWatermark,
-                                        useCustomLogo: true,
-                                        customLogoUrl: logo.dataUrl,
-                                        customLogoName: logo.name,
-                                      },
-                                    });
-                                    onNotify(`Applied logo: ${logo.name}`);
-                                  }}
-                                  className="flex items-center gap-2 text-left bg-transparent border-0 p-0 cursor-pointer w-full"
-                                >
-                                  <img
-                                    src={logo.dataUrl}
-                                    alt={logo.name}
-                                    className="w-7 h-7 rounded object-contain bg-black/40 p-0.5 shrink-0"
-                                  />
-                                  <span className="text-[10.5px] font-medium text-[var(--pc-ink)] truncate">
-                                    {logo.name}
-                                  </span>
-                                </button>
-                                <div className="flex items-center justify-between gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      onUpdateShorts({
-                                        outro: {
-                                          ...shorts.outro,
-                                          enabled: true,
-                                          mode: 'template',
-                                          logoDataUrl: logo.dataUrl,
-                                        },
-                                      });
-                                      onNotify(`Set "${logo.name}" as Outro Card logo`);
-                                    }}
-                                    className="text-[9.5px] text-[var(--pc-sub)] hover:text-[var(--pc-ink)] bg-transparent border-0 p-0 cursor-pointer"
-                                  >
-                                    Use in Outro
-                                  </button>
-                                  {logo.isCustom && (
-                                    <button
-                                      type="button"
-                                      aria-label={`Delete logo ${logo.name}`}
-                                      onClick={() => onDeleteLogo(logo.id)}
-                                      className="text-[var(--pc-sub)] hover:text-[var(--pc-error)] bg-transparent border-0 p-0 cursor-pointer"
-                                    >
-                                      <Trash2 className="w-2.5 h-2.5" />
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        <StudioSlider
-                          label="Logo Size"
-                          value={shorts.dualWatermark.customLogoScale}
-                          min={8}
-                          max={50}
-                          valueLabel={`${shorts.dualWatermark.customLogoScale}%`}
-                          onChange={(customLogoScale) =>
-                            onUpdateShorts({
-                              dualWatermark: { ...shorts.dualWatermark, customLogoScale },
-                            })
-                          }
-                        />
-                      </div>
-                    ) : (
-                      <input
-                        type="text"
-                        placeholder="@yourchannel"
-                        value={brandKit.handle}
-                        onChange={(e) => onUpdateBrandKit({ ...brandKit, handle: e.target.value })}
-                        className="w-full h-8 px-2.5 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs text-[var(--pc-ink)]"
-                      />
-                    )}
-
-                    <StudioSlider
-                      label="Opacity"
-                      value={brandKit.watermarkOpacity}
-                      min={15}
-                      max={100}
-                      valueLabel={`${brandKit.watermarkOpacity}%`}
-                      onChange={(watermarkOpacity) =>
-                        onUpdateBrandKit({ ...brandKit, watermarkOpacity })
-                      }
-                    />
-                  </>
-                )}
-
-                <div className="pt-2 border-t border-[var(--pc-border-subtle)] space-y-2">
-                  <StudioSwitch
-                    checked={shorts.dualWatermark.secondaryEnabled}
-                    label="Secondary Hashtag / Credit"
-                    onChange={(secondaryEnabled) =>
-                      onUpdateShorts({
-                        dualWatermark: { ...shorts.dualWatermark, secondaryEnabled },
-                      })
-                    }
-                  />
-                  {shorts.dualWatermark.secondaryEnabled && (
-                    <input
-                      type="text"
-                      value={shorts.dualWatermark.secondaryText}
-                      placeholder="#YourHashtag"
-                      onChange={(e) =>
-                        onUpdateShorts({
-                          dualWatermark: {
-                            ...shorts.dualWatermark,
-                            secondaryText: e.target.value,
-                          },
-                        })
-                      }
-                      className="w-full h-8 px-2.5 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs text-[var(--pc-ink)]"
-                    />
-                  )}
-                </div>
-              </div>
-            </InspectorAccordion>
-
-            {/* 5. Outro Media (Animated Card Template or Custom File) */}
-            <InspectorAccordion
-              title="Outro Media"
-              badge={shorts.outro.enabled ? `${shorts.outro.duration}s` : 'Off'}
-            >
-              <input
-                ref={outroFileInputRef}
-                type="file"
-                accept="video/*,image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) {
-                    onUpdateShorts({
-                      outro: {
-                        ...shorts.outro,
-                        mode: 'custom',
-                        enabled: true,
-                        customUrl: URL.createObjectURL(f),
-                        customName: f.name,
-                        customIsVideo: f.type.startsWith('video/'),
-                      },
-                    });
-                    onNotify(`Loaded custom outro: ${f.name}`);
-                  }
-                  e.target.value = '';
-                }}
-              />
-              <div className="space-y-3">
-                <StudioSwitch
-                  checked={shorts.outro.enabled}
-                  label="Enable Outro Card"
-                  onChange={(enabled) =>
-                    onUpdateShorts({ outro: { ...shorts.outro, enabled } })
-                  }
-                />
-
-                {shorts.outro.enabled && (
-                  <>
-                    <SegmentedControl<'template' | 'custom'>
-                      ariaLabel="Outro mode"
-                      size="sm"
-                      fullWidth
-                      value={shorts.outro.mode}
-                      options={[
-                        { value: 'template', label: 'Outro Template' },
-                        { value: 'custom', label: 'Custom File' },
-                      ]}
-                      onChange={(mode) =>
-                        onUpdateShorts({ outro: { ...shorts.outro, mode } })
-                      }
-                    />
-
-                    <StudioSlider
-                      label="Outro Duration"
-                      value={shorts.outro.duration}
-                      min={1.5}
-                      max={8}
-                      step={0.5}
-                      valueLabel={`${shorts.outro.duration.toFixed(1)}s`}
-                      onChange={(duration) =>
-                        onUpdateShorts({ outro: { ...shorts.outro, duration } })
-                      }
-                    />
-
-                    {shorts.outro.mode === 'template' ? (
-                      <div className="space-y-2">
-                        <input
-                          type="text"
-                          value={shorts.outro.text}
-                          placeholder="Outro CTA text..."
-                          onChange={(e) =>
-                            onUpdateShorts({ outro: { ...shorts.outro, text: e.target.value } })
-                          }
-                          className="w-full h-8 px-2.5 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs text-[var(--pc-ink)]"
-                        />
-                        <div className="grid grid-cols-2 gap-2">
-                          <input
-                            type="text"
-                            value={shorts.outro.btnText}
-                            placeholder="Button text"
-                            onChange={(e) =>
-                              onUpdateShorts({
-                                outro: { ...shorts.outro, btnText: e.target.value },
-                              })
-                            }
-                            className="h-7 px-2 rounded border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs text-[var(--pc-ink)]"
-                          />
-                          <div className="flex items-center gap-1.5">
-                            <input
-                              type="color"
-                              aria-label="Outro background color"
-                              value={shorts.outro.bgColor}
-                              onChange={(e) =>
-                                onUpdateShorts({
-                                  outro: { ...shorts.outro, bgColor: e.target.value },
-                                })
-                              }
-                              className="h-7 w-8 rounded border border-[var(--pc-border)] bg-transparent cursor-pointer"
-                            />
-                            <input
-                              type="color"
-                              aria-label="Outro button color"
-                              value={shorts.outro.btnColor}
-                              onChange={(e) =>
-                                onUpdateShorts({
-                                  outro: { ...shorts.outro, btnColor: e.target.value },
-                                })
-                              }
-                              className="h-7 w-8 rounded border border-[var(--pc-border)] bg-transparent cursor-pointer"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => outroFileInputRef.current?.click()}
-                      >
-                        <Upload className="w-3.5 h-3.5" />
-                        <span>{shorts.outro.customName || 'Upload Outro MP4 / PNG'}</span>
-                      </Button>
-                    )}
-
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="w-full"
-                      data-testid="replay-outro-btn"
-                      onClick={onReplayOutro}
-                    >
-                      <Play className="w-3 h-3" />
-                      <span>Play Outro Preview</span>
-                    </Button>
-                  </>
-                )}
-              </div>
-            </InspectorAccordion>
-          </div>
-        )}
-
-        {/* ================= ADJUST TAB (COLOR GRADING, FX, MOTION & TRANSITIONS) ================= */}
-        {activeTab === 'adjust' && (
-          <div className="space-y-3">
-            <InspectorAccordion title="Color Grading Filters" defaultOpen>
-              <div className="grid grid-cols-3 gap-1.5">
-                {([
-                  { id: 'none', label: 'Natural' },
-                  { id: 'cinematic', label: 'Cinematic' },
-                  { id: 'warm', label: 'Warm Gold' },
-                  { id: 'moody', label: 'Moody Dark' },
-                  { id: 'vintage', label: 'Vintage 90s' },
-                  { id: 'bw', label: 'B&W Film' },
-                  { id: 'cyberpunk', label: 'Cyberpunk' },
-                ] as const).map((f) => {
-                  const active = (settings.colorFilter || 'none') === f.id;
-                  return (
-                    <button
-                      key={f.id}
-                      type="button"
-                      aria-pressed={active}
-                      data-testid={`color-filter-${f.id}`}
-                      onClick={() => onUpdateSettings({ colorFilter: f.id }, true)}
-                      className={`h-8 px-1.5 rounded-lg text-[11px] font-medium border transition-colors cursor-pointer ${
-                        active
-                          ? 'border-[var(--pc-accent)] bg-[var(--pc-accent-soft)] text-[var(--pc-ink)] font-semibold'
-                          : 'border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
-                      }`}
-                    >
-                      {f.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </InspectorAccordion>
-
-            <InspectorAccordion title="Color Adjustments" defaultOpen>
-              <div className="space-y-3.5">
-                <StudioSlider
-                  label="Brightness"
-                  value={settings.brightness ?? 100}
-                  min={50}
-                  max={150}
-                  unit="%"
-                  onChange={(brightness) => onUpdateSettings({ brightness }, false)}
-                />
-                <StudioSlider
-                  label="Contrast"
-                  value={settings.contrast ?? 100}
-                  min={50}
-                  max={150}
-                  unit="%"
-                  onChange={(contrast) => onUpdateSettings({ contrast }, false)}
-                />
-                <StudioSlider
-                  label="Saturation"
-                  value={settings.saturation ?? 100}
-                  min={0}
-                  max={200}
-                  unit="%"
-                  onChange={(saturation) => onUpdateSettings({ saturation }, false)}
-                />
-                <StudioSlider
-                  label="Exposure"
-                  value={settings.exposure ?? 0}
-                  min={-50}
-                  max={50}
-                  onChange={(exposure) => onUpdateSettings({ exposure }, false)}
-                />
-                <StudioSlider
-                  label="Temperature (Warm / Cool)"
-                  value={settings.temperature ?? 0}
-                  min={-50}
-                  max={50}
-                  onChange={(temperature) => onUpdateSettings({ temperature }, false)}
-                />
-              </div>
-            </InspectorAccordion>
-
-            <InspectorAccordion title="Effects & Optics" defaultOpen>
-              <div className="space-y-3.5">
-                <StudioSlider
-                  label="Vignette"
-                  value={settings.vignette ?? 0}
-                  min={0}
-                  max={100}
-                  unit="%"
-                  onChange={(vignette) => onUpdateSettings({ vignette }, false)}
-                />
-                <StudioSlider
-                  label="Background Soften / Blur"
-                  value={settings.blur ?? 0}
-                  min={0}
-                  max={20}
-                  unit="px"
-                  onChange={(blur) => onUpdateSettings({ blur }, false)}
-                />
-              </div>
-            </InspectorAccordion>
-
-            <InspectorAccordion title="Motion & Speed Ramping" defaultOpen>
-              <div className="space-y-2.5">
-                <div className="space-y-1.5">
-                  <span className="block text-[11px] text-[var(--pc-sub)]">
-                    Clip Speed Multiplier
-                  </span>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {[0.5, 0.75, 1, 1.25, 1.5, 2].map((spd) => {
-                      const active = (settings.speedMultiplier ?? 1) === spd;
-                      return (
-                        <button
-                          key={spd}
-                          type="button"
-                          aria-pressed={active}
-                          data-testid={`speed-${spd}`}
-                          onClick={() => onUpdateSettings({ speedMultiplier: spd }, true)}
-                          className={`h-7 px-2 rounded-md font-mono-tabular text-xs border transition-colors cursor-pointer ${
-                            active
-                              ? 'border-[var(--pc-accent)] bg-[var(--pc-accent-soft)] text-[var(--pc-accent)] font-bold'
-                              : 'border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
-                          }`}
-                        >
-                          {spd}x
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="space-y-1.5 pt-2 border-t border-[var(--pc-border-subtle)]">
-                  <span className="block text-[11px] text-[var(--pc-sub)]">
-                    Cut Transition Style
-                  </span>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {([
-                      { id: 'cut', label: 'Hard Cut' },
-                      { id: 'crossfade', label: 'Crossfade' },
-                      { id: 'zoom-in', label: 'Zoom Punch' },
-                      { id: 'dip-black', label: 'Dip to Black' },
-                      { id: 'glitch', label: 'Glitch Flash' },
-                    ] as const).map((t) => {
-                      const active = (settings.transitionStyle || 'cut') === t.id;
-                      return (
-                        <button
-                          key={t.id}
-                          type="button"
-                          aria-pressed={active}
-                          data-testid={`transition-${t.id}`}
-                          onClick={() => onUpdateSettings({ transitionStyle: t.id }, true)}
-                          className={`h-7 px-1.5 rounded-md text-[11px] border transition-colors cursor-pointer ${
-                            active
-                              ? 'border-[var(--pc-accent)] bg-[var(--pc-accent-soft)] text-[var(--pc-ink)] font-semibold'
-                              : 'border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
-                          }`}
-                        >
-                          {t.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <StudioSlider
-                  label="Transition Duration"
-                  value={settings.transitionDurationSec ?? 0.3}
-                  min={0}
-                  max={2}
-                  step={0.1}
-                  unit="s"
-                  onChange={(transitionDurationSec) =>
-                    onUpdateSettings({ transitionDurationSec }, false)
-                  }
-                />
-              </div>
-            </InspectorAccordion>
-          </div>
-        )}
-
-        {/* ================= AUDIO TAB (ADVANCED MASTER AUDIO) ================= */}
-        {activeTab === 'audio' && (
-          <div className="space-y-3">
-            <InspectorAccordion title="Master Audio Controls" defaultOpen>
-              <div className="space-y-3.5">
-                <StudioSlider
-                  label="Master Volume"
-                  value={settings.masterVolume ?? 100}
-                  min={0}
-                  max={200}
-                  unit="%"
-                  onChange={(masterVolume) => onUpdateSettings({ masterVolume }, false)}
-                />
-                <StudioSwitch
-                  label="EBU R128 Loudness Normalization"
-                  description="Normalizes broadcast audio level to prevent distortion and clipping"
-                  checked={settings.audioNormalize ?? true}
-                  onChange={(audioNormalize) => onUpdateSettings({ audioNormalize }, true)}
-                />
-                {settings.audioNormalize && (
-                  <StudioSlider
-                    label="Target Integrated LUFS"
-                    value={settings.targetLufs ?? -14}
-                    min={-24}
-                    max={-9}
-                    step={0.5}
-                    unit=" LUFS"
-                    onChange={(targetLufs) => onUpdateSettings({ targetLufs }, false)}
-                  />
-                )}
-                <StudioSwitch
-                  label="Smart Audio Ducking"
-                  description="Dips background music bed when dialogue or lyrics are detected"
-                  checked={settings.audioDucking ?? true}
-                  onChange={(audioDucking) => onUpdateSettings({ audioDucking }, true)}
-                />
-                <StudioSwitch
-                  label="Mute Native Source Audio"
-                  description="Silences camera audio to replace entirely with music bed"
-                  checked={settings.muteOriginalAudio ?? false}
-                  onChange={(muteOriginalAudio) => onUpdateSettings({ muteOriginalAudio }, true)}
-                />
-              </div>
-            </InspectorAccordion>
-
-            <InspectorAccordion title="Fades & Sound FX" defaultOpen>
-              <div className="space-y-3.5">
-                <StudioSlider
-                  label="Audio Fade In"
-                  value={settings.audioFadeInSec ?? 0}
-                  min={0}
-                  max={3}
-                  step={0.1}
-                  unit="s"
-                  onChange={(audioFadeInSec) => onUpdateSettings({ audioFadeInSec }, false)}
-                />
-                <StudioSlider
-                  label="Audio Fade Out"
-                  value={settings.audioFadeOutSec ?? 0.5}
-                  min={0}
-                  max={3}
-                  step={0.1}
-                  unit="s"
-                  onChange={(audioFadeOutSec) => onUpdateSettings({ audioFadeOutSec }, false)}
-                />
               </div>
             </InspectorAccordion>
           </div>

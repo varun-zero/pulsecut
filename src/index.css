@@ -4,40 +4,41 @@
 @layer base {
   :root {
     color-scheme: light;
-    --pc-bg: #F7F7F5;
+    --pc-bg: #F6F6F3;
+    --pc-canvas: #E9E8E3;
     --pc-surface: #FFFFFF;
-    --pc-surface-2: #F0EFEA;
-    --pc-surface-hover: #EAE8E2;
-    --pc-border: #E4E2DC;
-    --pc-border-subtle: #EEEDE8;
-    --pc-ink: #121214;
-    --pc-sub: #5E5E66;
-    --pc-muted: #86868F;
+    --pc-surface-2: #F1F0EB;
+    --pc-surface-hover: #E7E5DE;
+    --pc-border: #DFDDD6;
+    --pc-border-subtle: #ECEAE4;
+    --pc-ink: #111113;
+    --pc-sub: #57575F;
+    --pc-muted: #82828B;
     --pc-accent: #2563EB;
     --pc-accent-soft: rgba(37, 99, 235, 0.12);
-    --pc-cta-bg: #121214;
+    --pc-cta-bg: #111113;
     --pc-cta-fg: #FFFFFF;
     --pc-ok: #16A34A;
     --pc-warn: #D97706;
     --pc-error: #DC2626;
     --pc-font-sans: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
-    --pc-font-serif: "Fraunces", Georgia, serif;
     --pc-font-mono: "JetBrains Mono", ui-monospace, monospace;
   }
 
   .dark {
     color-scheme: dark;
     --pc-bg: #0C0C0E;
-    --pc-surface: #131316;
-    --pc-surface-2: #1A1A1F;
-    --pc-surface-hover: #222228;
-    --pc-border: #26262B;
-    --pc-border-subtle: #1D1D22;
+    --pc-canvas: #070709;
+    --pc-surface: #121216;
+    --pc-surface-2: #1A1A20;
+    --pc-surface-hover: #23232A;
+    --pc-border: #26262E;
+    --pc-border-subtle: #1C1C22;
     --pc-ink: #F4F4F6;
     --pc-sub: #A1A1AA;
     --pc-muted: #71717A;
-    --pc-accent: #60A5FA;
-    --pc-accent-soft: rgba(96, 165, 250, 0.14);
+    --pc-accent: #3B82F6;
+    --pc-accent-soft: rgba(59, 130, 246, 0.16);
     --pc-cta-bg: #F4F4F6;
     --pc-cta-fg: #0C0C0E;
     --pc-ok: #22C55E;
@@ -70,7 +71,8 @@
   }
 
   .font-brand {
-    font-family: var(--pc-font-serif);
+    font-family: var(--pc-font-sans);
+    letter-spacing: -0.03em;
   }
 
   .font-mono-tabular {

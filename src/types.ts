@@ -1,7 +1,7 @@
 export type PageId = 'dashboard' | 'live' | 'clips' | 'framing' | 'shorts';
 
 export type EditorTabId = 'framing' | 'templates' | 'text' | 'adjust' | 'audio' | 'media';
-export type ShortsTabId = 'templates' | 'text' | 'media' | 'adjust' | 'audio' | 'frame';
+export type ShortsTabId = 'edit' | 'templates' | 'text' | 'color' | 'audio';
 export type TextSubtabId = 'headline' | 'subs';
 export type StageViewModeId = 'framing' | 'editor';
 
@@ -281,8 +281,16 @@ export type JobStatus = 'queued' | 'downloading' | 'clipping' | 'rendering' | 'd
 
 export type SourcePlatform = 'YouTube' | 'Twitch' | 'Kick' | 'Instagram' | 'Local' | 'Direct';
 
-export type ColorFilterId = 'none' | 'cinematic' | 'warm' | 'moody' | 'vintage' | 'bw' | 'cyberpunk';
-export type TransitionStyleId = 'cut' | 'crossfade' | 'zoom-in' | 'dip-black' | 'glitch';
+export type ColorFilterId =
+  | 'none'
+  | 'cinematic'
+  | 'warm'
+  | 'cool'
+  | 'moody'
+  | 'vintage'
+  | 'contrast'
+  | 'bw';
+export type TransitionStyleId = 'cut' | 'crossfade' | 'zoom-in' | 'dip-black' | 'slide-left';
 
 export interface TimelineMarker {
   id: string;
@@ -479,6 +487,15 @@ export interface EditorSettings {
   outroText: string;
   outroDurationSec: number;
 
+  /* Video Transform & Framing Overrides */
+  videoScale?: number; // 50..250%
+  videoPosX?: number; // -50..50%
+  videoPosY?: number; // -50..50%
+  videoRotation?: number; // -180..180 deg
+  videoFlipH?: boolean;
+  videoFlipV?: boolean;
+  videoOpacity?: number; // 0..100%
+
   /* Color Grading & Visual FX */
   brightness: number;
   contrast: number;
@@ -487,6 +504,7 @@ export interface EditorSettings {
   temperature: number;
   blur: number;
   vignette: number;
+  videoSharpen?: number;
   colorFilter: ColorFilterId;
 
   /* Advanced Audio Controls */

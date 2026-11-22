@@ -246,6 +246,16 @@ function createEditorSettingsForClip(clip: ClipItem | null, brandKit: BrandKit):
     outroText: clip?.outroText ?? brandKit.defaultOutro,
     outroDurationSec: 3,
 
+    /* Video Transform & Optics */
+    videoScale: 100,
+    videoPosX: 0,
+    videoPosY: 0,
+    videoRotation: 0,
+    videoFlipH: false,
+    videoFlipV: false,
+    videoOpacity: 100,
+    videoSharpen: 0,
+
     /* Color Grading & Visual FX */
     brightness: 100,
     contrast: 100,
@@ -1507,37 +1517,23 @@ export function App() {
     [notify]
   );
 
-  const handleUpdateCueWord = useCallback((clipId: string, index: number, text: string) => {
+  const handleUpdateClipWords = useCallback((clipId: string, words: WordCue[]) => {
+    const snippet = words
+      .slice(0, 6)
+      .map((w) => w.text)
+      .join(' ');
     setClips((prev) =>
-      prev.map((clip) => {
-        if (clip.id !== clipId) return clip;
-        const words = clip.words.map((w, i) => (i === index ? { ...w, text } : w));
-        return { ...clip, words };
-      })
+      prev.map((clip) =>
+        clip.id === clipId
+          ? {
+              ...clip,
+              words,
+              transcript_snippet: snippet || clip.transcript_snippet,
+            }
+          : clip
+      )
     );
   }, []);
-
-  const handleSetWordEmphasis = useCallback(
-    (clipId: string, cueIndex: number, tokenIndex: number, color: string | null) => {
-      setClips((prev) =>
-        prev.map((clip) => {
-          if (clip.id !== clipId) return clip;
-          const words = clip.words.map((w, i) => {
-            if (i !== cueIndex) return w;
-            const nextEmphasis: Record<number, string> = { ...(w.wordEmphasis || {}) };
-            if (color === null) {
-              delete nextEmphasis[tokenIndex];
-            } else {
-              nextEmphasis[tokenIndex] = color;
-            }
-            return { ...w, wordEmphasis: nextEmphasis };
-          });
-          return { ...clip, words };
-        })
-      );
-    },
-    []
-  );
 
   const handleExportClip = useCallback(
     async (trimInSec: number, trimOutSec: number) => {
@@ -1740,6 +1736,7 @@ export function App() {
           onUploadLogo={handleUploadLogo}
           onDeleteLogo={handleDeleteLogo}
           onUpdateClipHashtags={handleUpdateClipHashtags}
+          onUpdateClipWords={handleUpdateClipWords}
           canUndo={history.past.length > 0}
           canRedo={history.future.length > 0}
           onUndo={() => {

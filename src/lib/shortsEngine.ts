@@ -96,7 +96,19 @@ export function getActiveSegments(
   return [{ id: 'single', start: safeStart, end: safeEnd }];
 }
 
-/** Combined stitched duration accounting for playback speed (`te / V` in decompiled engine) */
+/** Combined stitched duration accounting for unified playback speed */
+export function computeEffectivePlaybackSpeed(
+  blueprintSpeed = 1,
+  settingsSpeedMultiplier = 1
+): number {
+  const b = Number.isFinite(blueprintSpeed) && blueprintSpeed > 0 ? blueprintSpeed : 1;
+  const m =
+    Number.isFinite(settingsSpeedMultiplier) && settingsSpeedMultiplier > 0
+      ? settingsSpeedMultiplier
+      : 1;
+  return Number(clampNum(b * m, 0.25, 4).toFixed(3));
+}
+
 export function computeStitchedDuration(
   segments: readonly ClipSegment[],
   speed = 1
@@ -104,6 +116,244 @@ export function computeStitchedDuration(
   const safeSpeed = clampNum(speed || 1, 0.25, 4);
   const raw = sortSegments(segments).reduce((acc, s) => acc + Math.max(0, s.end - s.start), 0);
   return Number((raw / safeSpeed).toFixed(3));
+}
+
+/**
+ * Real non-destructive razor split: partitions the segment enclosing `splitTimeSec`
+ * into two independent segments while enforcing a minimum usable segment duration.
+ */
+export function splitSegmentsAtTime(
+  segments: readonly ClipSegment[],
+  splitTimeSec: number,
+  minSegSec = 0.4
+): { segments: ClipSegment[]; didSplit: boolean; newSegmentId: string | null } {
+  const sorted = sortSegments(segments);
+  const t = Number(splitTimeSec.toFixed(2));
+  for (let i = 0; i < sorted.length; i++) {
+    const seg = sorted[i];
+    if (t >= seg.start + minSegSec && t <= seg.end - minSegSec) {
+      const left: ClipSegment = { ...seg, end: t };
+      const rightId = `seg-${Math.round(t * 1000)}-${i + 1}`;
+      const right: ClipSegment = { id: rightId, start: t, end: seg.end };
+      const next = [...sorted.slice(0, i), left, right, ...sorted.slice(i + 1)];
+      return { segments: next, didSplit: true, newSegmentId: rightId };
+    }
+  }
+  return { segments: sorted, didSplit: false, newSegmentId: null };
+}
+
+export function deleteSegmentById(
+  segments: readonly ClipSegment[],
+  segId: string
+): ClipSegment[] {
+  return sortSegments(segments.filter((s) => s.id !== segId));
+}
+
+export function duplicateSegmentById(
+  segments: readonly ClipSegment[],
+  segId: string,
+  maxDurSec: number
+): { segments: ClipSegment[]; created: ClipSegment | null } {
+  const sorted = sortSegments(segments);
+  const target = sorted.find((s) => s.id === segId);
+  if (!target) return { segments: sorted, created: null };
+  const dur = Math.max(0.5, target.end - target.start);
+  const nextStart = Math.min(Math.max(0, maxDurSec - 0.5), target.end + 0.1);
+  const nextEnd = Math.min(maxDurSec, nextStart + dur);
+  if (nextEnd - nextStart < 0.3) return { segments: sorted, created: null };
+  const created: ClipSegment = {
+    id: `seg-dup-${Date.now()}-${Math.round(nextStart * 100)}`,
+    start: Number(nextStart.toFixed(2)),
+    end: Number(nextEnd.toFixed(2)),
+  };
+  return { segments: sortSegments([...sorted, created]), created };
+}
+
+/* ---------- Color Grading, Transforms, Transitions, Audio Envelope & Subtitle Cue CRUD ---------- */
+
+export function buildVideoGradingCssFilter(
+  settings: Pick<
+    EditorSettings,
+    'brightness' | 'contrast' | 'saturation' | 'exposure' | 'temperature' | 'blur' | 'colorFilter'
+  >
+): string {
+  const filters: string[] = [];
+  const b = settings.brightness ?? 100;
+  const c = settings.contrast ?? 100;
+  const s = settings.saturation ?? 100;
+  const exp = settings.exposure ?? 0;
+  const temp = settings.temperature ?? 0;
+  const blur = settings.blur ?? 0;
+
+  const netBrightness = Math.max(10, b + exp);
+  if (netBrightness !== 100) filters.push(`brightness(${netBrightness}%)`);
+  if (c !== 100) filters.push(`contrast(${c}%)`);
+  if (s !== 100) filters.push(`saturate(${s}%)`);
+  if (blur > 0) filters.push(`blur(${blur}px)`);
+
+  if (temp > 0) {
+    filters.push(`sepia(${(temp * 0.55).toFixed(1)}%)`);
+  } else if (temp < 0) {
+    filters.push(`hue-rotate(${(temp * 0.5).toFixed(1)}deg) saturate(${Math.max(70, 100 + temp * 0.25).toFixed(0)}%)`);
+  }
+
+  switch (settings.colorFilter) {
+    case 'cinematic':
+      filters.push('contrast(114%) saturate(108%) sepia(8%)');
+      break;
+    case 'warm':
+      filters.push('sepia(22%) saturate(114%) brightness(102%)');
+      break;
+    case 'cool':
+      filters.push('hue-rotate(-14deg) saturate(94%) contrast(106%)');
+      break;
+    case 'moody':
+      filters.push('brightness(91%) contrast(124%) saturate(84%)');
+      break;
+    case 'vintage':
+      filters.push('sepia(32%) contrast(94%) brightness(104%)');
+      break;
+    case 'contrast':
+      filters.push('contrast(128%) saturate(112%)');
+      break;
+    case 'bw':
+      filters.push('grayscale(100%) contrast(118%)');
+      break;
+    default:
+      break;
+  }
+
+  return filters.length > 0 ? filters.join(' ') : 'none';
+}
+
+export function buildVideoTransformCss(
+  settings: Pick<
+    EditorSettings,
+    'videoScale' | 'videoPosX' | 'videoPosY' | 'videoRotation' | 'videoFlipH' | 'videoFlipV' | 'videoOpacity'
+  >
+): { transform: string; opacity: number } {
+  const scale = clampNum((settings.videoScale ?? 100) / 100, 0.5, 2.5);
+  const posX = clampNum(settings.videoPosX ?? 0, -50, 50);
+  const posY = clampNum(settings.videoPosY ?? 0, -50, 50);
+  const rot = clampNum(settings.videoRotation ?? 0, -180, 180);
+  const sx = (settings.videoFlipH ? -1 : 1) * scale;
+  const sy = (settings.videoFlipV ? -1 : 1) * scale;
+  const opacity = clampNum((settings.videoOpacity ?? 100) / 100, 0, 1);
+
+  const parts: string[] = [];
+  if (posX !== 0 || posY !== 0) parts.push(`translate(${posX}%, ${posY}%)`);
+  if (rot !== 0) parts.push(`rotate(${rot}deg)`);
+  if (sx !== 1 || sy !== 1) parts.push(`scale(${sx.toFixed(3)}, ${sy.toFixed(3)})`);
+
+  return {
+    transform: parts.length > 0 ? parts.join(' ') : 'none',
+    opacity: Number(opacity.toFixed(3)),
+  };
+}
+
+export interface TransitionPreviewEffect {
+  opacity: number;
+  scale: number;
+  translateX: number;
+  dipBlackOpacity: number;
+}
+
+/**
+ * Computes live preview transition effect near segment boundaries or split points.
+ */
+export function computeTransitionPreviewEffect(
+  currentTimeSec: number,
+  segments: readonly ClipSegment[],
+  style: EditorSettings['transitionStyle'],
+  durationSec = 0.3
+): TransitionPreviewEffect {
+  const neutral: TransitionPreviewEffect = {
+    opacity: 1,
+    scale: 1,
+    translateX: 0,
+    dipBlackOpacity: 0,
+  };
+  if (style === 'cut' || durationSec <= 0.02 || segments.length <= 1) return neutral;
+
+  const sorted = sortSegments(segments);
+  const halfDur = Math.max(0.05, durationSec / 2);
+
+  for (let i = 1; i < sorted.length; i++) {
+    const seg = sorted[i];
+    const distInto = currentTimeSec - seg.start;
+    if (distInto >= 0 && distInto < halfDur) {
+      const p = clampNum(distInto / halfDur, 0, 1); // 0 at cut -> 1 settled
+      if (style === 'crossfade') return { ...neutral, opacity: Number((0.35 + 0.65 * p).toFixed(3)) };
+      if (style === 'dip-black') return { ...neutral, dipBlackOpacity: Number((1 - p).toFixed(3)) };
+      if (style === 'zoom-in') return { ...neutral, scale: Number((1.14 - 0.14 * p).toFixed(3)) };
+      if (style === 'slide-left') return { ...neutral, translateX: Number(((1 - p) * 18).toFixed(2)) };
+    }
+    const prev = sorted[i - 1];
+    const distBefore = prev.end - currentTimeSec;
+    if (distBefore >= 0 && distBefore < halfDur) {
+      const p = clampNum(distBefore / halfDur, 0, 1); // 1 far -> 0 at cut
+      if (style === 'crossfade') return { ...neutral, opacity: Number((0.35 + 0.65 * p).toFixed(3)) };
+      if (style === 'dip-black') return { ...neutral, dipBlackOpacity: Number((1 - p).toFixed(3)) };
+      if (style === 'zoom-in') return { ...neutral, scale: Number((1 + (1 - p) * 0.1).toFixed(3)) };
+      if (style === 'slide-left') return { ...neutral, translateX: Number((-(1 - p) * 18).toFixed(2)) };
+    }
+  }
+  return neutral;
+}
+
+/**
+ * Computes real-time master audio gain (0..2.0) incorporating Fade In, Fade Out, and Master Volume %.
+ */
+export function computeAudioEnvelopeGain(
+  stitchedTimeSec: number,
+  stitchedDurationSec: number,
+  masterVolumePct = 100,
+  fadeInSec = 0,
+  fadeOutSec = 0
+): number {
+  const baseGain = clampNum(masterVolumePct / 100, 0, 2);
+  let env = 1;
+  if (fadeInSec > 0.02 && stitchedTimeSec < fadeInSec) {
+    env *= clampNum(stitchedTimeSec / fadeInSec, 0, 1);
+  }
+  if (fadeOutSec > 0.02 && stitchedDurationSec > 0) {
+    const remaining = stitchedDurationSec - stitchedTimeSec;
+    if (remaining < fadeOutSec) {
+      env *= clampNum(remaining / fadeOutSec, 0, 1);
+    }
+  }
+  return Number((baseGain * env).toFixed(3));
+}
+
+export function updateWordCueText(cues: readonly WordCue[], index: number, text: string): WordCue[] {
+  return cues.map((c, i) => (i === index ? { ...c, text } : c));
+}
+
+export function updateWordCueTiming(
+  cues: readonly WordCue[],
+  index: number,
+  startMs: number,
+  endMs: number
+): WordCue[] {
+  const safeStart = Math.max(0, Math.round(startMs));
+  const safeEnd = Math.max(safeStart + 120, Math.round(endMs));
+  return cues
+    .map((c, i) => (i === index ? { ...c, start_ms: safeStart, end_ms: safeEnd } : c))
+    .sort((a, b) => a.start_ms - b.start_ms);
+}
+
+export function addWordCue(cues: readonly WordCue[], atSec: number, text = 'New caption'): WordCue[] {
+  const startMs = Math.max(0, Math.round(atSec * 1000));
+  const next: WordCue = {
+    start_ms: startMs,
+    end_ms: startMs + 1600,
+    text: text.trim() || 'New caption',
+  };
+  return [...cues, next].sort((a, b) => a.start_ms - b.start_ms);
+}
+
+export function deleteWordCue(cues: readonly WordCue[], index: number): WordCue[] {
+  return cues.filter((_, i) => i !== index);
 }
 
 /**
@@ -379,7 +629,8 @@ export function buildFullShortExportSpec(
 ): FullShortExportSpec {
   const dimensions = getExportPixelDimensions(blueprint.aspect, shorts.exportResolution);
   const activeSegments = getActiveSegments(shorts, trimInSec, trimOutSec);
-  const stitchedDurationSec = computeStitchedDuration(activeSegments, blueprint.speed);
+  const effectiveSpeed = computeEffectivePlaybackSpeed(blueprint.speed, settings.speedMultiplier ?? 1);
+  const stitchedDurationSec = computeStitchedDuration(activeSegments, effectiveSpeed);
 
   const encoderMap: Record<ShortsProductionConfig['exportEncoder'], string> = {
     auto: '-c:v libx264 -preset fast -crf 18',
@@ -412,31 +663,101 @@ export function buildFullShortExportSpec(
     videoInLabel = '[vtrimmed]';
   }
 
-  // 2. Apply exact Framing Blueprint filtergraph from Section 1
+  // 2. Apply exact Framing Blueprint filtergraph (using unified effectiveSpeed)
+  const effectiveBp: FramingBlueprint = { ...blueprint, speed: effectiveSpeed };
   const framingFilter = buildFramingFiltergraph(
-    blueprint,
+    effectiveBp,
     shorts.exportResolution,
     videoInLabel,
     '[vframed]'
   );
   filterSteps.push(framingFilter);
 
-  // 3. Burn word-synced ASS subtitles + headline/watermark metadata
+  // 3. Apply Video Transforms + Color Grading + Vignette + Blur
+  const postFilters: string[] = [];
+  if (settings.videoFlipH) postFilters.push('hflip');
+  if (settings.videoFlipV) postFilters.push('vflip');
+  const rot = settings.videoRotation ?? 0;
+  if (Math.abs(rot) > 0.1) {
+    postFilters.push(`rotate=${((rot * Math.PI) / 180).toFixed(4)}:fillcolor=black`);
+  }
+  const vScale = (settings.videoScale ?? 100) / 100;
+  if (Math.abs(vScale - 1) > 0.01) {
+    const sw = Math.max(2, Math.round((dimensions.width * vScale) / 2) * 2);
+    const sh = Math.max(2, Math.round((dimensions.height * vScale) / 2) * 2);
+    postFilters.push(`scale=${sw}:${sh},crop=${dimensions.width}:${dimensions.height}`);
+  }
+  const eqParts: string[] = [];
+  const netBrightness = ((settings.brightness ?? 100) + (settings.exposure ?? 0) - 100) / 100;
+  if (Math.abs(netBrightness) > 0.01) eqParts.push(`brightness=${clampNum(netBrightness, -0.8, 0.8).toFixed(2)}`);
+  const contrastVal = (settings.contrast ?? 100) / 100;
+  if (Math.abs(contrastVal - 1) > 0.01) eqParts.push(`contrast=${clampNum(contrastVal, 0.2, 2.5).toFixed(2)}`);
+  const satVal = (settings.saturation ?? 100) / 100;
+  if (Math.abs(satVal - 1) > 0.01) eqParts.push(`saturation=${clampNum(satVal, 0, 3).toFixed(2)}`);
+  if (eqParts.length > 0) postFilters.push(`eq=${eqParts.join(':')}`);
+  if (settings.colorFilter === 'bw') postFilters.push('hue=s=0');
+  if (settings.colorFilter === 'cinematic') postFilters.push('eq=contrast=1.12:saturation=1.08');
+  if (settings.colorFilter === 'moody') postFilters.push('eq=brightness=-0.06:contrast=1.22:saturation=0.85');
+  if ((settings.videoSharpen ?? 0) > 0) {
+    const amt = clampNum((settings.videoSharpen ?? 0) / 50, 0.1, 2).toFixed(2);
+    postFilters.push(`unsharp=5:5:${amt}:5:5:0.0`);
+  }
+  if ((settings.blur ?? 0) > 0) postFilters.push(`gblur=sigma=${settings.blur}`);
+  if ((settings.vignette ?? 0) > 0) {
+    const angle = clampNum((settings.vignette / 100) * (Math.PI / 3), 0.1, Math.PI / 2).toFixed(3);
+    postFilters.push(`vignette=angle=${angle}`);
+  }
+
+  let preSubLabel = '[vframed]';
+  if (postFilters.length > 0) {
+    filterSteps.push(`[vframed]${postFilters.join(',')}[vgraded]`);
+    preSubLabel = '[vgraded]';
+  }
+
+  // 4. Burn word-synced ASS subtitles + headline/watermark metadata
   const syncedSettings: EditorSettings = {
     ...settings,
     aspect: blueprint.aspect,
     layout: blueprint.layout,
-    playbackSpeed: blueprint.speed,
+    playbackSpeed: effectiveSpeed,
   };
   const assScript = generateAssSubtitle(words, syncedSettings, activeSegments[0].start, customFonts);
-  filterSteps.push(`[vframed]ass=captions.ass:fontsdir=./fonts[vfinal]`);
+  filterSteps.push(`${preSubLabel}ass=captions.ass:fontsdir=./fonts[vfinal]`);
 
-  // 4. Audio summary (BGM riser & SFX cues)
+  // 5. Audio filter chain (volume, fades, EBU R128 loudness normalization)
+  const audioFilters: string[] = [];
+  if (Math.abs((settings.masterVolume ?? 100) - 100) > 1) {
+    audioFilters.push(`volume=${((settings.masterVolume ?? 100) / 100).toFixed(2)}`);
+  }
+  if ((settings.audioFadeInSec ?? 0) > 0.02) {
+    audioFilters.push(`afade=t=in:st=0:d=${settings.audioFadeInSec.toFixed(2)}`);
+  }
+  if ((settings.audioFadeOutSec ?? 0) > 0.02 && stitchedDurationSec > settings.audioFadeOutSec) {
+    const fadeStart = Math.max(0, stitchedDurationSec - settings.audioFadeOutSec);
+    audioFilters.push(`afade=t=out:st=${fadeStart.toFixed(2)}:d=${settings.audioFadeOutSec.toFixed(2)}`);
+  }
+  if (settings.audioNormalize) {
+    audioFilters.push(`loudnorm=I=${settings.targetLufs ?? -14}:TP=-1.5:LRA=11`);
+  }
+  const audioArgs = settings.muteOriginalAudio
+    ? '-an'
+    : audioFilters.length > 0
+      ? `-map 0:a? -af "${audioFilters.join(',')}" -c:a aac -b:a 192k`
+      : '-map 0:a? -c:a aac -b:a 192k';
+
   const summaryLines: string[] = [
-    `Framing: ${blueprint.aspect} (${dimensions.width}×${dimensions.height}) · ${blueprint.layout} · ${blueprint.speed.toFixed(2)}×`,
+    `Framing: ${blueprint.aspect} (${dimensions.width}×${dimensions.height}) · ${blueprint.layout} · ${effectiveSpeed.toFixed(2)}×`,
     `Segments: ${activeSegments.length} part${activeSegments.length === 1 ? '' : 's'} (${stitchedDurationSec.toFixed(1)}s stitched)`,
     `Captions: ${getViralCaptionPreset(settings.captionStyle).name} · Safe Zone: ${getSafeZoneSpec(settings.safeZonePlatform, settings.template).label}`,
   ];
+  if (postFilters.length > 0) {
+    summaryLines.push(
+      `Grade & Transform: ${settings.colorFilter !== 'none' ? settings.colorFilter : 'Custom'} (${postFilters.length} filter${postFilters.length === 1 ? '' : 's'})`
+    );
+  }
+  if (settings.audioNormalize && !settings.muteOriginalAudio) {
+    summaryLines.push(`Audio Mastering: ${settings.masterVolume ?? 100}% vol · EBU R128 ${settings.targetLufs ?? -14} LUFS`);
+  }
   if (settings.customAudioName) {
     summaryLines.push(
       `BGM: ${settings.customAudioName} (Ducked ${settings.audioBaseVol}% → Peak ${settings.audioPeakVol}% over ${settings.riserDurationSec}s riser)`
@@ -457,7 +778,7 @@ export function buildFullShortExportSpec(
   }
 
   const ffmpegFiltergraph = filterSteps.join(';\n');
-  const ffmpegCommand = `ffmpeg -i input.mp4 -filter_complex "${filterSteps.join(';')}" -map "[vfinal]" -map 0:a? ${encoderFlag} -c:a aac -b:a 192k output_short.mp4`;
+  const ffmpegCommand = `ffmpeg -i input.mp4 -filter_complex "${filterSteps.join(';')}" -map "[vfinal]" ${audioArgs} ${encoderFlag} output_short.mp4`;
 
   return {
     dimensions,

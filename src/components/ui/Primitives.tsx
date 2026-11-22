@@ -25,13 +25,25 @@ export function BrandWordmark({
     <button
       type="button"
       onClick={onClick}
-      className={`font-brand inline-flex items-baseline tracking-tight text-[var(--pc-ink)] whitespace-nowrap shrink-0 cursor-pointer bg-transparent border-0 p-0 transition-opacity duration-150 hover:opacity-85 ${
-        compact ? 'text-[19px]' : 'text-[22px]'
+      className={`font-brand inline-flex items-center gap-2 tracking-tight text-[var(--pc-ink)] whitespace-nowrap shrink-0 cursor-pointer bg-transparent border-0 p-0 transition-opacity duration-150 hover:opacity-85 ${
+        compact ? 'text-[15px]' : 'text-[16px]'
       }`}
       aria-label="PulseCut Home"
     >
-      <span className="font-semibold">Pulse</span>
-      <em className="italic font-normal text-[var(--pc-sub)]">Cut</em>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        aria-hidden="true"
+        className={compact ? 'w-[18px] h-[18px] shrink-0' : 'w-5 h-5 shrink-0'}
+      >
+        <rect width="24" height="24" rx="6" fill="currentColor" fillOpacity="0.1" />
+        <rect x="4" y="5" width="6.5" height="14" rx="1.5" fill="currentColor" />
+        <rect x="13" y="5" width="7" height="8.5" rx="1.5" fill="var(--pc-accent)" />
+        <rect x="13" y="15.5" width="7" height="3.5" rx="1" fill="currentColor" fillOpacity="0.4" />
+      </svg>
+      <span className="font-bold tracking-[-0.03em]">
+        Pulse<span className="font-semibold text-[var(--pc-sub)]">Cut</span>
+      </span>
     </button>
   );
 }
@@ -888,7 +900,7 @@ export function Toast({ message }: { message: string | null }) {
     <div
       role="status"
       aria-live="polite"
-      className="fixed bottom-5 right-5 z-[90] px-4 py-2 rounded-lg bg-[var(--pc-cta-bg)] text-[var(--pc-cta-fg)] text-xs font-medium shadow-xl border border-[var(--pc-border)] pointer-events-none"
+      className="fixed top-14 left-1/2 -translate-x-1/2 z-[90] px-4 py-2 rounded-lg bg-[var(--pc-cta-bg)] text-[var(--pc-cta-fg)] text-xs font-medium shadow-xl border border-[var(--pc-border)] pointer-events-none"
     >
       {message}
     </div>

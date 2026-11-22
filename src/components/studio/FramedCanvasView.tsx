@@ -7,9 +7,11 @@ interface FramedCanvasViewProps {
   blueprint: FramingBlueprint;
   previewRes?: PreviewResolutionId;
   v1Hidden?: boolean;
+  mediaSrc?: string;
   className?: string;
   testId?: string;
   filter?: string;
+  transformStyle?: React.CSSProperties;
 }
 
 export function FramedCanvasView({
@@ -17,9 +19,11 @@ export function FramedCanvasView({
   blueprint,
   previewRes = 'auto',
   v1Hidden = false,
+  mediaSrc,
   className = '',
   testId,
   filter,
+  transformStyle,
 }: FramedCanvasViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const bpRef = useRef(blueprint);
@@ -123,6 +127,7 @@ export function FramedCanvasView({
     let rafId = 0;
     let alive = true;
     let lastDraw = 0;
+    let attachedVid: HTMLVideoElement | null = null;
     const frameIntervalMs = 1000 / 30;
 
     const draw = () => {
@@ -179,13 +184,25 @@ export function FramedCanvasView({
       draw();
     };
 
-    const vid = videoRef.current;
-    if (vid && !vid.paused) startLoop();
+    const onTimeUpdate = () => {
+      const vid = videoRef.current;
+      if (vid && vid.paused) draw();
+    };
 
-    if (vid) {
-      const onTimeUpdate = () => {
-        if (vid.paused) draw();
-      };
+    const attachVideoListeners = (vid: HTMLVideoElement) => {
+      if (attachedVid === vid) return;
+      if (attachedVid) {
+        attachedVid.removeEventListener('play', startLoop);
+        attachedVid.removeEventListener('pause', stopLoop);
+        attachedVid.removeEventListener('seeked', draw);
+        attachedVid.removeEventListener('seeking', draw);
+        attachedVid.removeEventListener('loadedmetadata', draw);
+        attachedVid.removeEventListener('loadeddata', draw);
+        attachedVid.removeEventListener('canplay', draw);
+        attachedVid.removeEventListener('canplaythrough', draw);
+        attachedVid.removeEventListener('timeupdate', onTimeUpdate);
+      }
+      attachedVid = vid;
       vid.addEventListener('play', startLoop);
       vid.addEventListener('pause', stopLoop);
       vid.addEventListener('seeked', draw);
@@ -193,26 +210,55 @@ export function FramedCanvasView({
       vid.addEventListener('loadedmetadata', draw);
       vid.addEventListener('loadeddata', draw);
       vid.addEventListener('canplay', draw);
+      vid.addEventListener('canplaythrough', draw);
       vid.addEventListener('timeupdate', onTimeUpdate);
-      return () => {
-        alive = false;
-        if (rafId) cancelAnimationFrame(rafId);
-        vid.removeEventListener('play', startLoop);
-        vid.removeEventListener('pause', stopLoop);
-        vid.removeEventListener('seeked', draw);
-        vid.removeEventListener('seeking', draw);
-        vid.removeEventListener('loadedmetadata', draw);
-        vid.removeEventListener('loadeddata', draw);
-        vid.removeEventListener('canplay', draw);
-        vid.removeEventListener('timeupdate', onTimeUpdate);
-      };
+      if (!vid.paused) startLoop();
+      draw();
+    };
+
+    if (videoRef.current) {
+      attachVideoListeners(videoRef.current);
     }
+
+    // Retry briefly until the sibling <video> ref mounts and decodes its first frame
+    let attempts = 0;
+    const readyTimer = window.setInterval(() => {
+      if (!alive) {
+        window.clearInterval(readyTimer);
+        return;
+      }
+      attempts += 1;
+      const vid = videoRef.current;
+      if (vid) {
+        attachVideoListeners(vid);
+        if (vid.readyState >= 2 && vid.videoWidth > 0) {
+          draw();
+          window.clearInterval(readyTimer);
+          return;
+        }
+      }
+      if (attempts >= 30) {
+        window.clearInterval(readyTimer);
+      }
+    }, 100);
 
     return () => {
       alive = false;
+      window.clearInterval(readyTimer);
       if (rafId) cancelAnimationFrame(rafId);
+      if (attachedVid) {
+        attachedVid.removeEventListener('play', startLoop);
+        attachedVid.removeEventListener('pause', stopLoop);
+        attachedVid.removeEventListener('seeked', draw);
+        attachedVid.removeEventListener('seeking', draw);
+        attachedVid.removeEventListener('loadedmetadata', draw);
+        attachedVid.removeEventListener('loadeddata', draw);
+        attachedVid.removeEventListener('canplay', draw);
+        attachedVid.removeEventListener('canplaythrough', draw);
+        attachedVid.removeEventListener('timeupdate', onTimeUpdate);
+      }
     };
-  }, [videoRef, blueprint, v1Hidden, previewRes]);
+  }, [videoRef, blueprint, v1Hidden, previewRes, mediaSrc]);
 
   const ar = getCanvasAspectRatio(blueprint.aspect);
 
@@ -220,7 +266,11 @@ export function FramedCanvasView({
     <canvas
       ref={canvasRef}
       data-testid={testId}
-      style={{ aspectRatio: String(ar), filter: filter || undefined }}
+      style={{
+        aspectRatio: String(ar),
+        filter: filter || undefined,
+        ...transformStyle,
+      }}
       className={`block w-full h-full ${className}`}
     />
   );

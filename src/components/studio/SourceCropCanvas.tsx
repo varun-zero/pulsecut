@@ -180,7 +180,7 @@ export function SourceCropCanvas({
             ref={videoRef}
             src={videoUrl}
             playsInline
-            preload="metadata"
+            preload="auto"
             onLoadedMetadata={(e) => {
               const v = e.currentTarget;
               onVideoMetadata(

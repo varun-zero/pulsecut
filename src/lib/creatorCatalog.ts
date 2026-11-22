@@ -234,7 +234,7 @@ function svgToDataUrl(svg: string): string {
 export const BUILTIN_LOGOS: readonly LogoAsset[] = [
   {
     id: 'logo-yt-shorts',
-    name: 'YT Shorts Badge',
+    name: 'YT Shorts',
     isCustom: false,
     dataUrl: svgToDataUrl(
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><rect width="120" height="120" rx="28" fill="#FF0033"/><path d="M77 45c2-1 4 0 4 2v26c0 2-2 3-4 2L49 62c-2-1-2-3 0-4l28-13z" fill="#fff" transform="rotate(180 63 60)"/></svg>`
@@ -242,26 +242,26 @@ export const BUILTIN_LOGOS: readonly LogoAsset[] = [
   },
   {
     id: 'logo-kick-k',
-    name: 'Kick Green K',
+    name: 'Kick K',
     isCustom: false,
     dataUrl: svgToDataUrl(
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><rect width="120" height="120" rx="24" fill="#0B0E0F"/><path d="M30 24h22v28h12V38h12V24h22v26H86v14h-12v12h12v14h12v26H76v-14H64V88H52v28H30V24z" fill="#53FC18"/></svg>`
     ),
   },
   {
-    id: 'logo-verified-gold',
-    name: 'Gold Verified Mark',
+    id: 'logo-studio-frame',
+    name: 'Studio Frame',
     isCustom: false,
     dataUrl: svgToDataUrl(
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" fill="#F59E0B"/><path d="M38 62l15 15 30-34" fill="none" stroke="#111" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><rect width="120" height="120" rx="24" fill="#111114"/><rect x="24" y="28" width="30" height="64" rx="6" fill="#F4F4F6"/><rect x="64" y="28" width="32" height="38" rx="6" fill="#3B82F6"/><rect x="64" y="74" width="32" height="18" rx="5" fill="#F4F4F6" fill-opacity="0.45"/></svg>`
     ),
   },
   {
-    id: 'logo-live-red',
-    name: 'LIVE Broadcast Tag',
+    id: 'logo-rec-minimal',
+    name: 'REC Minimal',
     isCustom: false,
     dataUrl: svgToDataUrl(
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 72"><rect width="180" height="72" rx="14" fill="#DC2626"/><circle cx="34" cy="36" r="10" fill="#fff"/><text x="58" y="47" font-family="Arial Black, sans-serif" font-size="32" font-weight="900" fill="#fff">LIVE</text></svg>`
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 64"><rect width="160" height="64" rx="12" fill="#09090B" stroke="#FFFFFF" stroke-opacity="0.22" stroke-width="2"/><circle cx="32" cy="32" r="8" fill="#EF4444"/><text x="54" y="41" font-family="system-ui, sans-serif" font-size="26" font-weight="700" letter-spacing="3" fill="#FFFFFF">REC</text></svg>`
     ),
   },
 ];

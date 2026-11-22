@@ -3,13 +3,16 @@ import { Keyboard, X } from 'lucide-react';
 import { Button } from './ui/Primitives';
 
 const SHORTCUTS = [
-  { action: 'Play / Pause preview', keys: 'Space' },
-  { action: 'Seek backward / forward 5s', keys: '← / →' },
-  { action: 'Set trim In point', keys: '[' },
-  { action: 'Set trim Out point', keys: ']' },
-  { action: 'Toggle Fullscreen preview', keys: 'Ctrl + L' },
+  { action: 'Play / Pause preview', keys: 'Space / K' },
+  { action: 'Shuttle reverse / forward', keys: 'J / L' },
+  { action: 'Step backward / forward 1 frame', keys: '← / →' },
+  { action: 'Step backward / forward 5 frames', keys: 'Shift + ← / →' },
+  { action: 'Split clip at playhead (Razor)', keys: 'S' },
+  { action: 'Add marker at playhead', keys: 'M' },
+  { action: 'Set trim In / Out point', keys: 'I / O' },
+  { action: 'Toggle Final Preview Lock', keys: 'Shift + L' },
+  { action: 'Hide selected canvas overlay', keys: 'Delete' },
   { action: 'Undo / Redo edit', keys: 'Ctrl + Z / Ctrl + Y' },
-  { action: 'Close dialog or drawer', keys: 'Esc' },
 ];
 
 export function ShortcutsAboutModal({

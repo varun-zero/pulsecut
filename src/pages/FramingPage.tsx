@@ -729,6 +729,7 @@ export function FramingPage({
                         videoRef={videoRef}
                         blueprint={blueprint}
                         previewRes="auto"
+                        mediaSrc={currentClip.rawMediaUrl || currentClip.mediaUrl}
                         testId="framing-live-output-canvas"
                         className="w-full h-full"
                       />
@@ -1184,7 +1185,7 @@ export function FramingPage({
                               type="button"
                               aria-label={`Clear custom media for ${slot.label}`}
                               onClick={() => handleRemoveSlotMedia(idx)}
-                              className="h-7 w-7 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface)] text-[var(--pc-sub)] hover:text-[var(--pc-err)] grid place-items-center cursor-pointer"
+                              className="h-7 w-7 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface)] text-[var(--pc-sub)] hover:text-[var(--pc-error)] grid place-items-center cursor-pointer"
                             >
                               <X className="w-3 h-3" />
                             </button>
@@ -1643,7 +1644,7 @@ export function FramingPage({
                           type="button"
                           aria-label={`Delete preset ${p.name}`}
                           onClick={() => handleDeletePreset(p.id)}
-                          className="h-6 w-6 rounded grid place-items-center text-[var(--pc-muted)] hover:text-[var(--pc-err)] bg-transparent border-0 cursor-pointer"
+                          className="h-6 w-6 rounded grid place-items-center text-[var(--pc-muted)] hover:text-[var(--pc-error)] bg-transparent border-0 cursor-pointer"
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>

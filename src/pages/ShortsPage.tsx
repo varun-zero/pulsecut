@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
-  Bookmark,
-  Bot,
   ChevronDown,
+  Columns2,
   Crop,
   Download,
   Film,
@@ -12,7 +11,6 @@ import {
   Plus,
   Redo2,
   Scan,
-  Scissors,
   Sun,
   Undo2,
 } from 'lucide-react';
@@ -38,21 +36,24 @@ import {
 } from '../lib/creatorCatalog';
 import { clampTrimWindow, formatShortDuration, formatTimecode } from '../lib/studioLogic';
 import {
+  computeAudioEnvelopeGain,
+  computeEffectivePlaybackSpeed,
   computeMusicOffset,
   computeMusicRiserVolume,
   computeStitchedDuration,
+  deleteSegmentById,
+  duplicateSegmentById,
   findTriggeredSfxCues,
   getActiveSegments,
   mapSourceTimeToStitched,
   playSfxAsset,
   resolveStitchedPlaybackStep,
   sortSegments,
+  splitSegmentsAtTime,
 } from '../lib/shortsEngine';
 import { Button } from '../components/ui/Primitives';
 import { TemplateLibraryModal } from '../components/editor/TemplateLibraryModal';
 import { TemplateEditorModal } from '../components/editor/TemplateEditorModal';
-import { AgentInteropModal } from '../components/editor/AgentInteropModal';
-import { FramingCanvas } from '../components/editor/FramingCanvas';
 import { ShortsStage } from '../components/studio/ShortsStage';
 import { ShortsTimeline } from '../components/studio/ShortsTimeline';
 import { ShortsInspector } from '../components/studio/ShortsInspector';
@@ -90,6 +91,7 @@ interface ShortsPageProps {
   onUploadLogo: (file: File) => void;
   onDeleteLogo: (id: string) => void;
   onUpdateClipHashtags: (clipId: string, hashtags: string[]) => void;
+  onUpdateClipWords: (clipId: string, words: WordCue[]) => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -138,6 +140,7 @@ export function ShortsPage({
   onUploadLogo,
   onDeleteLogo,
   onUpdateClipHashtags,
+  onUpdateClipWords,
   canUndo,
   canRedo,
   onUndo,
@@ -165,10 +168,10 @@ export function ShortsPage({
   const [editingTemplate, setEditingTemplate] = useState<EditableTemplatePreset | null>(null);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [agentModalOpen, setAgentModalOpen] = useState(false);
 
   const [previewRes, setPreviewRes] = useState<PreviewResolutionId>('auto');
   const [showSafeZones, setShowSafeZones] = useState(false);
+  const [compareOriginal, setCompareOriginal] = useState(false);
   const [finalPreviewLocked, setFinalPreviewLocked] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [durationSec, setDurationSec] = useState(currentClip?.duration_sec || 30);
@@ -185,9 +188,13 @@ export function ShortsPage({
     a2Muted: false,
   });
 
+  const effectiveSpeed = computeEffectivePlaybackSpeed(
+    blueprint.speed,
+    settings.speedMultiplier ?? 1
+  );
   const activeSegments = getActiveSegments(shorts, trimInSec, trimOutSec);
-  const stitchedDurationSec = computeStitchedDuration(activeSegments, blueprint.speed);
-  const stitchedTimeSec = mapSourceTimeToStitched(currentTimeSec, activeSegments, blueprint.speed);
+  const stitchedDurationSec = computeStitchedDuration(activeSegments, effectiveSpeed);
+  const stitchedTimeSec = mapSourceTimeToStitched(currentTimeSec, activeSegments, effectiveSpeed);
 
   // Reset timeline on clip switch
   useEffect(() => {
@@ -196,19 +203,34 @@ export function ShortsPage({
     setTrimInSec(0);
     setTrimOutSec(dur);
     setCurrentTimeSec(0);
+    setActiveSegmentId(null);
     setPlaying(false);
     setOutroElapsedSec(null);
     prevTimeRef.current = 0;
   }, [currentClip?.id]);
 
-  // Sync video playback speed (Framing blueprint × speed ramp) and master volume
+  // Sync unified video playback speed and audio fade envelope
   useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.playbackRate =
-        (settings.speedMultiplier ?? 1) * Math.max(0.25, Math.min(4, blueprint.speed || 1));
-      videoRef.current.volume = Math.max(0, Math.min(1, (settings.masterVolume ?? 100) / 100));
-    }
-  }, [blueprint.speed, settings.speedMultiplier, settings.masterVolume, currentClip?.id]);
+    const v = videoRef.current;
+    if (!v) return;
+    v.playbackRate = effectiveSpeed;
+    const gain = computeAudioEnvelopeGain(
+      stitchedTimeSec,
+      stitchedDurationSec,
+      settings.masterVolume ?? 100,
+      settings.audioFadeInSec ?? 0,
+      settings.audioFadeOutSec ?? 0
+    );
+    v.volume = Math.max(0, Math.min(1, gain));
+  }, [
+    effectiveSpeed,
+    stitchedTimeSec,
+    stitchedDurationSec,
+    settings.masterVolume,
+    settings.audioFadeInSec,
+    settings.audioFadeOutSec,
+    currentClip?.id,
+  ]);
 
   // Sync play/pause with <video>
   useEffect(() => {
@@ -247,7 +269,7 @@ export function ShortsPage({
     return () => cancelAnimationFrame(raf);
   }, [outroElapsedSec !== null, shorts.outro.duration, finalPreviewLocked, playing]);
 
-  // Real Background Music (A2) synced with decompiled HS riser surge math during Final Preview Lock
+  // Background Music (A2) synced with riser surge curve during Final Preview Lock
   useEffect(() => {
     const audio = bgmAudioRef.current;
     if (!audio || !settings.customAudioUrl) return;
@@ -344,8 +366,8 @@ export function ShortsPage({
       });
 
       if (shorts.headlineTiming.mode === 'custom') {
-        const prevStitched = mapSourceTimeToStitched(prev, activeSegments, blueprint.speed);
-        const currStitched = mapSourceTimeToStitched(t, activeSegments, blueprint.speed);
+        const prevStitched = mapSourceTimeToStitched(prev, activeSegments, effectiveSpeed);
+        const currStitched = mapSourceTimeToStitched(t, activeSegments, effectiveSpeed);
         if (
           shorts.headlineTiming.sfxIn &&
           prevStitched < shorts.headlineTiming.startSec &&
@@ -383,7 +405,6 @@ export function ShortsPage({
     }
   };
 
-  /** Shared by ShortsStage and the Frame tab's interactive source-frame editor. */
   const handleVideoMetadata = (dur: number) => {
     if (!currentClip) return;
     setDurationSec(dur);
@@ -419,19 +440,18 @@ export function ShortsPage({
       const initial: ClipSegment = {
         id: `seg-${Date.now()}-1`,
         start: trimInSec,
-        end: Math.max(trimInSec + 1, Math.min(durationSec, trimInSec + Math.min(8, trimOutSec - trimInSec))),
+        end: Math.max(trimInSec + 1, Math.min(durationSec, trimOutSec)),
       };
       setActiveSegmentId(initial.id);
       setTrimInSec(initial.start);
       setTrimOutSec(initial.end);
       onUpdateShorts({ multiSegmentEnabled: true, segments: [initial] });
-      onNotify('Multi-Segment mode enabled — add more sections to stitch');
+      onNotify('Multi-Segment mode enabled — press S at playhead to razor split');
     }
   };
 
   const handleAddSegment = () => {
     const existing = sortSegments(shorts.segments);
-    // If single segment currently covers nearly the entire clip, split cleanly into 2 non-overlapping halves
     if (
       existing.length === 1 &&
       existing[0].start <= 0.25 &&
@@ -476,7 +496,7 @@ export function ShortsPage({
   };
 
   const handleRemoveSegment = (segId: string) => {
-    const remaining = shorts.segments.filter((s) => s.id !== segId);
+    const remaining = deleteSegmentById(shorts.segments, segId);
     if (remaining.length === 0) {
       handleToggleMultiSegment();
       return;
@@ -485,7 +505,90 @@ export function ShortsPage({
     setTrimInSec(remaining[0].start);
     setTrimOutSec(remaining[0].end);
     onUpdateShorts({ segments: remaining });
-    onNotify('Removed segment');
+    onNotify(`Removed segment (${remaining.length} remaining)`);
+  };
+
+  const handleDuplicateActiveSegment = () => {
+    if (!activeSegmentId || !shorts.multiSegmentEnabled) return;
+    const res = duplicateSegmentById(shorts.segments, activeSegmentId, durationSec);
+    if (!res.created) {
+      onNotify('Not enough room after segment to duplicate');
+      return;
+    }
+    setActiveSegmentId(res.created.id);
+    setTrimInSec(res.created.start);
+    setTrimOutSec(res.created.end);
+    seekTo(res.created.start);
+    onUpdateShorts({ segments: res.segments });
+    onNotify(`Duplicated segment (${(res.created.end - res.created.start).toFixed(1)}s)`);
+  };
+
+  // Real non-destructive NLE Razor Split at playhead
+  const handleSplitAtPlayhead = () => {
+    if (!currentClip || durationSec <= 0) return;
+    const sourceSegments: ClipSegment[] =
+      shorts.multiSegmentEnabled && shorts.segments.length > 0
+        ? shorts.segments
+        : [{ id: `seg-${Date.now()}-base`, start: trimInSec, end: trimOutSec }];
+
+    // If playhead is sitting right at 0 or end, split cleanly at the midpoint of the active segment
+    const activeSeg =
+      sourceSegments.find((s) => s.id === activeSegmentId) || sourceSegments[0];
+    const targetSplitTime =
+      currentTimeSec > activeSeg.start + 0.3 && currentTimeSec < activeSeg.end - 0.3
+        ? currentTimeSec
+        : Number(((activeSeg.start + activeSeg.end) / 2).toFixed(2));
+
+    const result = splitSegmentsAtTime(sourceSegments, targetSplitTime, 0.25);
+    if (!result.didSplit) {
+      onNotify('Move playhead inside a segment (min 0.25s from edges) to split');
+      return;
+    }
+
+    const nextSplits = Array.from(new Set([...(settings.splits || []), targetSplitTime])).sort(
+      (a, b) => a - b
+    );
+    onUpdateSettings({ splits: nextSplits }, true);
+    onUpdateShorts({ multiSegmentEnabled: true, segments: result.segments });
+
+    const newSeg = result.segments.find((s) => s.id === result.newSegmentId) || result.segments[1];
+    if (newSeg) {
+      setActiveSegmentId(newSeg.id);
+      setTrimInSec(newSeg.start);
+      setTrimOutSec(newSeg.end);
+    }
+    onNotify(
+      `Split V1 at ${formatTimecode(targetSplitTime)} (${result.segments.length} segments)`
+    );
+  };
+
+  const handleAddMarker = (label?: string) => {
+    if (!currentClip || durationSec <= 0) return;
+    const markerIndex = (settings.markers || []).length + 1;
+    const newMarker = {
+      id: `m-${Date.now()}`,
+      timeSec: Number(currentTimeSec.toFixed(2)),
+      label: label || `Beat ${markerIndex} (${formatTimecode(currentTimeSec)})`,
+      color: '#38BDF8',
+    };
+    const nextMarkers = [...(settings.markers || []), newMarker].sort(
+      (a, b) => a.timeSec - b.timeSec
+    );
+    onUpdateSettings({ markers: nextMarkers }, true);
+    onNotify(`Marker added at ${formatTimecode(currentTimeSec)}`);
+  };
+
+  const handleRenameMarker = (markerId: string, label: string) => {
+    const nextMarkers = (settings.markers || []).map((m) =>
+      m.id === markerId ? { ...m, label } : m
+    );
+    onUpdateSettings({ markers: nextMarkers }, false);
+  };
+
+  const handleDeleteMarker = (markerId: string) => {
+    const nextMarkers = (settings.markers || []).filter((m) => m.id !== markerId);
+    onUpdateSettings({ markers: nextMarkers }, true);
+    onNotify('Removed marker');
   };
 
   const handleAddSfxCueAtPlayhead = (asset: SfxAsset) => {
@@ -515,27 +618,6 @@ export function ShortsPage({
     onNotify(`Aligned captions inside ${spec.label} safe zone (${spec.autoAlignSubtitlePct}%)`);
   };
 
-  const handleSplitAtPlayhead = () => {
-    if (!currentClip || durationSec <= 0) return;
-    const nextSplits = [...(settings.splits || []), currentTimeSec].sort((a, b) => a - b);
-    onUpdateSettings({ splits: nextSplits }, true);
-    onNotify(`Split cut placed at ${formatTimecode(currentTimeSec)}`);
-  };
-
-  const handleAddMarker = (label?: string) => {
-    if (!currentClip || durationSec <= 0) return;
-    const newMarker = {
-      id: `m-${Date.now()}`,
-      timeSec: currentTimeSec,
-      label: label || `Marker ${formatTimecode(currentTimeSec)}`,
-    };
-    const nextMarkers = [...(settings.markers || []), newMarker].sort(
-      (a, b) => a.timeSec - b.timeSec
-    );
-    onUpdateSettings({ markers: nextMarkers }, true);
-    onNotify(`Marker added at ${formatTimecode(currentTimeSec)}`);
-  };
-
   const handleExport = async () => {
     if (!currentClip) {
       onNotify('Load a clip before exporting');
@@ -550,43 +632,50 @@ export function ShortsPage({
     }
   };
 
-  // Keyboard shortcuts (Space, Frame step, I/O trim, Shift+L Final Preview Lock, Ctrl+Z/Y)
+  // Full NLE keyboard shortcuts (Space/K, J/L shuttle, Frame step, S razor split, M marker, I/O trim, Shift+L preview lock, Ctrl+Z/Y)
   const keyRef = useRef<(e: KeyboardEvent) => void>(() => {});
   keyRef.current = (e: KeyboardEvent) => {
     const tag = (e.target as HTMLElement)?.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-    if (e.code === 'Space' && currentClip) {
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    const key = e.key.toLowerCase();
+    if ((e.code === 'Space' || (key === 'k' && !e.ctrlKey && !e.metaKey)) && currentClip) {
       e.preventDefault();
       setOutroElapsedSec(null);
       setPlaying((p) => !p);
+    } else if (key === 'j' && !e.ctrlKey && !e.metaKey && currentClip) {
+      e.preventDefault();
+      seekTo(currentTimeSec - 1);
+    } else if (key === 'l' && !e.shiftKey && !e.ctrlKey && !e.metaKey && currentClip) {
+      e.preventDefault();
+      seekTo(currentTimeSec + 1);
     } else if (e.code === 'ArrowLeft' && currentClip) {
       e.preventDefault();
       seekTo(currentTimeSec - (e.shiftKey ? 5 / 30 : 1 / 30));
     } else if (e.code === 'ArrowRight' && currentClip) {
       e.preventDefault();
       seekTo(currentTimeSec + (e.shiftKey ? 5 / 30 : 1 / 30));
-    } else if (e.key.toLowerCase() === 'i' && !e.ctrlKey && !e.metaKey && currentClip) {
+    } else if (key === 'i' && !e.ctrlKey && !e.metaKey && currentClip) {
       e.preventDefault();
       handleChangeTrimWindow(currentTimeSec, trimOutSec);
       onNotify(`In point set to ${currentTimeSec.toFixed(1)}s`);
-    } else if (e.key.toLowerCase() === 'o' && !e.ctrlKey && !e.metaKey && currentClip) {
+    } else if (key === 'o' && !e.ctrlKey && !e.metaKey && currentClip) {
       e.preventDefault();
       handleChangeTrimWindow(trimInSec, currentTimeSec);
       onNotify(`Out point set to ${currentTimeSec.toFixed(1)}s`);
-    } else if (e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey && currentClip) {
+    } else if (key === 's' && !e.ctrlKey && !e.metaKey && currentClip) {
       e.preventDefault();
       handleSplitAtPlayhead();
-    } else if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey && currentClip) {
+    } else if (key === 'm' && !e.ctrlKey && !e.metaKey && currentClip) {
       e.preventDefault();
       handleAddMarker();
-    } else if (e.shiftKey && e.key.toLowerCase() === 'l' && currentClip) {
+    } else if (e.shiftKey && key === 'l' && currentClip) {
       e.preventDefault();
       handleToggleFinalPreview();
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+    } else if ((e.ctrlKey || e.metaKey) && key === 'z') {
       e.preventDefault();
       if (e.shiftKey) onRedo();
       else onUndo();
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+    } else if ((e.ctrlKey || e.metaKey) && key === 'y') {
       e.preventDefault();
       onRedo();
     }
@@ -602,7 +691,9 @@ export function ShortsPage({
     const order: PreviewResolutionId[] = ['auto', 'half', 'full'];
     const next = order[(order.indexOf(previewRes) + 1) % order.length];
     setPreviewRes(next);
-    onNotify(`Preview resolution: ${next === 'half' ? '1/2 Draft' : next === 'full' ? 'Full Crisp' : 'Auto'}`);
+    onNotify(
+      `Preview resolution: ${next === 'half' ? '1/2 Draft' : next === 'full' ? 'Full Crisp' : 'Auto'}`
+    );
   };
 
   return (
@@ -615,7 +706,7 @@ export function ShortsPage({
         <audio ref={bgmAudioRef} src={settings.customAudioUrl} loop preload="auto" className="hidden" />
       )}
 
-      {/* Unified 48px Studio Bar — Shorts Studio (Section 2 of 2) */}
+      {/* Clean 48px Studio Bar — Shorts Studio (Step 2 of 2) */}
       <header
         data-testid="shorts-studio-bar"
         className="h-12 shrink-0 px-3.5 border-b border-[var(--pc-border)] bg-[var(--pc-surface)] flex items-center justify-between gap-3"
@@ -635,7 +726,7 @@ export function ShortsPage({
               aria-haspopup="menu"
               aria-expanded={projectMenuOpen}
               onClick={() => setProjectMenuOpen((v) => !v)}
-              className="h-8 max-w-[180px] xl:max-w-[230px] px-2.5 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs font-medium text-[var(--pc-ink)] hover:border-[var(--pc-muted)] inline-flex items-center gap-2 cursor-pointer"
+              className="h-8 max-w-[180px] xl:max-w-[240px] px-2.5 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs font-medium text-[var(--pc-ink)] hover:border-[var(--pc-muted)] inline-flex items-center gap-2 cursor-pointer"
             >
               <Film className="w-3.5 h-3.5 text-[var(--pc-sub)] shrink-0" />
               <span className="truncate">
@@ -695,12 +786,12 @@ export function ShortsPage({
             )}
           </div>
 
-          <span className="hidden lg:inline-flex items-center text-xs font-medium text-[var(--pc-ink)] pl-1 whitespace-nowrap">
+          <span className="hidden lg:inline-flex items-center text-xs font-medium text-[var(--pc-sub)] pl-1 whitespace-nowrap">
             Step 2 · Shorts Studio
           </span>
         </div>
 
-        {/* Center: Undo/Redo + Preview Resolution + Safe Zones */}
+        {/* Center: Undo/Redo + Preview Resolution + Safe Zones + Compare */}
         <div className="flex items-center gap-2 shrink-0">
           <div className="flex items-center gap-1">
             <button
@@ -708,6 +799,7 @@ export function ShortsPage({
               disabled={!canUndo}
               onClick={onUndo}
               aria-label="Undo edit"
+              title="Undo (Ctrl+Z)"
               className="h-8 w-8 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)] grid place-items-center cursor-pointer disabled:opacity-35"
             >
               <Undo2 className="w-3.5 h-3.5" />
@@ -717,6 +809,7 @@ export function ShortsPage({
               disabled={!canRedo}
               onClick={onRedo}
               aria-label="Redo edit"
+              title="Redo (Ctrl+Y)"
               className="h-8 w-8 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)] grid place-items-center cursor-pointer disabled:opacity-35"
             >
               <Redo2 className="w-3.5 h-3.5" />
@@ -744,43 +837,27 @@ export function ShortsPage({
             <Scan className="w-3.5 h-3.5" />
             <span>Safe Zones</span>
           </button>
+
+          <button
+            type="button"
+            disabled={!currentClip}
+            aria-pressed={compareOriginal}
+            data-testid="header-compare-toggle"
+            title="Compare raw vs graded & transformed output"
+            onClick={() => setCompareOriginal((v) => !v)}
+            className={`h-8 px-2.5 rounded-md border text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap disabled:opacity-40 ${
+              compareOriginal
+                ? 'bg-[var(--pc-accent-soft)] border-[var(--pc-accent)] text-[var(--pc-ink)]'
+                : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
+            }`}
+          >
+            <Columns2 className="w-3.5 h-3.5" />
+            <span>Compare</span>
+          </button>
         </div>
 
-        {/* Right: Split / Marker / Agent utilities + Export Short CTA */}
+        {/* Right: Theme + Shortcuts + Export Short CTA */}
         <div className="flex items-center gap-2 shrink-0">
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={!currentClip}
-            data-testid="split-at-playhead-btn"
-            title="Split clip at playhead (S)"
-            onClick={handleSplitAtPlayhead}
-          >
-            <Scissors className="w-3.5 h-3.5 text-amber-400" />
-            <span>Split</span>
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={!currentClip}
-            data-testid="add-marker-btn"
-            title="Add timeline marker at playhead (M)"
-            onClick={() => handleAddMarker()}
-          >
-            <Bookmark className="w-3.5 h-3.5 text-sky-400" />
-            <span>Marker</span>
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            data-testid="agent-interop-btn"
-            title="AI Agent, IDE & CLI Interop"
-            onClick={() => setAgentModalOpen(true)}
-          >
-            <Bot className="w-3.5 h-3.5 text-sky-400" />
-            <span>AI Agent / CLI</span>
-          </Button>
-
           <button
             type="button"
             onClick={onToggleTheme}
@@ -810,7 +887,7 @@ export function ShortsPage({
         </div>
       </header>
 
-      {/* Main 2-Column Shorts Workspace (Stage + NLE Timeline on Left, 3-Tab Shorts Inspector on Right) */}
+      {/* Main 2-Column Shorts Workspace (Stage + NLE Timeline on Left, 5-Tab NLE Inspector on Right) */}
       <div className="flex-1 min-h-0 flex overflow-hidden">
         <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
           {!currentClip ? (
@@ -820,7 +897,8 @@ export function ShortsPage({
                 No framed clip loaded
               </h2>
               <p className="text-xs text-[var(--pc-sub)] mt-1.5 max-w-sm">
-                Import a recording on the Dashboard or frame an existing clip in Framing Studio to build shorts here.
+                Import a recording on the Dashboard or frame an existing clip in Framing Studio to
+                edit shorts here.
               </p>
               <div className="flex items-center gap-2 mt-4">
                 <Button variant="secondary" size="sm" onClick={onBackToFraming}>
@@ -834,64 +912,44 @@ export function ShortsPage({
             </div>
           ) : (
             <>
-              {activeTab === 'frame' ? (
-                <FramingCanvas
-                  clip={currentClip}
-                  blueprint={blueprint}
-                  onUpdateBlueprint={onUpdateBlueprint}
-                  playing={playing}
-                  currentTimeSec={currentTimeSec}
-                  videoRef={videoRef}
-                  onDurationLoaded={handleVideoMetadata}
-                  onVideoTimeUpdate={handleVideoTimeUpdate}
-                  onVideoEnded={() => {
-                    if (finalPreviewLocked && shorts.outro.enabled) {
-                      setOutroElapsedSec(0);
-                    } else {
-                      setPlaying(false);
-                    }
-                  }}
-                />
-              ) : (
-                <ShortsStage
-                  clip={currentClip}
-                  videoRef={videoRef}
-                  blueprint={blueprint}
-                  shorts={shorts}
-                  settings={settings}
-                  brandKit={brandKit}
-                  customFonts={customFonts}
-                  activeTemplateName={
-                    templates.find((t) => t.id === settings.template)?.name
+              <ShortsStage
+                clip={currentClip}
+                videoRef={videoRef}
+                blueprint={blueprint}
+                shorts={shorts}
+                settings={settings}
+                brandKit={brandKit}
+                customFonts={customFonts}
+                activeSegments={activeSegments}
+                activeTemplateName={templates.find((t) => t.id === settings.template)?.name}
+                currentTimeSec={currentTimeSec}
+                stitchedTimeSec={stitchedTimeSec}
+                previewRes={previewRes}
+                finalPreviewLocked={finalPreviewLocked}
+                compareOriginal={compareOriginal}
+                outroElapsedSec={outroElapsedSec}
+                showSafeZones={showSafeZones}
+                trackStates={trackStates}
+                onEditFraming={onBackToFraming}
+                onUpdateSettings={onUpdateSettings}
+                onUpdateDualWatermark={(patch) =>
+                  onUpdateShorts({ dualWatermark: { ...shorts.dualWatermark, ...patch } })
+                }
+                onVideoMetadata={handleVideoMetadata}
+                onVideoTimeUpdate={handleVideoTimeUpdate}
+                onVideoEnded={() => {
+                  if (finalPreviewLocked && shorts.outro.enabled) {
+                    setOutroElapsedSec(0);
+                  } else {
+                    setPlaying(false);
                   }
-                  currentTimeSec={currentTimeSec}
-                  stitchedTimeSec={stitchedTimeSec}
-                  previewRes={previewRes}
-                  finalPreviewLocked={finalPreviewLocked}
-                  outroElapsedSec={outroElapsedSec}
-                  showSafeZones={showSafeZones}
-                  trackStates={trackStates}
-                  onEditFraming={onBackToFraming}
-                  onUpdateSettings={onUpdateSettings}
-                  onUpdateDualWatermark={(patch) =>
-                    onUpdateShorts({ dualWatermark: { ...shorts.dualWatermark, ...patch } })
-                  }
-                  onVideoMetadata={handleVideoMetadata}
-                  onVideoTimeUpdate={handleVideoTimeUpdate}
-                  onVideoEnded={() => {
-                    if (finalPreviewLocked && shorts.outro.enabled) {
-                      setOutroElapsedSec(0);
-                    } else {
-                      setPlaying(false);
-                    }
-                  }}
-                />
-              )}
+                }}
+              />
 
               <ShortsTimeline
                 clip={currentClip}
                 shorts={shorts}
-                playbackSpeed={blueprint.speed}
+                playbackSpeed={effectiveSpeed}
                 playing={playing}
                 finalPreviewLocked={finalPreviewLocked}
                 currentTimeSec={currentTimeSec}
@@ -904,6 +962,9 @@ export function ShortsPage({
                 audioPeakVol={settings.audioPeakVol}
                 riserDurationSec={settings.riserDurationSec}
                 customAudioName={settings.customAudioName}
+                masterVolume={settings.masterVolume ?? 100}
+                audioFadeInSec={settings.audioFadeInSec ?? 0}
+                audioFadeOutSec={settings.audioFadeOutSec ?? 0.5}
                 trackStates={trackStates}
                 splits={settings.splits}
                 markers={settings.markers}
@@ -931,6 +992,10 @@ export function ShortsPage({
                   setTrimOutSec(durationSec);
                   onNotify('Trim window reset');
                 }}
+                onSplitAtPlayhead={handleSplitAtPlayhead}
+                onDuplicateActiveSegment={handleDuplicateActiveSegment}
+                onAddMarker={() => handleAddMarker()}
+                onDeleteMarker={handleDeleteMarker}
                 onToggleMultiSegment={handleToggleMultiSegment}
                 onAddSegment={handleAddSegment}
                 onSelectSegment={(seg) => {
@@ -948,23 +1013,28 @@ export function ShortsPage({
           )}
         </div>
 
-        {/* Right Shorts-Only Inspector (Templates | Text | Media) */}
+        {/* Right 5-Tab NLE Inspector (Edit | Templates | Text | Color | Audio) */}
         <ShortsInspector
           activeTab={activeTab}
           onChangeTab={setActiveTab}
           clip={currentClip}
+          blueprint={blueprint}
           settings={settings}
           shorts={shorts}
           brandKit={brandKit}
           trackStates={trackStates}
           currentTimeSec={currentTimeSec}
           stitchedDurationSec={stitchedDurationSec}
+          compareOriginal={compareOriginal}
+          onToggleCompareOriginal={() => setCompareOriginal((v) => !v)}
           templates={templates}
           captionPresets={captionPresets}
           customFonts={customFonts}
           logos={logos}
           canRestoreTemplates={canRestoreTemplates}
           canRestoreCaptions={canRestoreCaptions}
+          onUpdateBlueprint={onUpdateBlueprint}
+          onEditFraming={onBackToFraming}
           onUpdateSettings={onUpdateSettings}
           onUpdateShorts={onUpdateShorts}
           onUpdateBrandKit={onUpdateBrandKit}
@@ -986,11 +1056,16 @@ export function ShortsPage({
           onUploadLogo={onUploadLogo}
           onDeleteLogo={onDeleteLogo}
           onUpdateClipHashtags={onUpdateClipHashtags}
+          onUpdateClipWords={onUpdateClipWords}
           onOpenTemplateLibrary={() => setTemplateLibraryOpen(true)}
           onImportSrtCues={onImportSrtCues}
           onAutoAlignSubtitles={handleAutoAlignSubtitles}
           onAddSfxCueAtPlayhead={handleAddSfxCueAtPlayhead}
           onRemoveSfxCue={handleRemoveSfxCue}
+          onAddMarker={handleAddMarker}
+          onRenameMarker={handleRenameMarker}
+          onDeleteMarker={handleDeleteMarker}
+          onSeekTo={seekTo}
           onReplayOutro={() => {
             setPlaying(false);
             setOutroElapsedSec(0);
@@ -1053,17 +1128,6 @@ export function ShortsPage({
         onChangeResolution={(exportResolution) => onUpdateShorts({ exportResolution })}
         onChangeEncoder={(exportEncoder) => onUpdateShorts({ exportEncoder })}
         onClose={() => setExportModalOpen(false)}
-        onNotify={onNotify}
-      />
-
-      {/* AI Agent & IDE Compatibility Hub Modal */}
-      <AgentInteropModal
-        open={agentModalOpen}
-        clip={currentClip}
-        settings={settings}
-        trimInSec={trimInSec}
-        trimOutSec={trimOutSec}
-        onClose={() => setAgentModalOpen(false)}
         onNotify={onNotify}
       />
     </div>

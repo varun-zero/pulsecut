@@ -1,8 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Crop, Lock, Play, SlidersHorizontal, Trash2 } from 'lucide-react';
+import {
+  AlignHorizontalJustifyCenter,
+  Check,
+  Crop,
+  Lock,
+  Play,
+  RotateCcw,
+  SlidersHorizontal,
+  Trash2,
+} from 'lucide-react';
 import type {
   BrandKit,
   ClipItem,
+  ClipSegment,
   CustomFontEntry,
   EditorSettings,
   FramingBlueprint,
@@ -14,7 +24,12 @@ import {
   describeFramingBlueprint,
   getCanvasAspectRatio,
 } from '../../lib/framingEngine';
-import { computeOutroAnimationFrame } from '../../lib/shortsEngine';
+import {
+  buildVideoGradingCssFilter,
+  buildVideoTransformCss,
+  computeOutroAnimationFrame,
+  computeTransitionPreviewEffect,
+} from '../../lib/shortsEngine';
 import {
   applyWordCasing,
   getActiveWordBeat,
@@ -37,11 +52,13 @@ interface ShortsStageProps {
   settings: EditorSettings;
   brandKit: BrandKit;
   customFonts: readonly CustomFontEntry[];
+  activeSegments: readonly ClipSegment[];
   activeTemplateName?: string;
   currentTimeSec: number;
   stitchedTimeSec: number;
   previewRes: PreviewResolutionId;
   finalPreviewLocked: boolean;
+  compareOriginal: boolean;
   outroElapsedSec: number | null;
   showSafeZones: boolean;
   trackStates: TrackStates;
@@ -62,6 +79,15 @@ type OverlayElementId =
   | 'watermark2';
 type DragTarget = OverlayElementId;
 
+const OVERLAY_LABELS: Record<OverlayElementId, string> = {
+  'channel-card': 'Social Card',
+  headline: 'Headline',
+  subtitles: 'Subtitles',
+  streamer: 'Attribution',
+  watermark1: 'Watermark',
+  watermark2: 'Tag Overlay',
+};
+
 export function ShortsStage({
   clip,
   videoRef,
@@ -70,11 +96,13 @@ export function ShortsStage({
   settings,
   brandKit,
   customFonts,
+  activeSegments,
   activeTemplateName,
   currentTimeSec,
   stitchedTimeSec,
   previewRes,
   finalPreviewLocked,
+  compareOriginal,
   outroElapsedSec,
   showSafeZones,
   trackStates,
@@ -88,8 +116,9 @@ export function ShortsStage({
   const frameRef = useRef<HTMLDivElement>(null);
 
   // Overlay element selection — every draggable preview element gets an id so it can
-  // be highlighted, deleted with Delete/Backspace, or removed via the visible button.
+  // be highlighted, centered, reset, or hidden via Delete/Backspace or the floating bar.
   const [selectedElement, setSelectedElement] = useState<OverlayElementId | null>(null);
+  const [comparePct, setComparePct] = useState(50);
   const hiddenElements = settings.hiddenElements || [];
   const isElementHidden = (id: OverlayElementId) => hiddenElements.includes(id);
   const selectionOutline = (id: OverlayElementId) =>
@@ -103,6 +132,68 @@ export function ShortsStage({
     }
     setSelectedElement(null);
   }, [onUpdateSettings, selectedElement, settings.hiddenElements]);
+
+  const centerSelectedElement = useCallback(() => {
+    if (!selectedElement) return;
+    if (selectedElement === 'channel-card') {
+      const w = settings.channelCardWidth ?? 88;
+      onUpdateSettings({ channelCardX: Math.round((100 - w) / 2) }, true);
+    } else if (selectedElement === 'headline') {
+      onUpdateSettings({ headlineX: 50 }, true);
+    } else if (selectedElement === 'subtitles') {
+      onUpdateSettings({ subtitleX: 50 }, true);
+    } else if (selectedElement === 'streamer') {
+      onUpdateSettings({ streamerBadgeX: 50 }, true);
+    } else if (selectedElement === 'watermark1') {
+      onUpdateSettings({ watermarkX: 50 }, true);
+    } else if (selectedElement === 'watermark2') {
+      onUpdateDualWatermark({ secondaryX: 50 });
+    }
+  }, [onUpdateDualWatermark, onUpdateSettings, selectedElement, settings.channelCardWidth]);
+
+  const resetSelectedElementPos = useCallback(() => {
+    if (!selectedElement) return;
+    if (selectedElement === 'channel-card') {
+      onUpdateSettings({ channelCardX: 6, channelCardY: 6 }, true);
+    } else if (selectedElement === 'headline') {
+      onUpdateSettings({ headlineX: 50, headlineY: 22 }, true);
+    } else if (selectedElement === 'subtitles') {
+      const spec = getSafeZoneSpec(settings.safeZonePlatform, settings.template);
+      onUpdateSettings({ subtitleX: 50, subtitleVerticalPos: spec.autoAlignSubtitlePct }, true);
+    } else if (selectedElement === 'streamer') {
+      onUpdateSettings({ streamerBadgeX: 50, streamerBadgeY: 85 }, true);
+    } else if (selectedElement === 'watermark1') {
+      onUpdateSettings({ watermarkX: 50, watermarkY: 77 }, true);
+    } else if (selectedElement === 'watermark2') {
+      onUpdateDualWatermark({ secondaryX: 50, secondaryY: 90 });
+    }
+  }, [
+    onUpdateDualWatermark,
+    onUpdateSettings,
+    selectedElement,
+    settings.safeZonePlatform,
+    settings.template,
+  ]);
+
+  const startDragCompare = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const frame = frameRef.current;
+    if (!frame) return;
+    const rect = frame.getBoundingClientRect();
+    const updatePct = (clientX: number) => {
+      if (rect.width <= 0) return;
+      const pct = Math.max(8, Math.min(92, Math.round(((clientX - rect.left) / rect.width) * 100)));
+      setComparePct(pct);
+    };
+    const onMove = (ev: PointerEvent) => updatePct(ev.clientX);
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -231,68 +322,47 @@ export function ShortsStage({
                   : 'none'
       : settings.streamerPlatform;
 
-  const isChannelCard =
-    settings.template === 'clipship-14' || settings.template === 'clipship-15';
   const isXCard =
     settings.templateEnabled &&
-    (settings.template === 'x_light' || settings.template === 'x_dark' || isChannelCard);
+    (settings.template === 'x_light' || settings.template === 'x_dark');
   const isNewsBroadcast =
     settings.templateEnabled &&
     (settings.template === 'breaking_news' || settings.template === 'breaking-news');
 
-  // Channel card (ClipShip 14/15) preview data. BrandKit currently exposes no avatar
-  // field, so read optional ones defensively and fall back to the bundled channel logo.
-  type BrandKitWithAvatar = BrandKit & { avatarDataUrl?: string; logoDataUrl?: string };
-  const brandWithAvatar = brandKit as BrandKitWithAvatar;
-  const channelAvatarUrl =
-    brandWithAvatar.avatarDataUrl ||
-    brandWithAvatar.logoDataUrl ||
-    '/templates/clipship/_Extras/beatscut_logo.jpg';
-  const channelDisplayName = brandKit.displayName || settings.streamerHandle || 'beats cut';
-  const channelHandle = brandKit.handle || '@beatscutfm';
-  const channelCaption = (settings.pinnedStatement || settings.headline || '').trim();
-
   const outroAnim =
     outroElapsedSec !== null ? computeOutroAnimationFrame(outroElapsedSec, shorts.outro) : null;
 
-  // Build a CSS filter string from the legacy Color & FX grading controls.
-  const buildVideoFilter = (): string => {
-    const filters: string[] = [];
-    const b = settings.brightness ?? 100;
-    const c = settings.contrast ?? 100;
-    const s = settings.saturation ?? 100;
-    const exp = settings.exposure ?? 0;
-    const temp = settings.temperature ?? 0;
-    const blur = settings.blur ?? 0;
+  const videoFilterCss = useMemo(() => buildVideoGradingCssFilter(settings), [settings]);
+  const baseTransformCss = useMemo(() => buildVideoTransformCss(settings), [settings]);
+  const transitionEffect = useMemo(
+    () =>
+      computeTransitionPreviewEffect(
+        currentTimeSec,
+        activeSegments,
+        settings.transitionStyle || 'cut',
+        settings.transitionDurationSec ?? 0.3
+      ),
+    [currentTimeSec, activeSegments, settings.transitionStyle, settings.transitionDurationSec]
+  );
 
-    const netBrightness = Math.max(0, b + exp);
-    if (netBrightness !== 100) filters.push(`brightness(${netBrightness}%)`);
-    if (c !== 100) filters.push(`contrast(${c}%)`);
-    if (s !== 100) filters.push(`saturate(${s}%)`);
-    if (blur > 0) filters.push(`blur(${blur}px)`);
-
-    if (temp > 0) {
-      filters.push(`sepia(${temp * 0.6}%)`);
-    } else if (temp < 0) {
-      filters.push(`hue-rotate(${temp * 0.8}deg)`);
+  const combinedCanvasStyle = useMemo<React.CSSProperties>(() => {
+    const parts: string[] = [];
+    if (baseTransformCss.transform && baseTransformCss.transform !== 'none') {
+      parts.push(baseTransformCss.transform);
     }
-
-    if (settings.colorFilter === 'cinematic') {
-      filters.push('contrast(115%) saturate(110%) sepia(8%)');
-    } else if (settings.colorFilter === 'warm') {
-      filters.push('sepia(25%) saturate(115%)');
-    } else if (settings.colorFilter === 'moody') {
-      filters.push('brightness(92%) contrast(125%) saturate(85%)');
-    } else if (settings.colorFilter === 'vintage') {
-      filters.push('sepia(35%) contrast(95%) brightness(105%)');
-    } else if (settings.colorFilter === 'bw') {
-      filters.push('grayscale(100%) contrast(120%)');
-    } else if (settings.colorFilter === 'cyberpunk') {
-      filters.push('contrast(130%) hue-rotate(180deg) saturate(140%)');
+    if (transitionEffect.scale !== 1) {
+      parts.push(`scale(${transitionEffect.scale.toFixed(3)})`);
     }
-
-    return filters.length > 0 ? filters.join(' ') : 'none';
-  };
+    if (transitionEffect.translateX !== 0) {
+      parts.push(`translateX(${transitionEffect.translateX.toFixed(2)}%)`);
+    }
+    const opacity = Math.max(0, Math.min(1, baseTransformCss.opacity * transitionEffect.opacity));
+    return {
+      transform: parts.length > 0 ? parts.join(' ') : undefined,
+      transformOrigin: 'center center',
+      opacity,
+    };
+  }, [baseTransformCss, transitionEffect]);
 
   return (
     <div className="flex-1 min-h-0 flex flex-col items-center justify-between p-3 gap-2 overflow-hidden bg-[var(--pc-canvas)]">
@@ -357,16 +427,62 @@ export function ShortsStage({
           style={{ aspectRatio: String(canvasAr) }}
           className="relative h-full max-h-full max-w-full rounded-xl overflow-hidden bg-black border border-[var(--pc-border)] shadow-2xl select-none"
         >
-          {/* Layer 1: Exact Framed 2D Canvas from Section 1 Blueprint */}
+          {/* Layer 1: Exact Framed 2D Canvas from Section 1 Blueprint + Grading & Transforms */}
           <FramedCanvasView
             videoRef={videoRef}
             blueprint={blueprint}
             previewRes={previewRes}
             v1Hidden={!trackStates.v1Visible}
-            filter={buildVideoFilter()}
+            mediaSrc={clip.rawMediaUrl || clip.mediaUrl}
+            filter={videoFilterCss}
+            transformStyle={combinedCanvasStyle}
             testId="shorts-compositor-canvas"
             className="w-full h-full"
           />
+
+          {/* Before / After Split Wipe Comparison Layer */}
+          {compareOriginal && (
+            <>
+              <div
+                data-testid="shorts-compare-original-layer"
+                className="absolute inset-0 z-10 pointer-events-none overflow-hidden"
+                style={{ clipPath: `inset(0 ${100 - comparePct}% 0 0)` }}
+              >
+                <FramedCanvasView
+                  videoRef={videoRef}
+                  blueprint={blueprint}
+                  previewRes={previewRes}
+                  v1Hidden={!trackStates.v1Visible}
+                  mediaSrc={clip.rawMediaUrl || clip.mediaUrl}
+                  className="w-full h-full"
+                />
+              </div>
+              <div
+                data-testid="shorts-compare-divider"
+                onPointerDown={startDragCompare}
+                style={{ left: `${comparePct}%` }}
+                className="absolute top-0 bottom-0 z-40 w-0.5 bg-white shadow-[0_0_8px_rgba(0,0,0,0.8)] cursor-ew-resize -translate-x-1/2"
+              >
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-7 w-4 rounded-full bg-white text-black border border-black/30 shadow-md grid place-items-center text-[9px] font-bold">
+                  ⇄
+                </div>
+              </div>
+              <div className="absolute top-2 left-2 z-40 px-1.5 py-0.5 rounded bg-black/75 text-white text-[9.5px] font-mono-tabular pointer-events-none">
+                Original
+              </div>
+              <div className="absolute top-2 right-2 z-40 px-1.5 py-0.5 rounded bg-black/75 text-white text-[9.5px] font-mono-tabular pointer-events-none">
+                Graded
+              </div>
+            </>
+          )}
+
+          {/* Dip-to-Black live transition preview */}
+          {transitionEffect.dipBlackOpacity > 0 && (
+            <div
+              className="absolute inset-0 z-15 bg-black pointer-events-none"
+              style={{ opacity: transitionEffect.dipBlackOpacity }}
+            />
+          )}
 
           {/* Vignette overlay (Color & FX) — above the canvas, below text/UI overlay layers */}
           {settings.vignette > 0 && (
@@ -379,89 +495,45 @@ export function ShortsStage({
             />
           )}
 
-          {/* Layer 2: Whole-Video Template Chrome (Channel Card / X-Tweet Header Card / Breaking News Banner) */}
-          {isXCard &&
-            !isElementHidden('channel-card') &&
-            (isChannelCard ? (
-              <div
-                data-testid="channel-card-preview"
-                onPointerDown={(e) => startDragOverlay('channel-card', e)}
-                style={{
-                  left: `${settings.channelCardX ?? 6}%`,
-                  top: `${settings.channelCardY ?? 6}%`,
-                  width: `${settings.channelCardWidth ?? 88}%`,
-                }}
-                className={`absolute rounded-xl p-3 shadow-xl bg-white text-[#0F1419] overflow-hidden cursor-move pointer-events-auto ${selectionOutline('channel-card')}`}
-              >
-                {settings.template === 'clipship-15' && (
-                  <div
-                    data-testid="channel-card-ig-strip"
-                    className="absolute top-0 left-0 right-0 h-1"
-                    style={{
-                      background:
-                        'linear-gradient(90deg, #FEDA75 0%, #FA7E1E 25%, #D62976 50%, #962FBF 75%, #4F5BD5 100%)',
-                    }}
-                  />
-                )}
-                <div className="flex items-center gap-2 mb-1.5">
-                  <img
-                    src={channelAvatarUrl}
-                    alt="Channel avatar"
-                    className="w-7 h-7 rounded-full object-cover bg-[#E4E4E7] shrink-0"
-                  />
-                  <div className="min-w-0 leading-tight">
-                    <div className="text-[12px] font-bold flex items-center gap-1 truncate">
-                      <span>{channelDisplayName}</span>
-                      {brandKit.verified && (
-                        <span className="w-3.5 h-3.5 rounded-full bg-[#1D9BF0] text-white inline-grid place-items-center shrink-0">
-                          <Check className="w-2.5 h-2.5 stroke-[3]" />
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[10px] opacity-65 truncate">{channelHandle}</div>
+          {/* Layer 2: Whole-Video Template Chrome (X-Tweet Header Card / Breaking News Banner) */}
+          {isXCard && !isElementHidden('channel-card') && (
+            <div
+              data-testid="channel-card-preview"
+              onPointerDown={(e) => startDragOverlay('channel-card', e)}
+              style={{
+                left: `${settings.channelCardX ?? 6}%`,
+                top: `${settings.channelCardY ?? 6}%`,
+                width: `${settings.channelCardWidth ?? 88}%`,
+              }}
+              className={`absolute z-20 rounded-xl p-3 shadow-xl cursor-move pointer-events-auto ${
+                settings.cardTheme === 'light'
+                  ? 'bg-white text-[#0F1419]'
+                  : 'bg-[#121417] text-white border border-white/15'
+              } ${selectionOutline('channel-card')}`}
+            >
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className="w-7 h-7 rounded-full bg-zinc-700 grid place-items-center text-[11px] font-bold text-white shrink-0">
+                  {(brandKit.displayName || settings.streamerHandle || 'P').slice(0, 1).toUpperCase()}
+                </div>
+                <div className="min-w-0 leading-tight">
+                  <div className="text-[12px] font-bold flex items-center gap-1 truncate">
+                    <span>{brandKit.displayName || settings.streamerHandle || 'Creator'}</span>
+                    {brandKit.verified && (
+                      <span className="w-3.5 h-3.5 rounded-full bg-[#1D9BF0] text-white inline-grid place-items-center">
+                        <Check className="w-2.5 h-2.5 stroke-[3]" />
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[10px] opacity-65 truncate">
+                    {brandKit.handle || `@${(settings.streamerHandle || 'creator').replace(/^@/, '')}`}
                   </div>
                 </div>
-                {channelCaption && (
-                  <p className="m-0 text-[12px] font-medium leading-snug">{channelCaption}</p>
-                )}
               </div>
-            ) : (
-              <div
-                onPointerDown={(e) => startDragOverlay('channel-card', e)}
-                style={{
-                  left: `${settings.channelCardX ?? 6}%`,
-                  top: `${settings.channelCardY ?? 6}%`,
-                  width: `${settings.channelCardWidth ?? 88}%`,
-                }}
-                className={`absolute rounded-xl p-3 shadow-xl cursor-move pointer-events-auto ${
-                  settings.cardTheme === 'light'
-                    ? 'bg-white text-[#0F1419]'
-                    : 'bg-[#121417] text-white border border-white/15'
-                } ${selectionOutline('channel-card')}`}
-              >
-                <div className="flex items-center gap-2 mb-1.5">
-                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-sky-500 to-indigo-600 grid place-items-center text-[11px] font-bold text-white shrink-0">
-                    {(brandKit.displayName || settings.streamerHandle || 'P').slice(0, 1).toUpperCase()}
-                  </div>
-                  <div className="min-w-0 leading-tight">
-                    <div className="text-[12px] font-bold flex items-center gap-1 truncate">
-                      <span>{brandKit.displayName || settings.streamerHandle || 'Creator'}</span>
-                      {brandKit.verified && (
-                        <span className="w-3.5 h-3.5 rounded-full bg-[#1D9BF0] text-white inline-grid place-items-center">
-                          <Check className="w-2.5 h-2.5 stroke-[3]" />
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[10px] opacity-65 truncate">
-                      {brandKit.handle || `@${(settings.streamerHandle || 'creator').replace(/^@/, '')}`}
-                    </div>
-                  </div>
-                </div>
-                <p className="m-0 text-[12px] font-medium leading-snug">
-                  {settings.pinnedStatement || settings.headline || clip.title}
-                </p>
-              </div>
-            ))}
+              <p className="m-0 text-[12px] font-medium leading-snug">
+                {settings.pinnedStatement || settings.headline || clip.title}
+              </p>
+            </div>
+          )}
 
           {isNewsBroadcast && (
             <div className="absolute bottom-[10%] left-0 right-0 px-3 pointer-events-none">
@@ -784,28 +856,61 @@ export function ShortsStage({
             </div>
           )}
 
-          {/* Delete the currently selected overlay (Delete / Backspace works too when not typing) */}
+          {/* Floating NLE overlay alignment & visibility toolbar */}
           {selectedElement && (
-            <button
-              type="button"
-              aria-label="Delete selected element"
-              data-testid="delete-selected-element-btn"
+            <div
+              data-testid="selected-overlay-toolbar"
               onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                deleteSelectedElement();
-              }}
-              className="absolute top-2 right-2 z-50 h-7 w-7 grid place-items-center rounded-md border border-white/25 bg-black/70 text-white hover:bg-red-600 transition-colors cursor-pointer shadow-lg"
+              className="absolute top-2 right-2 z-50 h-7 px-1.5 rounded-md border border-white/20 bg-black/85 text-white flex items-center gap-1 shadow-lg"
             >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
+              <span className="text-[10px] font-medium px-1 text-white/85">
+                {OVERLAY_LABELS[selectedElement]}
+              </span>
+              <button
+                type="button"
+                aria-label="Center selected element horizontally"
+                title="Center horizontally"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  centerSelectedElement();
+                }}
+                className="h-5 w-5 grid place-items-center rounded hover:bg-white/15 text-white bg-transparent border-0 cursor-pointer"
+              >
+                <AlignHorizontalJustifyCenter className="w-3 h-3" />
+              </button>
+              <button
+                type="button"
+                aria-label="Reset selected element position"
+                title="Reset position"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  resetSelectedElementPos();
+                }}
+                className="h-5 w-5 grid place-items-center rounded hover:bg-white/15 text-white bg-transparent border-0 cursor-pointer"
+              >
+                <RotateCcw className="w-3 h-3" />
+              </button>
+              <button
+                type="button"
+                aria-label="Hide selected element"
+                data-testid="delete-selected-element-btn"
+                title="Hide overlay (Delete)"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  deleteSelectedElement();
+                }}
+                className="h-5 w-5 grid place-items-center rounded hover:bg-red-600 text-white bg-transparent border-0 cursor-pointer"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </div>
           )}
         </div>
       </div>
 
       {/* Subtle footer helper */}
       <div className="shrink-0 text-[11px] text-[var(--pc-muted)] flex items-center gap-2">
-        <span>Drag the channel card, headline, subtitles, or watermarks · select then Delete to remove</span>
+        <span>Drag headline, subtitles, cards, or watermarks · select to center, reset, or hide</span>
         <span aria-hidden="true">·</span>
         <span className="font-mono-tabular">{activeTemplateName || templatePreset.name}</span>
       </div>
