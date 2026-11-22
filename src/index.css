@@ -21,8 +21,9 @@
     --pc-ok: #16A34A;
     --pc-warn: #D97706;
     --pc-error: #DC2626;
-    --pc-font-sans: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
-    --pc-font-mono: "JetBrains Mono", ui-monospace, monospace;
+    --pc-font-sans: "Plus Jakarta Sans", system-ui, -apple-system, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+    --pc-font-serif: "Fraunces", Georgia, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", serif;
+    --pc-font-mono: "JetBrains Mono", ui-monospace, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", monospace;
   }
 
   .dark {

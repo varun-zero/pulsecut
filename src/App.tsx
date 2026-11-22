@@ -180,6 +180,7 @@ function createEditorSettingsForClip(clip: ClipItem | null, brandKit: BrandKit):
     channelCardX: 6,
     channelCardY: 6,
     channelCardWidth: 88,
+    channelCardHeight: 22,
     speakerCrops: {
       primary: { ...DEFAULT_SPEAKER_CROPS.primary },
       secondary: { ...DEFAULT_SPEAKER_CROPS.secondary },

@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlignHorizontalJustifyCenter,
-  Check,
   Crop,
   Lock,
   Play,
@@ -36,6 +35,7 @@ import {
   getSafeZoneSpec,
   getViralFont,
 } from '../../captionStyles';
+import { AppleEmojiText } from '../../lib/appleEmoji';
 import { getTemplatePreset } from '../../presets';
 import {
   InstagramIcon,
@@ -302,6 +302,31 @@ export function ShortsStage({
     window.addEventListener('pointerup', onUp);
   };
 
+  // Bottom-edge vertical resize handle for the channel card. Dragging changes only
+  // channelCardHeight (never the horizontal position); history is committed on pointer up.
+  const startCardResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedElement('channel-card');
+    const frame = frameRef.current;
+    if (!frame) return;
+    const rect = frame.getBoundingClientRect();
+    const topPct = settings.channelCardY ?? 6;
+    const applyFromClient = (clientY: number, record: boolean) => {
+      const bottomPct = ((clientY - rect.top) / rect.height) * 100;
+      const heightPct = Math.round(Math.max(8, Math.min(60, bottomPct - topPct)));
+      onUpdateSettings({ channelCardHeight: heightPct }, record);
+    };
+    const onMove = (ev: PointerEvent) => applyFromClient(ev.clientY, false);
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      applyFromClient(ev.clientY, true);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
   // Resolved platform attribution icon
   const resolvedPlatform =
     settings.streamerPlatform === 'auto'
@@ -322,12 +347,49 @@ export function ShortsStage({
                   : 'none'
       : settings.streamerPlatform;
 
-  const isXCard =
-    settings.templateEnabled &&
-    (settings.template === 'x_light' || settings.template === 'x_dark');
+  // Every channel/X card variant renders as a single full-bleed card across the frame.
+  const CHANNEL_CARD_PRESET_IDS = [
+    'x_light',
+    'x_dark',
+    'channel-card-light',
+    'channel-card-dark',
+    'x-com-card',
+  ];
+  const isChannelCard = CHANNEL_CARD_PRESET_IDS.includes(settings.template);
+  const isXCard = settings.templateEnabled && isChannelCard;
   const isNewsBroadcast =
     settings.templateEnabled &&
     (settings.template === 'breaking_news' || settings.template === 'breaking-news');
+
+  // Card data + theme. BrandKit currently exposes no avatar field, so read optional
+  // ones defensively and fall back to the bundled channel logo.
+  type BrandKitWithAvatar = BrandKit & { avatarDataUrl?: string; logoDataUrl?: string };
+  const brandWithAvatar = brandKit as BrandKitWithAvatar;
+  const channelAvatarUrl =
+    brandWithAvatar.avatarDataUrl ||
+    brandWithAvatar.logoDataUrl ||
+    '/brand/beatscut_logo.jpg';
+  const channelDisplayName = brandKit.displayName || settings.streamerHandle || 'beats cut';
+  const channelHandle = brandKit.handle || '@beatscutfm';
+  const channelCaption = (settings.pinnedStatement || settings.headline || '').trim();
+
+  const isXComCard = settings.template === 'x-com-card';
+  const isLightCard =
+    settings.template === 'x_light' ||
+    settings.template === 'channel-card-light' ||
+    isXComCard;
+  const cardBg = isLightCard ? '#FFFFFF' : '#000000';
+  const cardPrimaryColor = isLightCard ? '#0F1419' : '#E7E9EA';
+  const cardHandleColor = isLightCard ? '#536471' : '#71767B';
+
+  // Card height (percent of the preview frame) drives every inner font/avatar size.
+  const cardHeight = Math.max(8, Math.min(60, settings.channelCardHeight ?? 22));
+  const cardScale = cardHeight / 22;
+  const cardAvatarSize = Math.max(18, Math.min(72, Math.round(34 * cardScale)));
+  const cardNameFontSize = Math.max(10, Math.round(13 * cardScale));
+  const cardHandleFontSize = Math.max(9, Math.round(10 * cardScale));
+  const cardCaptionFontSize = Math.max(9, Math.round(12 * cardScale));
+  const cardBadgeSize = Math.max(10, Math.min(28, Math.round(14 * cardScale)));
 
   const outroAnim =
     outroElapsedSec !== null ? computeOutroAnimationFrame(outroElapsedSec, shorts.outro) : null;
@@ -495,43 +557,82 @@ export function ShortsStage({
             />
           )}
 
-          {/* Layer 2: Whole-Video Template Chrome (X-Tweet Header Card / Breaking News Banner) */}
+          {/* Layer 2: Whole-Video Template Chrome (Full-Bleed Channel / X Card / Breaking News) */}
           {isXCard && !isElementHidden('channel-card') && (
             <div
               data-testid="channel-card-preview"
               onPointerDown={(e) => startDragOverlay('channel-card', e)}
               style={{
-                left: `${settings.channelCardX ?? 6}%`,
+                left: 0,
                 top: `${settings.channelCardY ?? 6}%`,
-                width: `${settings.channelCardWidth ?? 88}%`,
+                width: '100%',
+                height: `${cardHeight}%`,
+                backgroundColor: cardBg,
+                color: cardPrimaryColor,
               }}
-              className={`absolute z-20 rounded-xl p-3 shadow-xl cursor-move pointer-events-auto ${
-                settings.cardTheme === 'light'
-                  ? 'bg-white text-[#0F1419]'
-                  : 'bg-[#121417] text-white border border-white/15'
-              } ${selectionOutline('channel-card')}`}
+              className={`absolute z-20 px-3 overflow-hidden cursor-move pointer-events-auto ${selectionOutline('channel-card')}`}
             >
-              <div className="flex items-center gap-2 mb-1.5">
-                <div className="w-7 h-7 rounded-full bg-zinc-700 grid place-items-center text-[11px] font-bold text-white shrink-0">
-                  {(brandKit.displayName || settings.streamerHandle || 'P').slice(0, 1).toUpperCase()}
-                </div>
+              <div className="flex items-center gap-2 h-full min-w-0">
+                <img
+                  src={channelAvatarUrl}
+                  alt="Channel avatar"
+                  style={{ width: cardAvatarSize, height: cardAvatarSize }}
+                  className="rounded-full object-cover bg-[#E4E4E7] shrink-0"
+                />
                 <div className="min-w-0 leading-tight">
-                  <div className="text-[12px] font-bold flex items-center gap-1 truncate">
-                    <span>{brandKit.displayName || settings.streamerHandle || 'Creator'}</span>
+                  <div
+                    className="flex items-center gap-1 truncate"
+                    style={{
+                      fontSize: cardNameFontSize,
+                      fontWeight: 700,
+                      color: cardPrimaryColor,
+                    }}
+                  >
+                    <AppleEmojiText text={channelDisplayName} />
                     {brandKit.verified && (
-                      <span className="w-3.5 h-3.5 rounded-full bg-[#1D9BF0] text-white inline-grid place-items-center">
-                        <Check className="w-2.5 h-2.5 stroke-[3]" />
-                      </span>
+                      <img
+                        src="/brand/verified_badge.png"
+                        alt="Verified"
+                        style={{
+                          width: cardBadgeSize,
+                          height: cardBadgeSize,
+                          backgroundColor: isXComCard ? '#1D9BF0' : undefined,
+                        }}
+                        className="rounded-full object-contain shrink-0"
+                      />
                     )}
                   </div>
-                  <div className="text-[10px] opacity-65 truncate">
-                    {brandKit.handle || `@${(settings.streamerHandle || 'creator').replace(/^@/, '')}`}
+                  <div
+                    className="truncate"
+                    style={{ fontSize: cardHandleFontSize, color: cardHandleColor }}
+                  >
+                    <AppleEmojiText text={channelHandle} />
                   </div>
                 </div>
               </div>
-              <p className="m-0 text-[12px] font-medium leading-snug">
-                {settings.pinnedStatement || settings.headline || clip.title}
-              </p>
+              {channelCaption && (
+                <p
+                  className="m-0 leading-snug"
+                  style={{
+                    fontSize: cardCaptionFontSize,
+                    color: cardPrimaryColor,
+                    fontWeight: isXComCard ? 400 : 500,
+                  }}
+                >
+                  <AppleEmojiText text={channelCaption} />
+                </p>
+              )}
+              {/* Bottom-edge vertical resize handle — drag to change only channelCardHeight. */}
+              <div
+                data-testid="channel-card-height-handle"
+                onPointerDown={startCardResize}
+                className="absolute bottom-0 left-0 right-0 h-3 flex items-center justify-center cursor-ns-resize pointer-events-auto"
+              >
+                <span
+                  className="block w-10 h-1 rounded-full opacity-50"
+                  style={{ backgroundColor: cardHandleColor }}
+                />
+              </div>
             </div>
           )}
 
@@ -541,7 +642,7 @@ export function ShortsStage({
                 Breaking News
               </div>
               <div className="bg-white text-black text-[12px] font-bold px-2.5 py-1.5 leading-tight shadow-md">
-                {settings.headline || clip.title}
+                <AppleEmojiText text={settings.headline || clip.title} />
               </div>
             </div>
           )}
@@ -584,7 +685,9 @@ export function ShortsStage({
                         : 'text-white font-black leading-tight tracking-tight'
                 }
               >
-                {applyWordCasing(settings.headline, settings.headlineCasing)}
+                <AppleEmojiText
+                  text={applyWordCasing(settings.headline, settings.headlineCasing)}
+                />
               </span>
             </div>
           )}
@@ -651,7 +754,9 @@ export function ShortsStage({
                       }}
                       className="inline-block transition-transform duration-100"
                     >
-                      {applyWordCasing(tok.text, settings.subtitleCasing)}
+                      <AppleEmojiText
+                        text={applyWordCasing(tok.text, settings.subtitleCasing)}
+                      />
                     </span>
                   );
                 })}
@@ -706,7 +811,11 @@ export function ShortsStage({
                   />
                 )}
                 <span className="text-white font-extrabold text-[13px] tracking-tight drop-shadow-[0_1.5px_3px_rgba(0,0,0,0.95)]">
-                  {settings.streamerBadgeUppercase ? badgeHandle.toUpperCase() : badgeHandle}
+                  <AppleEmojiText
+                    text={
+                      settings.streamerBadgeUppercase ? badgeHandle.toUpperCase() : badgeHandle
+                    }
+                  />
                 </span>
               </div>
             );
@@ -740,7 +849,7 @@ export function ShortsStage({
                 }}
                 className={`absolute z-20 cursor-move font-extrabold text-white tracking-tight whitespace-nowrap drop-shadow-[0_1.5px_3px_rgba(0,0,0,0.95)] ${selectionOutline('watermark1')}`}
               >
-                {brandKit.handle}
+                <AppleEmojiText text={brandKit.handle} />
               </div>
             ) : null)}
 
@@ -758,7 +867,7 @@ export function ShortsStage({
               }}
               className={`absolute z-20 cursor-move font-bold text-white/95 whitespace-nowrap drop-shadow-[0_1.5px_3px_rgba(0,0,0,0.95)] ${selectionOutline('watermark2')}`}
             >
-              {shorts.dualWatermark.secondaryText}
+              <AppleEmojiText text={shorts.dualWatermark.secondaryText} />
             </div>
           )}
 
@@ -817,7 +926,7 @@ export function ShortsStage({
                       }}
                       className="text-base font-bold leading-snug max-w-[85%]"
                     >
-                      {shorts.outro.text}
+                      <AppleEmojiText text={shorts.outro.text} />
                     </div>
                     <div
                       style={{
@@ -827,7 +936,7 @@ export function ShortsStage({
                       }}
                       className="px-4 py-1.5 rounded-full text-xs font-semibold text-white shadow-md"
                     >
-                      {shorts.outro.btnText}
+                      <AppleEmojiText text={shorts.outro.btnText} />
                     </div>
                   </div>
                 )
@@ -912,7 +1021,9 @@ export function ShortsStage({
       <div className="shrink-0 text-[11px] text-[var(--pc-muted)] flex items-center gap-2">
         <span>Drag headline, subtitles, cards, or watermarks · select to center, reset, or hide</span>
         <span aria-hidden="true">·</span>
-        <span className="font-mono-tabular">{activeTemplateName || templatePreset.name}</span>
+        <span className="font-mono-tabular">
+          <AppleEmojiText text={activeTemplateName || templatePreset.name} />
+        </span>
       </div>
     </div>
   );

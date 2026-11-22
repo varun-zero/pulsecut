@@ -1,7 +1,7 @@
 export type PageId = 'dashboard' | 'live' | 'clips' | 'framing' | 'shorts';
 
 export type EditorTabId = 'framing' | 'templates' | 'text' | 'adjust' | 'audio' | 'media';
-export type ShortsTabId = 'edit' | 'templates' | 'text' | 'color' | 'audio';
+export type ShortsTabId = 'edit' | 'templates' | 'text' | 'color' | 'audio' | 'frame';
 export type TextSubtabId = 'headline' | 'subs';
 export type StageViewModeId = 'framing' | 'editor';
 
@@ -396,6 +396,8 @@ export interface EditorSettings {
   channelCardY?: number;
   /** Channel card width as a percentage of the frame width (default 88) */
   channelCardWidth?: number;
+  /** Channel card height as a percentage of the preview frame height (default 22, clamp 8..60) */
+  channelCardHeight?: number;
 
   /* Multi-Speaker Framing Crop Regions (Solo / Split / Trio interactive canvas boxes) */
   speakerCrops: SpeakerCropSet;

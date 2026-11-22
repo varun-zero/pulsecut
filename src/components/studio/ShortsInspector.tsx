@@ -51,6 +51,7 @@ import type {
   WordPacingId,
 } from '../../types';
 import { VIRAL_FONTS } from '../../captionStyles';
+import { AppleEmojiText } from '../../lib/appleEmoji';
 import { formatTimecode, parseSrtToWordCues } from '../../lib/studioLogic';
 import {
   addWordCue,
@@ -535,14 +536,15 @@ export function ShortsInspector({
       aria-label="Shorts production inspector"
       className="w-[368px] shrink-0 border-l border-[var(--pc-border)] bg-[var(--pc-surface)] flex flex-col overflow-hidden"
     >
-      {/* Clean 5-Tab NLE Inspector Bar */}
+      {/* Clean 6-Tab NLE Inspector Bar (Frame hosts the main-stage interactive editor) */}
       <div
         role="tablist"
         aria-label="Shorts inspector tabs"
-        className="shrink-0 grid grid-cols-5 border-b border-[var(--pc-border)] bg-[var(--pc-surface)]"
+        className="shrink-0 grid grid-cols-6 border-b border-[var(--pc-border)] bg-[var(--pc-surface)]"
       >
         {(
           [
+            { id: 'frame', label: 'Frame', icon: <Crop className="w-3.5 h-3.5" /> },
             { id: 'edit', label: 'Edit', icon: <SlidersHorizontal className="w-3.5 h-3.5" /> },
             { id: 'templates', label: 'Templates', icon: <Layers className="w-3.5 h-3.5" /> },
             { id: 'text', label: 'Text', icon: <Type className="w-3.5 h-3.5" /> },
@@ -574,6 +576,52 @@ export function ShortsInspector({
 
       {/* Scrollable Inspector Content */}
       <div className="flex-1 overflow-y-auto studio-scroll px-4 py-3 space-y-3">
+        {/* ================= FRAME TAB (main stage hosts the interactive source-frame editor) ================= */}
+        {activeTab === 'frame' && (
+          <div className="space-y-3" data-testid="frame-tab-helper">
+            <div className="rounded-lg border border-[var(--pc-border)] bg-[var(--pc-surface-2)] p-3 flex items-start gap-2.5">
+              <span className="w-8 h-8 shrink-0 rounded-lg bg-[var(--pc-accent-soft)] border border-[var(--pc-accent)] text-[var(--pc-accent)] grid place-items-center">
+                <Crop className="w-4 h-4 stroke-[1.75]" />
+              </span>
+              <div className="min-w-0">
+                <h3 className="text-xs font-semibold text-[var(--pc-ink)] m-0">
+                  Interactive Source-Frame Editor
+                </h3>
+                <p className="text-[11px] text-[var(--pc-muted)] m-0 mt-1 leading-snug">
+                  The main stage now hosts the framing workflow for this short. Drag the
+                  source crop boxes there directly — this panel never duplicates the canvas.
+                </p>
+              </div>
+            </div>
+
+            <InspectorAccordion title="Framing Controls" defaultOpen>
+              <ul className="m-0 p-0 list-none space-y-2">
+                <li className="flex items-start gap-2 text-[11px] text-[var(--pc-sub)] leading-snug">
+                  <span className="mt-0.5 w-4 h-4 shrink-0 rounded border border-[var(--pc-border)] grid place-items-center text-[9px] font-mono-tabular text-[var(--pc-accent)]">
+                    1
+                  </span>
+                  <span>Drag a colored box to move its crop region on the 16:9 source.</span>
+                </li>
+                <li className="flex items-start gap-2 text-[11px] text-[var(--pc-sub)] leading-snug">
+                  <span className="mt-0.5 w-4 h-4 shrink-0 rounded border border-[var(--pc-border)] grid place-items-center text-[9px] font-mono-tabular text-[var(--pc-accent)]">
+                    2
+                  </span>
+                  <span>Drag any of the four corner handles to resize a box.</span>
+                </li>
+                <li className="flex items-start gap-2 text-[11px] text-[var(--pc-sub)] leading-snug">
+                  <span className="mt-0.5 w-4 h-4 shrink-0 rounded border border-[var(--pc-border)] grid place-items-center text-[9px] font-mono-tabular text-[var(--pc-accent)]">
+                    3
+                  </span>
+                  <span>
+                    Changes flow straight into this short&apos;s framing blueprint (and its
+                    export).
+                  </span>
+                </li>
+              </ul>
+            </InspectorAccordion>
+          </div>
+        )}
+
         {/* ================= 1. EDIT TAB (TRANSFORM, SPEED, TRANSITIONS, FRAMING, LAYERS, MARKERS) ================= */}
         {activeTab === 'edit' && (
           <div className="divide-y divide-[var(--pc-border-subtle)]" data-testid="edit-tab-panel">
@@ -890,7 +938,7 @@ export function ShortsInspector({
                   Short Format Templates
                 </h3>
                 <p className="text-[11px] text-[var(--pc-muted)] m-0 mt-0.5 truncate">
-                  Active: {activeTemplate?.fullName || 'Classic Short'}
+                  Active: <AppleEmojiText text={activeTemplate?.fullName || 'Classic Short'} />
                 </p>
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
@@ -938,7 +986,9 @@ export function ShortsInspector({
                         {preset.defaultStreamerPlatform === 'youtube' && (
                           <YouTubeShortsIcon className="w-3 h-3 shrink-0" />
                         )}
-                        <span className="truncate">{preset.name}</span>
+                        <span className="truncate">
+                          <AppleEmojiText text={preset.name} />
+                        </span>
                       </div>
                       <div className="text-[10px] font-mono-tabular text-[var(--pc-muted)] mt-0.5 truncate">
                         {preset.defaultAspect || '9:16'} ·{' '}
@@ -1142,7 +1192,7 @@ export function ShortsInspector({
                                     className="w-7 h-7 rounded object-contain bg-black/40 p-0.5 shrink-0"
                                   />
                                   <span className="text-[10.5px] font-medium text-[var(--pc-ink)] truncate">
-                                    {logo.name}
+                                    <AppleEmojiText text={logo.name} />
                                   </span>
                                 </button>
                                 <div className="flex items-center justify-between gap-1">
@@ -1368,7 +1418,11 @@ export function ShortsInspector({
                         onClick={() => outroFileInputRef.current?.click()}
                       >
                         <Upload className="w-3.5 h-3.5" />
-                        <span>{shorts.outro.customName || 'Upload Outro MP4 / PNG'}</span>
+                        <span>
+                          <AppleEmojiText
+                            text={shorts.outro.customName || 'Upload Outro MP4 / PNG'}
+                          />
+                        </span>
                       </Button>
                     )}
 
@@ -1435,7 +1489,9 @@ export function ShortsInspector({
                               : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
                           }`}
                         >
-                          <span>#{tag}</span>
+                          <span>
+                            <AppleEmojiText text={`#${tag}`} />
+                          </span>
                           {active && <Check className="w-2.5 h-2.5 text-[var(--pc-accent)]" />}
                         </button>
                       );
@@ -1463,7 +1519,9 @@ export function ShortsInspector({
                               : 'bg-[var(--pc-surface-2)] border-[var(--pc-border)] text-[var(--pc-sub)] hover:text-[var(--pc-ink)]'
                           }`}
                         >
-                          <span>#{tag}</span>
+                          <span>
+                            <AppleEmojiText text={`#${tag}`} />
+                          </span>
                           {active && <Check className="w-2.5 h-2.5 text-[var(--pc-accent)]" />}
                         </button>
                       );
@@ -1887,14 +1945,16 @@ export function ShortsInspector({
                           className="px-2 py-1.5 text-left cursor-pointer bg-transparent border-0 min-w-0 flex-1"
                         >
                           <div className="text-[11px] font-semibold text-[var(--pc-ink)] truncate">
-                            {cp.name}
+                            <AppleEmojiText text={cp.name} />
                           </div>
                           <div className="text-[9.5px] text-[var(--pc-muted)] truncate flex items-center gap-1 mt-0.5">
                             <span
                               className="w-2 h-2 rounded-full shrink-0 border border-white/20"
                               style={{ backgroundColor: cp.activeColor }}
                             />
-                            <span className="truncate">{cp.subtitleFont}</span>
+                            <span className="truncate">
+                              <AppleEmojiText text={cp.subtitleFont} />
+                            </span>
                           </div>
                         </button>
                         {captionPresets.length > 1 && (
@@ -2127,7 +2187,9 @@ export function ShortsInspector({
                         key={cf.id}
                         className="flex items-center justify-between px-2 py-1 rounded bg-[var(--pc-surface-2)] border border-[var(--pc-border)] text-xs"
                       >
-                        <span className="truncate text-[var(--pc-ink)]">{cf.family}</span>
+                        <span className="truncate text-[var(--pc-ink)]">
+                          <AppleEmojiText text={cf.family} />
+                        </span>
                         <button
                           type="button"
                           aria-label={`Remove font ${cf.family}`}
@@ -2379,7 +2441,9 @@ export function ShortsInspector({
                   >
                     <Upload className="w-3.5 h-3.5" />
                     <span className="truncate">
-                      {settings.customAudioName || 'Import Audio Track'}
+                      <AppleEmojiText
+                        text={settings.customAudioName || 'Import Audio Track'}
+                      />
                     </span>
                   </Button>
                   <Button
@@ -2449,10 +2513,10 @@ export function ShortsInspector({
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <div className="text-[11.5px] font-semibold text-[var(--pc-ink)] truncate">
-                              {track.title}
+                              <AppleEmojiText text={track.title} />
                             </div>
                             <div className="text-[10px] font-mono-tabular text-[var(--pc-muted)] truncate">
-                              {track.artist} · {track.bpm} BPM ·{' '}
+                              <AppleEmojiText text={track.artist} /> · {track.bpm} BPM ·{' '}
                               {track.license === 'No Attribution (YT Safe)' ? 'YT Safe' : 'CC BY'}
                             </div>
                           </div>
@@ -2467,7 +2531,7 @@ export function ShortsInspector({
                           </button>
                         </div>
                         <div className="text-[10px] text-[var(--pc-sub)] leading-snug">
-                          {track.bestFor}
+                          <AppleEmojiText text={track.bestFor} />
                         </div>
                         <div className="flex items-center justify-between gap-1.5 pt-0.5">
                           <div className="flex items-center gap-1">
@@ -2583,7 +2647,9 @@ export function ShortsInspector({
                         title={`Preview ${asset.name}`}
                       >
                         <Volume2 className="w-3 h-3 text-[var(--pc-accent)] shrink-0" />
-                        <span className="truncate">{asset.name}</span>
+                        <span className="truncate">
+                          <AppleEmojiText text={asset.name} />
+                        </span>
                       </button>
                       <button
                         type="button"
@@ -2608,7 +2674,7 @@ export function ShortsInspector({
                         className="flex items-center justify-between text-[11px] font-mono-tabular px-2 py-1 rounded bg-amber-500/10 border border-amber-500/30"
                       >
                         <span className="truncate">
-                          {cue.name} @ {formatTimecode(cue.time)}
+                          <AppleEmojiText text={cue.name} /> @ {formatTimecode(cue.time)}
                         </span>
                         <button
                           type="button"

@@ -35,6 +35,7 @@ import {
   type LogoAsset,
 } from '../lib/creatorCatalog';
 import { clampTrimWindow, formatShortDuration, formatTimecode } from '../lib/studioLogic';
+import { AppleEmojiText } from '../lib/appleEmoji';
 import {
   computeAudioEnvelopeGain,
   computeEffectivePlaybackSpeed,
@@ -55,6 +56,7 @@ import { Button } from '../components/ui/Primitives';
 import { TemplateLibraryModal } from '../components/editor/TemplateLibraryModal';
 import { TemplateEditorModal } from '../components/editor/TemplateEditorModal';
 import { ShortsStage } from '../components/studio/ShortsStage';
+import { FramingCanvas } from '../components/editor/FramingCanvas';
 import { ShortsTimeline } from '../components/studio/ShortsTimeline';
 import { ShortsInspector } from '../components/studio/ShortsInspector';
 import { ShortsExportModal } from '../components/studio/ShortsExportModal';
@@ -730,7 +732,9 @@ export function ShortsPage({
             >
               <Film className="w-3.5 h-3.5 text-[var(--pc-sub)] shrink-0" />
               <span className="truncate">
-                {currentClip ? currentClip.title : 'No Clip Selected'}
+                <AppleEmojiText
+                  text={currentClip ? currentClip.title : 'No Clip Selected'}
+                />
               </span>
               <ChevronDown className="w-3.5 h-3.5 text-[var(--pc-sub)] shrink-0" />
             </button>
@@ -773,10 +777,10 @@ export function ShortsPage({
                     >
                       <div className="min-w-0">
                         <div className="text-xs font-medium text-[var(--pc-ink)] truncate">
-                          {c.title}
+                          <AppleEmojiText text={c.title} />
                         </div>
                         <div className="text-[10.5px] font-mono-tabular text-[var(--pc-muted)]">
-                          {c.channel} · {formatShortDuration(c.duration_sec)}
+                          <AppleEmojiText text={c.channel} /> · {formatShortDuration(c.duration_sec)}
                         </div>
                       </div>
                     </button>
@@ -912,6 +916,17 @@ export function ShortsPage({
             </div>
           ) : (
             <>
+              {activeTab === 'frame' ? (
+                <FramingCanvas
+                  clip={currentClip}
+                  blueprint={blueprint}
+                  onUpdateBlueprint={onUpdateBlueprint}
+                  playing={playing}
+                  currentTimeSec={currentTimeSec}
+                  videoRef={videoRef}
+                  onDurationLoaded={handleVideoMetadata}
+                />
+              ) : (
               <ShortsStage
                 clip={currentClip}
                 videoRef={videoRef}
@@ -945,6 +960,7 @@ export function ShortsPage({
                   }
                 }}
               />
+              )}
 
               <ShortsTimeline
                 clip={currentClip}

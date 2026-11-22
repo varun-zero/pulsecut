@@ -63,6 +63,7 @@ import {
   swapLayoutCrops,
 } from '../lib/framingEngine';
 import { formatShortDuration, formatTimecode } from '../lib/studioLogic';
+import { AppleEmojiText } from '../lib/appleEmoji';
 import {
   Button,
   InspectorAccordion,
@@ -474,7 +475,9 @@ export function FramingPage({
             >
               <Film className="w-3.5 h-3.5 text-[var(--pc-sub)] shrink-0 stroke-[1.75]" />
               <span className="truncate">
-                {currentClip ? currentClip.title : 'No Clip Selected'}
+                <AppleEmojiText
+                  text={currentClip ? currentClip.title : 'No Clip Selected'}
+                />
               </span>
               <ChevronDown className="w-3.5 h-3.5 text-[var(--pc-sub)] shrink-0" />
             </button>
@@ -525,10 +528,10 @@ export function FramingPage({
                         >
                           <div className="min-w-0">
                             <div className="text-xs font-medium text-[var(--pc-ink)] truncate">
-                              {c.title}
+                              <AppleEmojiText text={c.title} />
                             </div>
                             <div className="text-[10.5px] font-mono-tabular text-[var(--pc-muted)] mt-0.5">
-                              {c.channel} · {formatShortDuration(c.duration_sec)}
+                              <AppleEmojiText text={c.channel} /> · {formatShortDuration(c.duration_sec)}
                             </div>
                           </div>
                           {active && (
@@ -1634,7 +1637,7 @@ export function FramingPage({
                           className="flex-1 text-left bg-transparent border-0 p-0 cursor-pointer min-w-0"
                         >
                           <div className="text-xs font-medium text-[var(--pc-ink)] truncate">
-                            {p.name}
+                            <AppleEmojiText text={p.name} />
                           </div>
                           <div className="text-[10px] font-mono-tabular text-[var(--pc-muted)]">
                             {p.blueprint.aspect} · {p.blueprint.layout}

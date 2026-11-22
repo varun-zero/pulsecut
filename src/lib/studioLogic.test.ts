@@ -218,9 +218,9 @@ const SAMPLE_BRAND_KIT: BrandKit = {
   showWatermark: true,
 };
 
-test('shared viral preset registry exposes 9 featured / 12 clean formats with zero legacy or third-party slop', () => {
+test('shared viral preset registry exposes 9 featured / 15 clean formats with zero legacy or third-party slop', () => {
   assert.equal(FEATURED_PRESETS.length, 9);
-  assert.equal(TEMPLATE_PRESETS.length, 12);
+  assert.equal(TEMPLATE_PRESETS.length, 15);
   assert.equal(TEMPLATE_PRESETS.some((t) => t.id.startsWith('clipship')), false);
 
   const featuredIds = FEATURED_PRESETS.map((t) => t.id);
