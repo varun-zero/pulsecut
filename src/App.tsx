@@ -176,6 +176,10 @@ function createEditorSettingsForClip(clip: ClipItem | null, brandKit: BrandKit):
     bgImageBlur: 12,
     bgImageDim: 35,
     playbackSpeed: 1.0,
+    hiddenElements: [],
+    channelCardX: 6,
+    channelCardY: 6,
+    channelCardWidth: 88,
     speakerCrops: {
       primary: { ...DEFAULT_SPEAKER_CROPS.primary },
       secondary: { ...DEFAULT_SPEAKER_CROPS.secondary },
@@ -1712,6 +1716,7 @@ export function App() {
           onBackToClips={() => setPage('clips')}
           onGoToDashboard={() => setPage('dashboard')}
           blueprint={framingHistory.present}
+          onUpdateBlueprint={handleUpdateBlueprint}
           shorts={shortsConfig}
           onUpdateShorts={handleUpdateShorts}
           settings={history.present}

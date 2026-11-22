@@ -270,6 +270,19 @@ pub fn library() -> Vec<ShortTemplate> {
             caption_preset: "karaoke", title_pattern: "{hook}",
             hook_pattern: "{hook}", hashtags: &["mumfordandsons", "chrisstapleton", "cmas", "performance"],
         },
+        // ---- 2 channel-card ClipShip variants (custom beats cut branding, no watermark) ----
+        ShortTemplate {
+            id: "clipship-14", name: "Channel Card White", background: (0, 0, 0), accent: (232, 133, 26),
+            card: true, headline: true, ticker: false, watermark: false,
+            caption_preset: "karaoke", title_pattern: "{hook}",
+            hook_pattern: "{hook}", hashtags: &["channel", "card", "shorts"],
+        },
+        ShortTemplate {
+            id: "clipship-15", name: "Channel Card Reels", background: (0, 0, 0), accent: (232, 133, 26),
+            card: true, headline: true, ticker: false, watermark: false,
+            caption_preset: "karaoke", title_pattern: "{hook}",
+            hook_pattern: "{hook}", hashtags: &["channel", "card", "shorts"],
+        },
     ]
 }
 

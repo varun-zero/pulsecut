@@ -687,6 +687,60 @@ def generate_clip_overlay(c):
                 tb = draw.textbbox((0, 0), tok_text, font=font_pill)
                 cur_x += (tb[2] - tb[0])
 
+    # Group E: 14 / 15 — channel cards with custom beats cut branding (no Clip Ship watermark).
+    # White card [0,250,1080,660], avatar at (56,280), logo name + handle, optional lowercase
+    # caption in y=405..635, transparent video cutout y=660 height 608, subtitles burned at y=1315.
+    elif tpl_folder in ("14_Channel_Card_White", "15_Channel_Card_Reels"):
+        # White card container, flush with the video cutout at y=660.
+        draw.rectangle([0, 250, 1080, 660], fill=(255, 255, 255, 255))
+
+        # Reels variant: thin Instagram gradient strip along the very top of the card (y=250..258).
+        if tpl_folder == "15_Channel_Card_Reels":
+            ig_stops = [(250, 126, 29), (214, 41, 118), (150, 47, 191), (79, 91, 213)]
+            strip_top, strip_bottom = 250, 258
+            for px in range(1080):
+                pos = px / 1079 * (len(ig_stops) - 1)
+                i0 = min(int(pos), len(ig_stops) - 2)
+                f = pos - i0
+                c0, c1 = ig_stops[i0], ig_stops[i0 + 1]
+                col = tuple(int(c0[k] + (c1[k] - c0[k]) * f) for k in range(3)) + (255,)
+                draw.line([(px, strip_top), (px, strip_bottom)], fill=col)
+
+        # Circular avatar 88x88 at (56, 280).
+        av = create_circular_avatar(88, img_path=BEATSCUT_LOGO_PATH)
+        overlay.paste(av, (56, 280), av)
+
+        # Branding: bold name + verified badge, then handle. Dark text on the white card.
+        text_col = (15, 20, 25, 255)
+        handle_col = (113, 118, 123, 255)
+        font_name = ImageFont.truetype(FONT_BOLD, 34)
+        font_handle = ImageFont.truetype(FONT_REGULAR, 26)
+        name_text = "beats cut"
+        draw.text((164, 288), name_text, font=font_name, fill=text_col)
+        nb = draw.textbbox((164, 288), name_text, font=font_name)
+        if verified:
+            overlay.paste(verified, (nb[2] + 8, 293), verified)
+        draw.text((164, 330), "@beatscutfm", font=font_handle, fill=handle_col)
+
+        # Optional caption zone: (56, 405) to (1024, 635). Only drawn when a hook/caption
+        # is supplied at use time — the user types it later, so an empty hook leaves it blank.
+        if hook_lines:
+            hook_text = "\n".join(hook_lines).lower()
+            font_hook = ImageFont.truetype(FONT_BOLD, 38)
+            lines = wrap_text(hook_text, font_hook, 968, draw)
+            if len(lines) > 2:
+                font_hook = ImageFont.truetype(FONT_BOLD, 34)
+                lines = wrap_text(hook_text, font_hook, 968, draw)
+
+            cur_y = 405
+            for line in lines[:2]:
+                if font_emoji:
+                    draw_line_with_emoji(draw, (56, cur_y), line, font_hook, font_emoji, text_col)
+                else:
+                    draw.text((56, cur_y), line, font=font_hook, fill=text_col)
+                bb = draw.textbbox((56, cur_y), line, font=font_hook)
+                cur_y += (bb[3] - bb[1]) + 12
+
     out_file = os.path.join(WORK, f"overlay_{c['n']:02d}.png")
     overlay.save(out_file)
     return out_file

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   Copy,
+  Crop,
   ExternalLink,
   FileText,
   Flame,
@@ -382,10 +383,11 @@ export function ShortsInspector({
       <div
         role="tablist"
         aria-label="Shorts inspector tabs"
-        className="shrink-0 grid grid-cols-5 border-b border-[var(--pc-border)] bg-[var(--pc-surface)]"
+        className="shrink-0 grid grid-cols-6 border-b border-[var(--pc-border)] bg-[var(--pc-surface)]"
       >
         {(
           [
+            { id: 'frame', label: 'Frame', icon: <Crop className="w-3.5 h-3.5" /> },
             { id: 'templates', label: 'Templates', icon: <Layers className="w-3.5 h-3.5" /> },
             { id: 'text', label: 'Text', icon: <Type className="w-3.5 h-3.5" /> },
             { id: 'media', label: 'Media', icon: <Music2 className="w-3.5 h-3.5" /> },
@@ -416,6 +418,43 @@ export function ShortsInspector({
 
       {/* Scrollable Inspector Content */}
       <div className="flex-1 overflow-y-auto studio-scroll px-4 py-3 space-y-3">
+        {/* ================= FRAME TAB (main stage hosts the interactive editor) ================= */}
+        {activeTab === 'frame' && (
+          <div className="space-y-3" data-testid="frame-tab-helper">
+            <div className="rounded-lg border border-[var(--pc-border)] bg-[var(--pc-surface-2)] p-3 flex items-start gap-2.5">
+              <span className="w-8 h-8 shrink-0 rounded-lg bg-[var(--pc-accent-soft)] border border-[var(--pc-accent)] text-[var(--pc-accent)] grid place-items-center">
+                <Crop className="w-4 h-4 stroke-[1.75]" />
+              </span>
+              <div className="min-w-0">
+                <h3 className="text-xs font-semibold text-[var(--pc-ink)] m-0">
+                  Interactive Source-Frame Editor
+                </h3>
+                <p className="text-[11px] text-[var(--pc-muted)] m-0 mt-1 leading-snug">
+                  The main stage now shows the framing workflow. Edit the source crop boxes
+                  right there — no second canvas lives in this panel.
+                </p>
+              </div>
+            </div>
+
+            <InspectorAccordion title="Framing Controls" defaultOpen>
+              <ul className="m-0 p-0 list-none space-y-2">
+                <li className="flex items-start gap-2 text-[11px] text-[var(--pc-sub)] leading-snug">
+                  <span className="mt-0.5 w-4 h-4 shrink-0 rounded border border-[var(--pc-border)] grid place-items-center text-[9px] font-mono-tabular text-[var(--pc-accent)]">1</span>
+                  <span>Drag a colored box to move its crop region on the 16:9 source.</span>
+                </li>
+                <li className="flex items-start gap-2 text-[11px] text-[var(--pc-sub)] leading-snug">
+                  <span className="mt-0.5 w-4 h-4 shrink-0 rounded border border-[var(--pc-border)] grid place-items-center text-[9px] font-mono-tabular text-[var(--pc-accent)]">2</span>
+                  <span>Drag any of the four corner handles to resize a box.</span>
+                </li>
+                <li className="flex items-start gap-2 text-[11px] text-[var(--pc-sub)] leading-snug">
+                  <span className="mt-0.5 w-4 h-4 shrink-0 rounded border border-[var(--pc-border)] grid place-items-center text-[9px] font-mono-tabular text-[var(--pc-accent)]">3</span>
+                  <span>Changes apply directly to the framing blueprint used by this short (and its export).</span>
+                </li>
+              </ul>
+            </InspectorAccordion>
+          </div>
+        )}
+
         {/* ================= TEMPLATES TAB ================= */}
         {activeTab === 'templates' && (
           <div className="space-y-4">

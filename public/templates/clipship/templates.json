@@ -560,6 +560,88 @@
       "style": "reaction-split-pill",
       "textCase": "lowercase",
       "subY": 1595
+    },
+    {
+      "id": "clipship-14",
+      "folder": "14_Channel_Card_White",
+      "preview": "public/templates/clipship/14_Channel_Card_White/00_PREVIEW.jpg",
+      "frame": "public/templates/clipship/14_Channel_Card_White/1_frame.png",
+      "layers": [
+        "00_PREVIEW.jpg",
+        "1_frame.png"
+      ],
+      "cutouts": [
+        {
+          "x": 0,
+          "y": 660,
+          "width": 1080,
+          "height": 608
+        }
+      ],
+      "measuredCutout": [
+        0,
+        660,
+        1080,
+        1268
+      ],
+      "headerZone": [
+        56,
+        280,
+        968,
+        100
+      ],
+      "textZone": [
+        56,
+        405,
+        968,
+        230
+      ],
+      "replyZone": null,
+      "replyTextZone": null,
+      "style": "channel-card-white",
+      "textCase": "lowercase",
+      "subY": 1315
+    },
+    {
+      "id": "clipship-15",
+      "folder": "15_Channel_Card_Reels",
+      "preview": "public/templates/clipship/15_Channel_Card_Reels/00_PREVIEW.jpg",
+      "frame": "public/templates/clipship/15_Channel_Card_Reels/1_frame.png",
+      "layers": [
+        "00_PREVIEW.jpg",
+        "1_frame.png"
+      ],
+      "cutouts": [
+        {
+          "x": 0,
+          "y": 660,
+          "width": 1080,
+          "height": 608
+        }
+      ],
+      "measuredCutout": [
+        0,
+        660,
+        1080,
+        1268
+      ],
+      "headerZone": [
+        56,
+        280,
+        968,
+        100
+      ],
+      "textZone": [
+        56,
+        405,
+        968,
+        230
+      ],
+      "replyZone": null,
+      "replyTextZone": null,
+      "style": "channel-card-reels",
+      "textCase": "lowercase",
+      "subY": 1315
     }
   ]
 }

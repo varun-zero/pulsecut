@@ -58,7 +58,7 @@ export interface TemplatePreset {
     | 'clipship';
 }
 
-/** The 13 bundled ClipShip overlay templates (1080x1920, alpha-measured cutouts). */
+/** The 15 bundled ClipShip overlay templates (1080x1920, alpha-measured cutouts). */
 const CLIPSHIP_FOLDERS = [
   ['clipship-01', 'ClipShip Tweet Dark'],
   ['clipship-02', 'ClipShip Tweet Light'],
@@ -73,6 +73,8 @@ const CLIPSHIP_FOLDERS = [
   ['clipship-11', 'ClipShip Condensed Headline'],
   ['clipship-12', 'ClipShip Collage Pill'],
   ['clipship-13', 'ClipShip Reaction Split'],
+  ['clipship-14', 'Channel Card (White)'],
+  ['clipship-15', 'Channel Card (Reels)'],
 ] as const;
 
 const CLIPSHIP_PRESET_ENTRIES: readonly TemplatePreset[] = CLIPSHIP_FOLDERS.map(
@@ -86,7 +88,7 @@ const CLIPSHIP_PRESET_ENTRIES: readonly TemplatePreset[] = CLIPSHIP_FOLDERS.map(
     featured: false,
     defaultLayout: (i === 5 || i === 11 ? 'split' : 'solo') as LayoutModeId,
     defaultCaptionStyle: 'podcast-pill' as ViralCaptionPresetId,
-    defaultSafeZone: 'universal' as ResolvedSafeZonePlatformId,
+    defaultSafeZone: (id === 'clipship-15' ? 'instagram-reels' : 'universal') as ResolvedSafeZonePlatformId,
     defaultHeadlineFont: 'Anton',
     defaultSubtitleFont: 'Montserrat',
     defaultHeadlineLayout: 'white-stepped',
@@ -400,7 +402,7 @@ export const TEMPLATE_PRESETS: readonly TemplatePreset[] = [
     wireframe: 'split',
   },
 
-  /* ---------- 13 ClipShip overlay templates ---------- */
+  /* ---------- 15 ClipShip overlay templates ---------- */
   ...CLIPSHIP_PRESET_ENTRIES,
 ] as const;
 

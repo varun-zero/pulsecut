@@ -705,8 +705,8 @@ class TestTier4RealWorldScenarios:
         res_tpls = subprocess.run(cmd_tpls, capture_output=True, text=True, timeout=30)
         assert res_tpls.returncode == 0, f"list-templates failed: {res_tpls.stderr}"
         tpl_data = json.loads(res_tpls.stdout)
-        assert len(tpl_data.get("templates", [])) == 13, (
-            f"Expected 13 registered templates, found {len(tpl_data.get('templates', []))}"
+        assert len(tpl_data.get("templates", [])) == 15, (
+            f"Expected 15 registered templates, found {len(tpl_data.get('templates', []))}"
         )
 
 

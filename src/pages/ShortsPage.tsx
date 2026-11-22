@@ -52,6 +52,7 @@ import { Button } from '../components/ui/Primitives';
 import { TemplateLibraryModal } from '../components/editor/TemplateLibraryModal';
 import { TemplateEditorModal } from '../components/editor/TemplateEditorModal';
 import { AgentInteropModal } from '../components/editor/AgentInteropModal';
+import { FramingCanvas } from '../components/editor/FramingCanvas';
 import { ShortsStage } from '../components/studio/ShortsStage';
 import { ShortsTimeline } from '../components/studio/ShortsTimeline';
 import { ShortsInspector } from '../components/studio/ShortsInspector';
@@ -65,6 +66,7 @@ interface ShortsPageProps {
   onBackToClips: () => void;
   onGoToDashboard: () => void;
   blueprint: FramingBlueprint;
+  onUpdateBlueprint: (next: FramingBlueprint, recordHistory?: boolean) => void;
   shorts: ShortsProductionConfig;
   onUpdateShorts: (patch: Partial<ShortsProductionConfig>) => void;
   settings: EditorSettings;
@@ -112,6 +114,7 @@ export function ShortsPage({
   onBackToClips,
   onGoToDashboard,
   blueprint,
+  onUpdateBlueprint,
   shorts,
   onUpdateShorts,
   settings,
@@ -378,6 +381,14 @@ export function ShortsPage({
         }
       }
     }
+  };
+
+  /** Shared by ShortsStage and the Frame tab's interactive source-frame editor. */
+  const handleVideoMetadata = (dur: number) => {
+    if (!currentClip) return;
+    setDurationSec(dur);
+    setTrimOutSec((prev) => (prev <= 0 || Math.abs(prev - 30) < 0.5 ? dur : Math.min(prev, dur)));
+    onUpdateClipDuration(currentClip.id, dur);
   };
 
   const handleChangeTrimWindow = (inSec: number, outSec: number) => {
@@ -823,43 +834,59 @@ export function ShortsPage({
             </div>
           ) : (
             <>
-              <ShortsStage
-                clip={currentClip}
-                videoRef={videoRef}
-                blueprint={blueprint}
-                shorts={shorts}
-                settings={settings}
-                brandKit={brandKit}
-                customFonts={customFonts}
-                activeTemplateName={
-                  templates.find((t) => t.id === settings.template)?.name
-                }
-                currentTimeSec={currentTimeSec}
-                stitchedTimeSec={stitchedTimeSec}
-                previewRes={previewRes}
-                finalPreviewLocked={finalPreviewLocked}
-                outroElapsedSec={outroElapsedSec}
-                showSafeZones={showSafeZones}
-                trackStates={trackStates}
-                onEditFraming={onBackToFraming}
-                onUpdateSettings={onUpdateSettings}
-                onUpdateDualWatermark={(patch) =>
-                  onUpdateShorts({ dualWatermark: { ...shorts.dualWatermark, ...patch } })
-                }
-                onVideoMetadata={(dur) => {
-                  setDurationSec(dur);
-                  setTrimOutSec((prev) => (prev <= 0 || Math.abs(prev - 30) < 0.5 ? dur : Math.min(prev, dur)));
-                  onUpdateClipDuration(currentClip.id, dur);
-                }}
-                onVideoTimeUpdate={handleVideoTimeUpdate}
-                onVideoEnded={() => {
-                  if (finalPreviewLocked && shorts.outro.enabled) {
-                    setOutroElapsedSec(0);
-                  } else {
-                    setPlaying(false);
+              {activeTab === 'frame' ? (
+                <FramingCanvas
+                  clip={currentClip}
+                  blueprint={blueprint}
+                  onUpdateBlueprint={onUpdateBlueprint}
+                  playing={playing}
+                  currentTimeSec={currentTimeSec}
+                  videoRef={videoRef}
+                  onDurationLoaded={handleVideoMetadata}
+                  onVideoTimeUpdate={handleVideoTimeUpdate}
+                  onVideoEnded={() => {
+                    if (finalPreviewLocked && shorts.outro.enabled) {
+                      setOutroElapsedSec(0);
+                    } else {
+                      setPlaying(false);
+                    }
+                  }}
+                />
+              ) : (
+                <ShortsStage
+                  clip={currentClip}
+                  videoRef={videoRef}
+                  blueprint={blueprint}
+                  shorts={shorts}
+                  settings={settings}
+                  brandKit={brandKit}
+                  customFonts={customFonts}
+                  activeTemplateName={
+                    templates.find((t) => t.id === settings.template)?.name
                   }
-                }}
-              />
+                  currentTimeSec={currentTimeSec}
+                  stitchedTimeSec={stitchedTimeSec}
+                  previewRes={previewRes}
+                  finalPreviewLocked={finalPreviewLocked}
+                  outroElapsedSec={outroElapsedSec}
+                  showSafeZones={showSafeZones}
+                  trackStates={trackStates}
+                  onEditFraming={onBackToFraming}
+                  onUpdateSettings={onUpdateSettings}
+                  onUpdateDualWatermark={(patch) =>
+                    onUpdateShorts({ dualWatermark: { ...shorts.dualWatermark, ...patch } })
+                  }
+                  onVideoMetadata={handleVideoMetadata}
+                  onVideoTimeUpdate={handleVideoTimeUpdate}
+                  onVideoEnded={() => {
+                    if (finalPreviewLocked && shorts.outro.enabled) {
+                      setOutroElapsedSec(0);
+                    } else {
+                      setPlaying(false);
+                    }
+                  }}
+                />
+              )}
 
               <ShortsTimeline
                 clip={currentClip}

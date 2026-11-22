@@ -211,10 +211,10 @@ const SAMPLE_BRAND_KIT: BrandKit = {
   showWatermark: true,
 };
 
-test('shared viral preset registry exposes 9 featured / 12 core + 13 ClipShip formats with zero legacy slop', () => {
+test('shared viral preset registry exposes 9 featured / 12 core + 15 ClipShip formats with zero legacy slop', () => {
   assert.equal(FEATURED_PRESETS.length, 9);
-  assert.equal(TEMPLATE_PRESETS.length, 25);
-  assert.equal(TEMPLATE_PRESETS.filter((t) => t.category === 'ClipShip').length, 13);
+  assert.equal(TEMPLATE_PRESETS.length, 27);
+  assert.equal(TEMPLATE_PRESETS.filter((t) => t.category === 'ClipShip').length, 15);
 
   const featuredIds = FEATURED_PRESETS.map((t) => t.id);
   assert.deepEqual(featuredIds.slice(0, 4), ['default', 'kick-stream', 'insta-short', 'yt-short']);
@@ -632,8 +632,8 @@ test('normalizeServerClip defaults missing template to Classic Short (default) a
   );
 });
 
-test('ClipShip 13 templates enforce mathematically verified zero-overlap coordinates and layout specs', () => {
-  assert.equal(CLIPSHIP_TEMPLATES.length, 13);
+test('ClipShip 15 templates enforce mathematically verified zero-overlap coordinates and layout specs', () => {
+  assert.equal(CLIPSHIP_TEMPLATES.length, 15);
   for (const t of CLIPSHIP_TEMPLATES) {
     assert.ok(t.cutouts.length >= 1, `${t.id} must define at least one video cutout`);
     for (const c of t.cutouts) {

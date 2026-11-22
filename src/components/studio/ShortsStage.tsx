@@ -1,5 +1,5 @@
-import React, { useMemo, useRef } from 'react';
-import { Check, Crop, Lock, Play, SlidersHorizontal } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Check, Crop, Lock, Play, SlidersHorizontal, Trash2 } from 'lucide-react';
 import type {
   BrandKit,
   ClipItem,
@@ -53,7 +53,14 @@ interface ShortsStageProps {
   onVideoEnded: () => void;
 }
 
-type DragTarget = 'headline' | 'subtitles' | 'streamer' | 'watermark1' | 'watermark2';
+type OverlayElementId =
+  | 'channel-card'
+  | 'headline'
+  | 'subtitles'
+  | 'streamer'
+  | 'watermark1'
+  | 'watermark2';
+type DragTarget = OverlayElementId;
 
 export function ShortsStage({
   clip,
@@ -79,6 +86,43 @@ export function ShortsStage({
   onVideoEnded,
 }: ShortsStageProps) {
   const frameRef = useRef<HTMLDivElement>(null);
+
+  // Overlay element selection — every draggable preview element gets an id so it can
+  // be highlighted, deleted with Delete/Backspace, or removed via the visible button.
+  const [selectedElement, setSelectedElement] = useState<OverlayElementId | null>(null);
+  const hiddenElements = settings.hiddenElements || [];
+  const isElementHidden = (id: OverlayElementId) => hiddenElements.includes(id);
+  const selectionOutline = (id: OverlayElementId) =>
+    selectedElement === id ? 'outline outline-2 outline-sky-400' : '';
+
+  const deleteSelectedElement = useCallback(() => {
+    if (!selectedElement) return;
+    const nextHidden = settings.hiddenElements || [];
+    if (!nextHidden.includes(selectedElement)) {
+      onUpdateSettings({ hiddenElements: [...nextHidden, selectedElement] }, true);
+    }
+    setSelectedElement(null);
+  }, [onUpdateSettings, selectedElement, settings.hiddenElements]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      if (!selectedElement) return;
+      const focused = document.activeElement as HTMLElement | null;
+      if (
+        focused &&
+        (focused.tagName === 'INPUT' ||
+          focused.tagName === 'TEXTAREA' ||
+          focused.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      deleteSelectedElement();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [deleteSelectedElement, selectedElement]);
 
   const canvasAr = getCanvasAspectRatio(blueprint.aspect);
   const templatePreset = getTemplatePreset(settings.template);
@@ -117,14 +161,34 @@ export function ShortsStage({
   const startDragOverlay = (target: DragTarget, e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    setSelectedElement(target);
     const frame = frameRef.current;
     if (!frame) return;
     const rect = frame.getBoundingClientRect();
+    // Preserve the exact grab point so a card drag does not jump to the cursor.
+    const grabOffsetX =
+      target === 'channel-card'
+        ? rect.left + ((settings.channelCardX ?? 6) / 100) * rect.width - e.clientX
+        : 0;
+    const grabOffsetY =
+      target === 'channel-card'
+        ? rect.top + ((settings.channelCardY ?? 6) / 100) * rect.height - e.clientY
+        : 0;
 
     const updateFromClient = (clientX: number, clientY: number, record: boolean) => {
-      const xPct = Math.round(Math.max(5, Math.min(95, ((clientX - rect.left) / rect.width) * 100)));
-      const yPct = Math.round(Math.max(5, Math.min(95, ((clientY - rect.top) / rect.height) * 100)));
-      if (target === 'headline') {
+      const rawX = ((clientX + grabOffsetX - rect.left) / rect.width) * 100;
+      const rawY = ((clientY + grabOffsetY - rect.top) / rect.height) * 100;
+      const xPct =
+        target === 'channel-card'
+          ? Math.round(Math.max(0, Math.min(100, rawX)))
+          : Math.round(Math.max(5, Math.min(95, rawX)));
+      const yPct =
+        target === 'channel-card'
+          ? Math.round(Math.max(0, Math.min(100, rawY)))
+          : Math.round(Math.max(5, Math.min(95, rawY)));
+      if (target === 'channel-card') {
+        onUpdateSettings({ channelCardX: xPct, channelCardY: yPct }, record);
+      } else if (target === 'headline') {
         onUpdateSettings({ headlineX: xPct, headlineY: yPct }, record);
       } else if (target === 'subtitles') {
         onUpdateSettings({ subtitleX: xPct, subtitleVerticalPos: yPct }, record);
@@ -167,11 +231,26 @@ export function ShortsStage({
                   : 'none'
       : settings.streamerPlatform;
 
+  const isChannelCard =
+    settings.template === 'clipship-14' || settings.template === 'clipship-15';
   const isXCard =
-    settings.templateEnabled && (settings.template === 'x_light' || settings.template === 'x_dark');
+    settings.templateEnabled &&
+    (settings.template === 'x_light' || settings.template === 'x_dark' || isChannelCard);
   const isNewsBroadcast =
     settings.templateEnabled &&
     (settings.template === 'breaking_news' || settings.template === 'breaking-news');
+
+  // Channel card (ClipShip 14/15) preview data. BrandKit currently exposes no avatar
+  // field, so read optional ones defensively and fall back to the bundled channel logo.
+  type BrandKitWithAvatar = BrandKit & { avatarDataUrl?: string; logoDataUrl?: string };
+  const brandWithAvatar = brandKit as BrandKitWithAvatar;
+  const channelAvatarUrl =
+    brandWithAvatar.avatarDataUrl ||
+    brandWithAvatar.logoDataUrl ||
+    '/templates/clipship/_Extras/beatscut_logo.jpg';
+  const channelDisplayName = brandKit.displayName || settings.streamerHandle || 'beats cut';
+  const channelHandle = brandKit.handle || '@beatscutfm';
+  const channelCaption = (settings.pinnedStatement || settings.headline || '').trim();
 
   const outroAnim =
     outroElapsedSec !== null ? computeOutroAnimationFrame(outroElapsedSec, shorts.outro) : null;
@@ -274,6 +353,7 @@ export function ShortsStage({
         <div
           ref={frameRef}
           data-testid="shorts-preview-frame"
+          onPointerDown={() => setSelectedElement(null)}
           style={{ aspectRatio: String(canvasAr) }}
           className="relative h-full max-h-full max-w-full rounded-xl overflow-hidden bg-black border border-[var(--pc-border)] shadow-2xl select-none"
         >
@@ -299,38 +379,89 @@ export function ShortsStage({
             />
           )}
 
-          {/* Layer 2: Whole-Video Template Chrome (X/Tweet Header Card or Breaking News Banner) */}
-          {isXCard && (
-            <div
-              className={`absolute top-[6%] left-[6%] right-[6%] rounded-xl p-3 shadow-xl pointer-events-none ${
-                settings.cardTheme === 'light'
-                  ? 'bg-white text-[#0F1419]'
-                  : 'bg-[#121417] text-white border border-white/15'
-              }`}
-            >
-              <div className="flex items-center gap-2 mb-1.5">
-                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-sky-500 to-indigo-600 grid place-items-center text-[11px] font-bold text-white shrink-0">
-                  {(brandKit.displayName || settings.streamerHandle || 'P').slice(0, 1).toUpperCase()}
-                </div>
-                <div className="min-w-0 leading-tight">
-                  <div className="text-[12px] font-bold flex items-center gap-1 truncate">
-                    <span>{brandKit.displayName || settings.streamerHandle || 'Creator'}</span>
-                    {brandKit.verified && (
-                      <span className="w-3.5 h-3.5 rounded-full bg-[#1D9BF0] text-white inline-grid place-items-center">
-                        <Check className="w-2.5 h-2.5 stroke-[3]" />
-                      </span>
-                    )}
+          {/* Layer 2: Whole-Video Template Chrome (Channel Card / X-Tweet Header Card / Breaking News Banner) */}
+          {isXCard &&
+            !isElementHidden('channel-card') &&
+            (isChannelCard ? (
+              <div
+                data-testid="channel-card-preview"
+                onPointerDown={(e) => startDragOverlay('channel-card', e)}
+                style={{
+                  left: `${settings.channelCardX ?? 6}%`,
+                  top: `${settings.channelCardY ?? 6}%`,
+                  width: `${settings.channelCardWidth ?? 88}%`,
+                }}
+                className={`absolute rounded-xl p-3 shadow-xl bg-white text-[#0F1419] overflow-hidden cursor-move pointer-events-auto ${selectionOutline('channel-card')}`}
+              >
+                {settings.template === 'clipship-15' && (
+                  <div
+                    data-testid="channel-card-ig-strip"
+                    className="absolute top-0 left-0 right-0 h-1"
+                    style={{
+                      background:
+                        'linear-gradient(90deg, #FEDA75 0%, #FA7E1E 25%, #D62976 50%, #962FBF 75%, #4F5BD5 100%)',
+                    }}
+                  />
+                )}
+                <div className="flex items-center gap-2 mb-1.5">
+                  <img
+                    src={channelAvatarUrl}
+                    alt="Channel avatar"
+                    className="w-7 h-7 rounded-full object-cover bg-[#E4E4E7] shrink-0"
+                  />
+                  <div className="min-w-0 leading-tight">
+                    <div className="text-[12px] font-bold flex items-center gap-1 truncate">
+                      <span>{channelDisplayName}</span>
+                      {brandKit.verified && (
+                        <span className="w-3.5 h-3.5 rounded-full bg-[#1D9BF0] text-white inline-grid place-items-center shrink-0">
+                          <Check className="w-2.5 h-2.5 stroke-[3]" />
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[10px] opacity-65 truncate">{channelHandle}</div>
                   </div>
-                  <div className="text-[10px] opacity-65 truncate">
-                    {brandKit.handle || `@${(settings.streamerHandle || 'creator').replace(/^@/, '')}`}
-                  </div>
                 </div>
+                {channelCaption && (
+                  <p className="m-0 text-[12px] font-medium leading-snug">{channelCaption}</p>
+                )}
               </div>
-              <p className="m-0 text-[12px] font-medium leading-snug">
-                {settings.pinnedStatement || settings.headline || clip.title}
-              </p>
-            </div>
-          )}
+            ) : (
+              <div
+                onPointerDown={(e) => startDragOverlay('channel-card', e)}
+                style={{
+                  left: `${settings.channelCardX ?? 6}%`,
+                  top: `${settings.channelCardY ?? 6}%`,
+                  width: `${settings.channelCardWidth ?? 88}%`,
+                }}
+                className={`absolute rounded-xl p-3 shadow-xl cursor-move pointer-events-auto ${
+                  settings.cardTheme === 'light'
+                    ? 'bg-white text-[#0F1419]'
+                    : 'bg-[#121417] text-white border border-white/15'
+                } ${selectionOutline('channel-card')}`}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-sky-500 to-indigo-600 grid place-items-center text-[11px] font-bold text-white shrink-0">
+                    {(brandKit.displayName || settings.streamerHandle || 'P').slice(0, 1).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 leading-tight">
+                    <div className="text-[12px] font-bold flex items-center gap-1 truncate">
+                      <span>{brandKit.displayName || settings.streamerHandle || 'Creator'}</span>
+                      {brandKit.verified && (
+                        <span className="w-3.5 h-3.5 rounded-full bg-[#1D9BF0] text-white inline-grid place-items-center">
+                          <Check className="w-2.5 h-2.5 stroke-[3]" />
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[10px] opacity-65 truncate">
+                      {brandKit.handle || `@${(settings.streamerHandle || 'creator').replace(/^@/, '')}`}
+                    </div>
+                  </div>
+                </div>
+                <p className="m-0 text-[12px] font-medium leading-snug">
+                  {settings.pinnedStatement || settings.headline || clip.title}
+                </p>
+              </div>
+            ))}
 
           {isNewsBroadcast && (
             <div className="absolute bottom-[10%] left-0 right-0 px-3 pointer-events-none">
@@ -344,7 +475,7 @@ export function ShortsStage({
           )}
 
           {/* Layer 3: Draggable Headline Hook (honors Custom Timing in Final Preview!) */}
-          {headlineVisible && !isXCard && !isNewsBroadcast && (
+          {headlineVisible && !isElementHidden('headline') && !isXCard && !isNewsBroadcast && (
             <div
               data-testid="shorts-headline-overlay"
               onPointerDown={(e) => startDragOverlay('headline', e)}
@@ -358,7 +489,7 @@ export function ShortsStage({
                 fontSize: `${Math.max(11, Math.round(settings.headlineSize * 0.62))}px`,
                 textAlign: settings.headlineAlign,
               }}
-              className="absolute z-20 cursor-move px-1 transition-opacity duration-200"
+              className={`absolute z-20 cursor-move px-1 transition-opacity duration-200 ${selectionOutline('headline')}`}
             >
               <span
                 style={
@@ -387,7 +518,7 @@ export function ShortsStage({
           )}
 
           {/* Layer 4: Draggable Word-Synced Viral Subtitles (CC track) */}
-          {trackStates.ccVisible && activeChunk && (
+          {trackStates.ccVisible && activeChunk && !isElementHidden('subtitles') && (
             <div
               data-testid="shorts-subtitle-overlay"
               onPointerDown={(e) => startDragOverlay('subtitles', e)}
@@ -402,7 +533,7 @@ export function ShortsStage({
                 lineHeight: settings.subtitleLineHeight,
                 textAlign: settings.subtitleAlign,
               }}
-              className="absolute z-20 cursor-move px-1 flex justify-center"
+              className={`absolute z-20 cursor-move px-1 flex justify-center ${selectionOutline('subtitles')}`}
             >
               <div
                 className={`inline-flex flex-wrap justify-center gap-x-1.5 gap-y-0.5 ${
@@ -464,7 +595,12 @@ export function ShortsStage({
               clip.channel ||
               ''
             ).trim();
-            if (!settings.showStreamerBadge || !badgeHandle || resolvedPlatform === 'none') {
+            if (
+              isElementHidden('streamer') ||
+              !settings.showStreamerBadge ||
+              !badgeHandle ||
+              resolvedPlatform === 'none'
+            ) {
               return null;
             }
             return (
@@ -477,7 +613,7 @@ export function ShortsStage({
                   top: `${settings.streamerBadgeY}%`,
                   transform: `translate(-50%, -50%) scale(${settings.streamerBadgeScale / 100})`,
                 }}
-                className="absolute z-20 cursor-move inline-flex items-center gap-1.5 whitespace-nowrap"
+                className={`absolute z-20 cursor-move inline-flex items-center gap-1.5 whitespace-nowrap ${selectionOutline('streamer')}`}
               >
                 {resolvedPlatform === 'kick' && (
                   <KickLogoIcon
@@ -505,7 +641,7 @@ export function ShortsStage({
           })()}
 
           {/* Layer 6: Draggable Dual Watermarks (Primary Handle/Logo + Secondary Hashtag) */}
-          {brandKit.showWatermark &&
+          {!isElementHidden('watermark1') && brandKit.showWatermark &&
             (shorts.dualWatermark.useCustomLogo && shorts.dualWatermark.customLogoUrl ? (
               <img
                 src={shorts.dualWatermark.customLogoUrl}
@@ -518,7 +654,7 @@ export function ShortsStage({
                   opacity: brandKit.watermarkOpacity / 100,
                   transform: 'translate(-50%, -50%)',
                 }}
-                className="absolute z-20 cursor-move object-contain pointer-events-auto"
+                className={`absolute z-20 cursor-move object-contain pointer-events-auto ${selectionOutline('watermark1')}`}
               />
             ) : brandKit.handle.trim() ? (
               <div
@@ -530,13 +666,15 @@ export function ShortsStage({
                   opacity: brandKit.watermarkOpacity / 100,
                   transform: 'translate(-50%, -50%)',
                 }}
-                className="absolute z-20 cursor-move font-extrabold text-white tracking-tight whitespace-nowrap drop-shadow-[0_1.5px_3px_rgba(0,0,0,0.95)]"
+                className={`absolute z-20 cursor-move font-extrabold text-white tracking-tight whitespace-nowrap drop-shadow-[0_1.5px_3px_rgba(0,0,0,0.95)] ${selectionOutline('watermark1')}`}
               >
                 {brandKit.handle}
               </div>
             ) : null)}
 
-          {shorts.dualWatermark.secondaryEnabled && shorts.dualWatermark.secondaryText.trim() && (
+          {!isElementHidden('watermark2') &&
+            shorts.dualWatermark.secondaryEnabled &&
+            shorts.dualWatermark.secondaryText.trim() && (
             <div
               onPointerDown={(e) => startDragOverlay('watermark2', e)}
               style={{
@@ -546,7 +684,7 @@ export function ShortsStage({
                 opacity: shorts.dualWatermark.secondaryOpacity / 100,
                 transform: 'translate(-50%, -50%)',
               }}
-              className="absolute z-20 cursor-move font-bold text-white/95 whitespace-nowrap drop-shadow-[0_1.5px_3px_rgba(0,0,0,0.95)]"
+              className={`absolute z-20 cursor-move font-bold text-white/95 whitespace-nowrap drop-shadow-[0_1.5px_3px_rgba(0,0,0,0.95)] ${selectionOutline('watermark2')}`}
             >
               {shorts.dualWatermark.secondaryText}
             </div>
@@ -645,12 +783,29 @@ export function ShortsStage({
               </div>
             </div>
           )}
+
+          {/* Delete the currently selected overlay (Delete / Backspace works too when not typing) */}
+          {selectedElement && (
+            <button
+              type="button"
+              aria-label="Delete selected element"
+              data-testid="delete-selected-element-btn"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                deleteSelectedElement();
+              }}
+              className="absolute top-2 right-2 z-50 h-7 w-7 grid place-items-center rounded-md border border-white/25 bg-black/70 text-white hover:bg-red-600 transition-colors cursor-pointer shadow-lg"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 
       {/* Subtle footer helper */}
       <div className="shrink-0 text-[11px] text-[var(--pc-muted)] flex items-center gap-2">
-        <span>Drag headline, subtitles, or watermarks directly on canvas</span>
+        <span>Drag the channel card, headline, subtitles, or watermarks · select then Delete to remove</span>
         <span aria-hidden="true">·</span>
         <span className="font-mono-tabular">{activeTemplateName || templatePreset.name}</span>
       </div>

@@ -1,7 +1,7 @@
 export type PageId = 'dashboard' | 'live' | 'clips' | 'framing' | 'shorts';
 
 export type EditorTabId = 'framing' | 'templates' | 'text' | 'adjust' | 'audio' | 'media';
-export type ShortsTabId = 'templates' | 'text' | 'media' | 'adjust' | 'audio';
+export type ShortsTabId = 'templates' | 'text' | 'media' | 'adjust' | 'audio' | 'frame';
 export type TextSubtabId = 'headline' | 'subs';
 export type StageViewModeId = 'framing' | 'editor';
 
@@ -379,6 +379,15 @@ export interface EditorSettings {
   cardTheme: CardThemeId;
   pinnedStatement: string;
   playbackSpeed: number;
+
+  /* Shorts Preview Overlay Elements (selectable / draggable / deletable) */
+  /** Ids of overlay elements the user removed from the Shorts preview */
+  hiddenElements?: string[];
+  /** Channel card position inside the preview frame (0..100 %, defaults 6 / 6) */
+  channelCardX?: number;
+  channelCardY?: number;
+  /** Channel card width as a percentage of the frame width (default 88) */
+  channelCardWidth?: number;
 
   /* Multi-Speaker Framing Crop Regions (Solo / Split / Trio interactive canvas boxes) */
   speakerCrops: SpeakerCropSet;

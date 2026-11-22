@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use pulsecut_core::config::RenderConfig;
 
 /// Folder name for each clipship id (index = NN - 1).
-const FOLDERS: [&str; 13] = [
+const FOLDERS: [&str; 15] = [
     "01_Tweet_Card_Dark",
     "02_Tweet_Card_Light",
     "03_Tweet_Plus_Reply",
@@ -28,6 +28,8 @@ const FOLDERS: [&str; 13] = [
     "11_Condensed_Headline",
     "12_Collage_Pill",
     "13_Reaction_Split_Pill",
+    "14_Channel_Card_White",
+    "15_Channel_Card_Reels",
 ];
 
 /// Whether a template id is one of the bundled ClipShip overlays.
@@ -37,7 +39,7 @@ pub fn is_clipship(id: &str) -> bool {
 
 fn index_of(id: &str) -> Option<usize> {
     let n: usize = id.strip_prefix("clipship-")?.parse().ok()?;
-    if (1..=13).contains(&n) {
+    if (1..=15).contains(&n) {
         Some(n - 1)
     } else {
         None
@@ -57,6 +59,7 @@ fn cutout_y_h(idx: usize) -> (i32, i32) {
         10 => (0, 1114),
         11 => (0, 1050),
         12 => (0, 1090),
+        13 | 14 => (660, 608), // channel cards: white card ends exactly where the video cutout starts
         // 07 comment reply and 09 fullscreen: no frame cutout, centre the 16:9 video.
         _ => (656, 608),
     }
@@ -76,6 +79,7 @@ fn text_y(idx: usize) -> i32 {
         10 => 1150,
         11 => 1060,
         12 => 1100,
+        13 | 14 => 405, // optional caption zone inside the white card (y=405..635)
         _ => 1500,
     }
 }
