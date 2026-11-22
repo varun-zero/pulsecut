@@ -55,6 +55,8 @@ import {
 import { Button } from '../components/ui/Primitives';
 import { TemplateLibraryModal } from '../components/editor/TemplateLibraryModal';
 import { TemplateEditorModal } from '../components/editor/TemplateEditorModal';
+import { UniversalTemplateImportModal } from '../components/editor/UniversalTemplateImportModal';
+import type { UniversalTemplateImportResult } from '../lib/universalTemplateImporter';
 import { ShortsStage } from '../components/studio/ShortsStage';
 import { FramingCanvas } from '../components/editor/FramingCanvas';
 import { ShortsTimeline } from '../components/studio/ShortsTimeline';
@@ -81,6 +83,14 @@ interface ShortsPageProps {
   canRestoreCaptions: boolean;
   onSelectTemplatePreset: (preset: EditableTemplatePreset) => void;
   onSaveTemplate: (preset: EditableTemplatePreset) => void;
+  onImportUniversalTemplate: (
+    result: UniversalTemplateImportResult,
+    options: {
+      includeOverlay: boolean;
+      registerBundledFonts: boolean;
+      saveCaptionStyle: boolean;
+    }
+  ) => void;
   onDeleteTemplate: (id: string) => void;
   onRestoreTemplates: () => void;
   onSelectCaptionPreset: (preset: EditableCaptionPreset) => void;
@@ -130,6 +140,7 @@ export function ShortsPage({
   canRestoreCaptions,
   onSelectTemplatePreset,
   onSaveTemplate,
+  onImportUniversalTemplate,
   onDeleteTemplate,
   onRestoreTemplates,
   onSelectCaptionPreset,
@@ -167,6 +178,7 @@ export function ShortsPage({
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [templateLibraryOpen, setTemplateLibraryOpen] = useState(false);
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
+  const [templateImporterOpen, setTemplateImporterOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<EditableTemplatePreset | null>(null);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -1060,6 +1072,7 @@ export function ShortsPage({
             setEditingTemplate(tpl);
             setTemplateEditorOpen(true);
           }}
+          onOpenTemplateImporter={() => setTemplateImporterOpen(true)}
           onDeleteTemplate={onDeleteTemplate}
           onRestoreTemplates={onRestoreTemplates}
           onSelectCaptionPreset={onSelectCaptionPreset}
@@ -1104,6 +1117,7 @@ export function ShortsPage({
           setEditingTemplate(null);
           setTemplateEditorOpen(true);
         }}
+        onOpenImport={() => setTemplateImporterOpen(true)}
         onEdit={(preset) => {
           setEditingTemplate(preset);
           setTemplateEditorOpen(true);
@@ -1111,6 +1125,18 @@ export function ShortsPage({
         onDelete={onDeleteTemplate}
         onRestoreDefaults={onRestoreTemplates}
         onClose={() => setTemplateLibraryOpen(false)}
+      />
+
+      <UniversalTemplateImportModal
+        open={templateImporterOpen}
+        onImport={(result, options) => {
+          onImportUniversalTemplate(result, options);
+          if (options.openInEditor) {
+            setEditingTemplate(result.template);
+            setTemplateEditorOpen(true);
+          }
+        }}
+        onClose={() => setTemplateImporterOpen(false)}
       />
 
       <TemplateEditorModal

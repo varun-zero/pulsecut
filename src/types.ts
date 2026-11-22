@@ -398,6 +398,12 @@ export interface EditorSettings {
   channelCardWidth?: number;
   /** Channel card height as a percentage of the preview frame height (default 22, clamp 8..60) */
   channelCardHeight?: number;
+  /** Optional full-frame graphic overlay imported from CapCut / Alight Motion / Canva / Photoshop / ZIP */
+  templateOverlayUrl?: string;
+  /** Template graphic overlay opacity (0..100, default 100) */
+  templateOverlayOpacity?: number;
+  /** Template graphic overlay blend mode */
+  templateOverlayBlendMode?: 'normal' | 'screen' | 'multiply' | 'overlay' | 'lighten';
 
   /* Multi-Speaker Framing Crop Regions (Solo / Split / Trio interactive canvas boxes) */
   speakerCrops: SpeakerCropSet;

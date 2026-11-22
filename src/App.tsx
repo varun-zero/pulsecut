@@ -46,6 +46,7 @@ import {
   type LogoAsset,
   type TemplateCatalogState,
 } from './lib/creatorCatalog';
+import type { UniversalTemplateImportResult } from './lib/universalTemplateImporter';
 import {
   buildConfigurePayload,
   createHistory,
@@ -181,6 +182,9 @@ function createEditorSettingsForClip(clip: ClipItem | null, brandKit: BrandKit):
     channelCardY: 6,
     channelCardWidth: 88,
     channelCardHeight: 22,
+    templateOverlayUrl: '',
+    templateOverlayOpacity: 100,
+    templateOverlayBlendMode: 'normal',
     speakerCrops: {
       primary: { ...DEFAULT_SPEAKER_CROPS.primary },
       secondary: { ...DEFAULT_SPEAKER_CROPS.secondary },
@@ -915,10 +919,10 @@ export function App() {
           subtitleSize: preset.defaultSubtitleSize ?? history.present.subtitleSize,
           subtitleCasing: captionPreset.casing,
           subtitleWordsPerScreen: captionPreset.wordsPerScreen,
-          subtitleBaseColor: captionPreset.baseColor,
-          subtitleActiveColor: captionPreset.activeColor,
-          subtitleEmphasisColor: captionPreset.emphasisColor,
-          subtitleStrokeWidth: captionPreset.strokeWidth,
+          subtitleBaseColor: preset.defaultSubtitleBaseColor || captionPreset.baseColor,
+          subtitleActiveColor: preset.defaultSubtitleActiveColor || captionPreset.activeColor,
+          subtitleEmphasisColor: preset.defaultSubtitleActiveColor || captionPreset.emphasisColor,
+          subtitleStrokeWidth: preset.defaultSubtitleStrokeWidth ?? captionPreset.strokeWidth,
           subtitleStrokeColor: captionPreset.strokeColor,
           subtitleDropShadow: captionPreset.dropShadow,
           subtitleNeonGlow: captionPreset.neonGlow,
@@ -928,6 +932,13 @@ export function App() {
           subtitleVerticalPos: preset.defaultSubtitleY ?? safeSpec.autoAlignSubtitlePct,
           safeZonePlatform: preset.defaultSafeZone || 'auto',
           cardTheme: preset.id === 'x_light' ? 'light' : 'dark',
+          templateOverlayUrl: preset.overlayImageDataUrl || '',
+          templateOverlayOpacity: preset.overlayOpacity ?? 100,
+          templateOverlayBlendMode: preset.overlayBlendMode || 'normal',
+          colorFilter: preset.defaultColorFilter ?? 'none',
+          transitionStyle: preset.defaultTransitionStyle ?? history.present.transitionStyle,
+          speedMultiplier: preset.defaultPlaybackSpeed ?? 1,
+          videoScale: preset.defaultVideoScale ?? 100,
         },
         true
       );
@@ -942,6 +953,7 @@ export function App() {
       handleUpdateEditorSettings,
       history.present.headlineSize,
       history.present.subtitleSize,
+      history.present.transitionStyle,
       notify,
     ]
   );
@@ -951,6 +963,50 @@ export function App() {
       setTemplateCatalog((prev) => upsertTemplateInCatalog(prev, saved, builtinTemplateIds));
       handleSelectTemplatePreset(saved);
       notify(`Saved template "${saved.name}"`);
+    },
+    [builtinTemplateIds, handleSelectTemplatePreset, notify]
+  );
+
+  const handleImportUniversalTemplate = useCallback(
+    (
+      result: UniversalTemplateImportResult,
+      options: {
+        includeOverlay: boolean;
+        registerBundledFonts: boolean;
+        saveCaptionStyle: boolean;
+      }
+    ) => {
+      // 1) Auto-register bundled .ttf/.otf fonts if present
+      if (options.registerBundledFonts && result.extractedFonts.length > 0) {
+        result.extractedFonts.forEach((fontBundle) => {
+          const blob = new Blob([new Uint8Array(fontBundle.bytes)], { type: 'font/ttf' });
+          const fontFile = new File([blob], fontBundle.fileName, { type: 'font/ttf' });
+          registerCustomFontFile(fontFile)
+            .then((entry) => {
+              setCustomFonts((prev) => {
+                const filtered = prev.filter((f) => f.family !== entry.family);
+                return [...filtered, entry];
+              });
+            })
+            .catch(() => {
+              // Ignore invalid font binary in external archive
+            });
+        });
+      }
+
+      // 2) Save extracted caption style if requested
+      if (options.saveCaptionStyle && result.extractedCaptionStyle) {
+        setCaptionCatalog((prev) => addCaptionStyleToCatalog(prev, result.extractedCaptionStyle!));
+      }
+
+      // 3) Save template into persistent catalog and immediately apply
+      const templateToSave: EditableTemplatePreset = {
+        ...result.template,
+        overlayImageDataUrl: options.includeOverlay ? result.template.overlayImageDataUrl : undefined,
+      };
+      setTemplateCatalog((prev) => upsertTemplateInCatalog(prev, templateToSave, builtinTemplateIds));
+      handleSelectTemplatePreset(templateToSave);
+      notify(`Imported ${result.formatLabel}: "${templateToSave.name}"`);
     },
     [builtinTemplateIds, handleSelectTemplatePreset, notify]
   );
@@ -1725,6 +1781,7 @@ export function App() {
           canRestoreCaptions={canRestoreCaptions}
           onSelectTemplatePreset={handleSelectTemplatePreset}
           onSaveTemplate={handleSaveTemplate}
+          onImportUniversalTemplate={handleImportUniversalTemplate}
           onDeleteTemplate={handleDeleteTemplate}
           onRestoreTemplates={handleRestoreTemplates}
           onSelectCaptionPreset={handleSelectCaptionPreset}

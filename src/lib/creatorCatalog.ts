@@ -1,10 +1,12 @@
 import type {
   AspectRatioId,
+  ColorFilterId,
   HeadlineLayoutStyleId,
   LayoutModeId,
   ResolvedSafeZonePlatformId,
   StreamerPlatformId,
   SubtitleBgStyleId,
+  TransitionStyleId,
 } from '../types';
 import type { TemplateCategory, TemplatePreset } from '../presets';
 import type { ViralCaptionPreset } from '../captionStyles';
@@ -12,6 +14,19 @@ import type { ViralCaptionPreset } from '../captionStyles';
 /* -------------------------------------------------------------------------- */
 /* 1. Custom Template CRUD & In-App Template Editor Schema                    */
 /* -------------------------------------------------------------------------- */
+
+export type TemplateSourceFormat =
+  | 'pulsecut'
+  | 'capcut'
+  | 'alight-motion'
+  | 'lottie-ae'
+  | 'premiere-mogrt'
+  | 'fcpxml'
+  | 'ass-subtitles'
+  | 'image-overlay'
+  | 'generic-json';
+
+export type TemplateOverlayBlendMode = 'normal' | 'screen' | 'multiply' | 'overlay' | 'lighten';
 
 export interface EditableTemplatePreset extends TemplatePreset {
   isCustom?: boolean;
@@ -27,6 +42,26 @@ export interface EditableTemplatePreset extends TemplatePreset {
   defaultSubtitleSize?: number;
   /** Default headline font size (14..40) */
   defaultHeadlineSize?: number;
+  /** Imported source format badge (e.g. CapCut, Alight Motion, Lottie, MOGRT, Overlay) */
+  sourceFormat?: TemplateSourceFormat;
+  sourceFormatLabel?: string;
+  /** Optional full-frame transparent PNG/WebP/SVG graphic overlay imported from any editor */
+  overlayImageDataUrl?: string;
+  /** Overlay opacity (0..100, default 100) */
+  overlayOpacity?: number;
+  /** Overlay CSS/compositing blend mode */
+  overlayBlendMode?: TemplateOverlayBlendMode;
+  /** Optional extracted color grade / transition / speed / subtitle color overrides */
+  defaultColorFilter?: ColorFilterId;
+  defaultTransitionStyle?: TransitionStyleId;
+  defaultPlaybackSpeed?: number;
+  defaultSubtitleActiveColor?: string;
+  defaultSubtitleBaseColor?: string;
+  defaultSubtitleStrokeWidth?: number;
+  defaultVideoScale?: number;
+  /** Human-readable import report lines */
+  importSummary?: string[];
+  importWarnings?: string[];
 }
 
 export interface TemplateCatalogState {
@@ -147,6 +182,20 @@ export function createBlankTemplateDraft(seed?: Partial<EditableTemplatePreset>)
     hasTicker: seed?.hasTicker ?? false,
     accentHex: seed?.accentHex || '#FFE600',
     wireframe: seed?.wireframe || 'plain',
+    sourceFormat: seed?.sourceFormat,
+    sourceFormatLabel: seed?.sourceFormatLabel,
+    overlayImageDataUrl: seed?.overlayImageDataUrl,
+    overlayOpacity: seed?.overlayOpacity ?? (seed?.overlayImageDataUrl ? 100 : undefined),
+    overlayBlendMode: seed?.overlayBlendMode ?? (seed?.overlayImageDataUrl ? 'normal' : undefined),
+    defaultColorFilter: seed?.defaultColorFilter,
+    defaultTransitionStyle: seed?.defaultTransitionStyle,
+    defaultPlaybackSpeed: seed?.defaultPlaybackSpeed,
+    defaultSubtitleActiveColor: seed?.defaultSubtitleActiveColor,
+    defaultSubtitleBaseColor: seed?.defaultSubtitleBaseColor,
+    defaultSubtitleStrokeWidth: seed?.defaultSubtitleStrokeWidth,
+    defaultVideoScale: seed?.defaultVideoScale,
+    importSummary: seed?.importSummary,
+    importWarnings: seed?.importWarnings,
   };
 }
 

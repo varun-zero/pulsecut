@@ -71,6 +71,7 @@ interface ShortsStageProps {
 }
 
 type OverlayElementId =
+  | 'template-overlay'
   | 'channel-card'
   | 'headline'
   | 'subtitles'
@@ -80,6 +81,7 @@ type OverlayElementId =
 type DragTarget = OverlayElementId;
 
 const OVERLAY_LABELS: Record<OverlayElementId, string> = {
+  'template-overlay': 'Template Graphic Overlay',
   'channel-card': 'Social Card',
   headline: 'Headline',
   subtitles: 'Subtitles',
@@ -553,6 +555,20 @@ export function ShortsStage({
               className="absolute inset-0 z-10 pointer-events-none"
               style={{
                 background: `radial-gradient(circle at center, transparent 40%, rgba(0, 0, 0, ${settings.vignette / 100}) 100%)`,
+              }}
+            />
+          )}
+
+          {/* Imported Universal Template Frame Overlay (CapCut / Alight Motion / Canva / Photoshop / SVG / PNG) */}
+          {settings.templateOverlayUrl && !isElementHidden('template-overlay') && (
+            <img
+              data-testid="template-overlay-layer"
+              src={settings.templateOverlayUrl}
+              alt="Imported template frame overlay"
+              className="absolute inset-0 w-full h-full object-contain z-15 pointer-events-none select-none"
+              style={{
+                opacity: Math.max(0, Math.min(1, (settings.templateOverlayOpacity ?? 100) / 100)),
+                mixBlendMode: settings.templateOverlayBlendMode || 'normal',
               }}
             />
           )}

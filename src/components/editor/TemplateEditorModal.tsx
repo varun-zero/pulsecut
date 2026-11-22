@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Copy, Maximize2, Sliders, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Copy, Download, ImagePlus, Maximize2, Sliders, Trash2, X } from 'lucide-react';
 import type {
   AspectRatioId,
   CustomFontEntry,
@@ -17,7 +17,12 @@ import {
   createBlankTemplateDraft,
   type EditableCaptionPreset,
   type EditableTemplatePreset,
+  type TemplateOverlayBlendMode,
 } from '../../lib/creatorCatalog';
+import {
+  exportTemplateToPortableJson,
+  sanitizeSvgMarkup,
+} from '../../lib/universalTemplateImporter';
 import {
   Button,
   SegmentedControl,
@@ -73,6 +78,7 @@ export function TemplateEditorModal({
   onSave,
   onClose,
 }: TemplateEditorModalProps) {
+  const overlayInputRef = useRef<HTMLInputElement | null>(null);
   const [draft, setDraft] = useState<EditableTemplatePreset>(() =>
     initialTemplate ? { ...initialTemplate } : createBlankTemplateDraft()
   );
@@ -156,7 +162,56 @@ export function TemplateEditorModal({
       defaultHeadlineSize: currentSettings.headlineSize,
       defaultSubtitleSize: currentSettings.subtitleSize,
       defaultOuterFill: currentSettings.outerFill,
+      overlayImageDataUrl: currentSettings.templateOverlayUrl || draft.overlayImageDataUrl,
+      overlayOpacity: currentSettings.templateOverlayOpacity ?? draft.overlayOpacity ?? 100,
+      overlayBlendMode: currentSettings.templateOverlayBlendMode || draft.overlayBlendMode || 'normal',
     });
+  };
+
+  const handleUploadOverlayImage = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (file.name.toLowerCase().endsWith('.svg') || file.type === 'image/svg+xml') {
+        const text = typeof reader.result === 'string' ? reader.result : '';
+        if (!text) return;
+        const cleanSvg = sanitizeSvgMarkup(text);
+        patch({
+          overlayImageDataUrl: `data:image/svg+xml;utf8,${encodeURIComponent(cleanSvg)}`,
+          overlayOpacity: draft.overlayOpacity ?? 100,
+          overlayBlendMode: draft.overlayBlendMode || 'normal',
+        });
+        return;
+      }
+      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+      if (!dataUrl) return;
+      patch({
+        overlayImageDataUrl: dataUrl,
+        overlayOpacity: draft.overlayOpacity ?? 100,
+        overlayBlendMode: draft.overlayBlendMode || 'normal',
+      });
+    };
+    if (file.name.toLowerCase().endsWith('.svg') || file.type === 'image/svg+xml') {
+      reader.readAsText(file);
+    } else {
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleExportPortableJson = () => {
+    const json = exportTemplateToPortableJson(draft);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const slug = (draft.name || 'pulsecut-template')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+    a.href = url;
+    a.download = `${slug || 'template'}.pulsecut.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -217,6 +272,16 @@ export function TemplateEditorModal({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              data-testid="export-template-json-btn"
+              onClick={handleExportPortableJson}
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export JSON</span>
+            </Button>
             <Button type="button" variant="ghost" size="sm" onClick={handleLoadFromStudio}>
               <Copy className="w-3.5 h-3.5" />
               <span>Copy Studio State</span>
@@ -280,6 +345,19 @@ export function TemplateEditorModal({
                 </div>
               ) : (
                 <div className="absolute inset-0 bg-gradient-to-b from-zinc-800 via-zinc-900 to-zinc-950" />
+              )}
+
+              {/* Imported / Custom Visual Frame Overlay Preview */}
+              {draft.overlayImageDataUrl && (
+                <img
+                  src={draft.overlayImageDataUrl}
+                  alt="Template graphic overlay"
+                  className="absolute inset-0 w-full h-full object-contain pointer-events-none z-5"
+                  style={{
+                    opacity: Math.max(0, Math.min(1, (draft.overlayOpacity ?? 100) / 100)),
+                    mixBlendMode: draft.overlayBlendMode || 'normal',
+                  }}
+                />
               )}
 
               {/* Live Headline Position Preview */}
@@ -628,6 +706,82 @@ export function TemplateEditorModal({
                   </select>
                 </label>
               </div>
+            </div>
+
+            {/* Imported / Custom Visual Frame Overlay (PNG / WebP / SVG) */}
+            <div className="p-3.5 rounded-lg border border-[var(--pc-border)] bg-[var(--pc-surface-2)]/40 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-xs font-semibold text-[var(--pc-ink)]">
+                    Visual Frame Overlay (PNG / WebP / SVG)
+                  </div>
+                  <p className="text-[11px] text-[var(--pc-muted)] m-0 mt-0.5">
+                    Attach any transparent frame, HUD, border, or graphic made in CapCut, Canva, Figma, or Photoshop.
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <input
+                    ref={overlayInputRef}
+                    type="file"
+                    accept="image/png,image/webp,image/svg+xml,.png,.webp,.svg"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handleUploadOverlayImage(f);
+                      e.target.value = '';
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => overlayInputRef.current?.click()}
+                  >
+                    <ImagePlus className="w-3.5 h-3.5" />
+                    <span>{draft.overlayImageDataUrl ? 'Replace' : 'Upload Overlay'}</span>
+                  </Button>
+                  {draft.overlayImageDataUrl && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label="Remove overlay graphic"
+                      onClick={() => patch({ overlayImageDataUrl: undefined })}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-[var(--pc-error)]" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {draft.overlayImageDataUrl && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <StudioSlider
+                    label="Overlay Opacity"
+                    value={draft.overlayOpacity ?? 100}
+                    min={10}
+                    max={100}
+                    valueLabel={`${draft.overlayOpacity ?? 100}%`}
+                    onChange={(overlayOpacity) => patch({ overlayOpacity })}
+                  />
+                  <label className="space-y-1 block">
+                    <span className="text-[11px] text-[var(--pc-sub)]">Blend Mode</span>
+                    <select
+                      value={draft.overlayBlendMode || 'normal'}
+                      onChange={(e) =>
+                        patch({ overlayBlendMode: e.target.value as TemplateOverlayBlendMode })
+                      }
+                      className="w-full h-8 px-2 rounded-md border border-[var(--pc-border)] bg-[var(--pc-surface-2)] text-xs text-[var(--pc-ink)]"
+                    >
+                      <option value="normal">Normal</option>
+                      <option value="screen">Screen (Drop Black)</option>
+                      <option value="multiply">Multiply</option>
+                      <option value="overlay">Overlay</option>
+                      <option value="lighten">Lighten</option>
+                    </select>
+                  </label>
+                </div>
+              )}
             </div>
 
             {/* Accent Color & Backdrop */}

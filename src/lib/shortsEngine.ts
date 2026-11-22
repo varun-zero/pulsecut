@@ -714,6 +714,17 @@ export function buildFullShortExportSpec(
     preSubLabel = '[vgraded]';
   }
 
+  // 3b. Composite imported full-frame template graphic overlay (PNG/WebP/SVG) when active
+  const hasTemplateOverlay = Boolean(settings.templateOverlayUrl);
+  if (hasTemplateOverlay) {
+    const ovOpacity = clampNum((settings.templateOverlayOpacity ?? 100) / 100, 0, 1).toFixed(2);
+    filterSteps.push(
+      `[1:v]scale=${dimensions.width}:${dimensions.height}:force_original_aspect_ratio=decrease,pad=${dimensions.width}:${dimensions.height}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,format=rgba,colorchannelmixer=aa=${ovOpacity}[tov]`
+    );
+    filterSteps.push(`${preSubLabel}[tov]overlay=0:0:shortest=1[voverlaid]`);
+    preSubLabel = '[voverlaid]';
+  }
+
   // 4. Burn word-synced ASS subtitles + headline/watermark metadata
   const syncedSettings: EditorSettings = {
     ...settings,
@@ -750,6 +761,11 @@ export function buildFullShortExportSpec(
     `Segments: ${activeSegments.length} part${activeSegments.length === 1 ? '' : 's'} (${stitchedDurationSec.toFixed(1)}s stitched)`,
     `Captions: ${getViralCaptionPreset(settings.captionStyle).name} · Safe Zone: ${getSafeZoneSpec(settings.safeZonePlatform, settings.template).label}`,
   ];
+  if (hasTemplateOverlay) {
+    summaryLines.push(
+      `Template Overlay: Graphic frame (${settings.templateOverlayOpacity ?? 100}% · ${settings.templateOverlayBlendMode || 'normal'})`
+    );
+  }
   if (postFilters.length > 0) {
     summaryLines.push(
       `Grade & Transform: ${settings.colorFilter !== 'none' ? settings.colorFilter : 'Custom'} (${postFilters.length} filter${postFilters.length === 1 ? '' : 's'})`
@@ -778,7 +794,8 @@ export function buildFullShortExportSpec(
   }
 
   const ffmpegFiltergraph = filterSteps.join(';\n');
-  const ffmpegCommand = `ffmpeg -i input.mp4 -filter_complex "${filterSteps.join(';')}" -map "[vfinal]" ${audioArgs} ${encoderFlag} output_short.mp4`;
+  const overlayInputArg = hasTemplateOverlay ? ' -i template_overlay.png' : '';
+  const ffmpegCommand = `ffmpeg -i input.mp4${overlayInputArg} -filter_complex "${filterSteps.join(';')}" -map "[vfinal]" ${audioArgs} ${encoderFlag} output_short.mp4`;
 
   return {
     dimensions,

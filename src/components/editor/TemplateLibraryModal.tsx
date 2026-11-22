@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { LayoutTemplate, Pencil, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react';
+import { FolderUp, LayoutTemplate, Pencil, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react';
 import { TEMPLATE_CATEGORIES, TEMPLATE_PRESETS, type TemplateCategory } from '../../presets';
 import type { EditableTemplatePreset } from '../../lib/creatorCatalog';
 import { Button, TemplateMiniPreview } from '../ui/Primitives';
@@ -11,6 +11,7 @@ interface TemplateLibraryModalProps {
   canRestoreDefaults?: boolean;
   onSelect: (preset: EditableTemplatePreset) => void;
   onCreateNew?: () => void;
+  onOpenImport?: () => void;
   onEdit?: (preset: EditableTemplatePreset) => void;
   onDelete?: (id: string) => void;
   onRestoreDefaults?: () => void;
@@ -24,6 +25,7 @@ export function TemplateLibraryModal({
   canRestoreDefaults = false,
   onSelect,
   onCreateNew,
+  onOpenImport,
   onEdit,
   onDelete,
   onRestoreDefaults,
@@ -83,6 +85,20 @@ export function TemplateLibraryModal({
               <Button variant="ghost" size="sm" onClick={onRestoreDefaults}>
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Restore Built-ins</span>
+              </Button>
+            )}
+            {onOpenImport && (
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="library-import-template-btn"
+                onClick={() => {
+                  onClose();
+                  onOpenImport();
+                }}
+              >
+                <FolderUp className="w-3.5 h-3.5" />
+                <span>Import</span>
               </Button>
             )}
             {onCreateNew && (
@@ -184,6 +200,7 @@ export function TemplateLibraryModal({
 
                 <div className="px-3.5 py-2 border-t border-[var(--pc-border-subtle)] flex items-center justify-between gap-2">
                   <span className="text-[10.5px] text-[var(--pc-muted)] truncate">
+                    {preset.sourceFormatLabel ? `${preset.sourceFormatLabel} · ` : ''}
                     {preset.category}
                   </span>
                   <div className="flex items-center gap-1 shrink-0">

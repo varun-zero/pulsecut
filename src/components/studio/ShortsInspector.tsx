@@ -12,6 +12,7 @@ import {
   Flame,
   FlipHorizontal2,
   FlipVertical2,
+  FolderUp,
   Hash,
   ImagePlus,
   Layers,
@@ -112,6 +113,7 @@ interface ShortsInspectorProps {
   onToggleTrackState: (key: keyof TrackStates) => void;
   onSelectTemplatePreset: (preset: EditableTemplatePreset) => void;
   onOpenTemplateEditor: (preset: EditableTemplatePreset | null) => void;
+  onOpenTemplateImporter: () => void;
   onDeleteTemplate: (id: string) => void;
   onRestoreTemplates: () => void;
   onSelectCaptionPreset: (preset: EditableCaptionPreset) => void;
@@ -139,6 +141,7 @@ interface ShortsInspectorProps {
 }
 
 const OVERLAY_LAYER_ITEMS: Array<{ id: string; label: string }> = [
+  { id: 'template-overlay', label: 'Template Graphic Overlay' },
   { id: 'headline', label: 'Headline Hook' },
   { id: 'subtitles', label: 'Subtitles (CC)' },
   { id: 'channel-card', label: 'Social / X Card' },
@@ -193,6 +196,7 @@ export function ShortsInspector({
   onToggleTrackState,
   onSelectTemplatePreset,
   onOpenTemplateEditor,
+  onOpenTemplateImporter,
   onDeleteTemplate,
   onRestoreTemplates,
   onSelectCaptionPreset,
@@ -932,30 +936,73 @@ export function ShortsInspector({
         {/* ================= 2. TEMPLATES TAB (TEMPLATES, ATTRIBUTION, HASHTAGS, LOGOS, OUTRO) ================= */}
         {activeTab === 'templates' && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <h3 className="text-xs font-semibold text-[var(--pc-ink)] m-0">
-                  Short Format Templates
-                </h3>
-                <p className="text-[11px] text-[var(--pc-muted)] m-0 mt-0.5 truncate">
-                  Active: <AppleEmojiText text={activeTemplate?.fullName || 'Classic Short'} />
-                </p>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <Button
-                  variant="primary"
-                  size="sm"
-                  data-testid="new-template-btn"
-                  onClick={() => onOpenTemplateEditor(null)}
-                >
-                  <Plus className="w-3 h-3" />
-                  <span>New</span>
-                </Button>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <h3 className="text-xs font-semibold text-[var(--pc-ink)] m-0">
+                    Short Format Templates
+                  </h3>
+                  <p className="text-[11px] text-[var(--pc-muted)] m-0 mt-0.5 truncate">
+                    Active: <AppleEmojiText text={activeTemplate?.fullName || 'Classic Short'} />
+                  </p>
+                </div>
                 <Button variant="secondary" size="sm" onClick={onOpenTemplateLibrary}>
                   All ({templates.length})
                 </Button>
               </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-testid="import-template-btn"
+                  className="w-full"
+                  onClick={onOpenTemplateImporter}
+                >
+                  <FolderUp className="w-3.5 h-3.5" />
+                  <span>Import Any</span>
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  data-testid="new-template-btn"
+                  className="w-full"
+                  onClick={() => onOpenTemplateEditor(null)}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>New Custom</span>
+                </Button>
+              </div>
             </div>
+
+            {settings.templateOverlayUrl && (
+              <div
+                data-testid="active-template-overlay-strip"
+                className="p-2.5 rounded-lg border border-[var(--pc-border)] bg-[var(--pc-surface-2)]/70 space-y-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-semibold text-[var(--pc-ink)]">
+                    Active Frame Overlay
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onUpdateSettings({ templateOverlayUrl: '' }, true)}
+                    className="text-[10.5px] text-[var(--pc-sub)] hover:text-[var(--pc-error)] bg-transparent border-0 cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                </div>
+                <StudioSlider
+                  label="Overlay Opacity"
+                  value={settings.templateOverlayOpacity ?? 100}
+                  min={10}
+                  max={100}
+                  valueLabel={`${settings.templateOverlayOpacity ?? 100}%`}
+                  onChange={(templateOverlayOpacity) =>
+                    onUpdateSettings({ templateOverlayOpacity }, false)
+                  }
+                />
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-2">
               {visibleTemplates.map((preset) => {
@@ -997,7 +1044,7 @@ export function ShortsInspector({
                     </button>
                     <div className="px-2 pb-1.5 flex items-center justify-between gap-1">
                       <span className="text-[9.5px] text-[var(--pc-muted)] truncate">
-                        {preset.isCustom ? 'Custom' : preset.category}
+                        {preset.sourceFormatLabel || (preset.isCustom ? 'Custom' : preset.category)}
                       </span>
                       <div className="flex items-center gap-0.5 shrink-0">
                         <button
